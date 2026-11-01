@@ -1,0 +1,188 @@
+/*
+ * 设计令牌（Design Tokens）
+ *
+ * 日间画布来源：资产包 V4 的 #F8F9F3（M1 用户拍板，2026-10-30；2026-10-31 二次确认）。
+ * 原项目自定 #FDFDE3（cmyk 0,0,10,0 / hsv 60°,10.28%,99.22%）已让位于资产色，
+ * docs/00-审计报告.md §2.1 的裁定据此作废——见 P0 完成报告「五、关键偏差」。
+ *
+ * 两段结构（P1 起）：
+ *   :root                 日间，54 个令牌全量
+ *   [data-theme='dark']   夜间，只覆盖 45 个**含颜色**的令牌（P2 由 39 → 43，P4 再 +2 到 45）
+ * 9 个非颜色令牌（radius-* / font-* / sidebar-width / content-gutter）与明暗无关，
+ * 刻意不在夜间段复制——见判据台账 J-09。
+ *
+ * 改色值的唯一入口就是本文件：组件里出现字面色即违规（AGENTS.md 第一节）。
+ */
+:root {
+  --nc-canvas: #f8f9f3;
+  --nc-canvas-deep: #edf0e4;
+  --nc-surface: #ffffff;
+  --nc-surface-subtle: #fcfcf7;
+
+  --nc-border: rgba(58, 74, 52, 0.1);
+  --nc-border-strong: rgba(58, 74, 52, 0.18);
+
+  --nc-text: #2a4426;
+  --nc-text-secondary: #44613f;
+  --nc-text-tertiary: #5e7a56;
+
+  --nc-accent: #4f7945;
+  --nc-accent-strong: #3a5c33;
+  --nc-accent-soft: rgba(79, 121, 69, 0.1);
+  --nc-accent-ring: rgba(79, 121, 69, 0.26);
+
+  /* 选择框纹理（P4）：card-frame 素材里那两层描边的色值。
+     只给 sel-frame--stitch（CSS 复刻层）用；走 SVG 的控件由素材自带颜色，不读这两个。 */
+  --nc-frame-line: #9cbf8e;
+  --nc-frame-stitch: #7ba66a;
+
+  --nc-user-bubble: #eaf1e0;
+  --nc-danger: #a8443a;
+
+  --nc-radius-sm: 8px;
+  --nc-radius-md: 12px;
+  --nc-radius-lg: 18px;
+  --nc-radius-xl: 22px;
+  --nc-radius-pill: 999px;
+
+  --nc-shadow-sm: 0 1px 2px rgba(60, 58, 30, 0.05);
+  --nc-shadow-md: 0 10px 30px rgba(60, 58, 30, 0.08);
+  --nc-shadow-lg: 0 18px 50px rgba(60, 58, 30, 0.12);
+
+  --nc-font: "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei UI", "Microsoft YaHei",
+    -apple-system, "Segoe UI", system-ui, sans-serif;
+  --nc-font-mono: "JetBrains Mono", "Cascadia Code", Consolas, "Courier New", monospace;
+
+  --nc-sidebar-width: 236px;
+  --nc-content-gutter: 26px;
+
+  /* ---- P0 新增：把 global.css 的字面色收口为令牌（P1 起与资产色同族） ---- */
+
+  /* 中性悬浮层：画布变浅后白 hover 需要略高一点不透明才看得出来 */
+  --nc-fill-hover: rgba(255, 255, 255, 0.78);
+  /* 中性浅填充：绿灰，不再是暖黄 */
+  --nc-fill-subtle: rgba(58, 74, 52, 0.045);
+  --nc-fill-subtle-strong: rgba(58, 74, 52, 0.06);
+  /* 极浅描边 */
+  --nc-border-hairline: rgba(58, 74, 52, 0.07);
+  /* 滚动条 */
+  --nc-scrollbar-thumb: rgba(58, 74, 52, 0.18);
+  --nc-scrollbar-thumb-hover: rgba(58, 74, 52, 0.3);
+  /* 危险态：四档 alpha 跟主色一起从 #bd5545 迁到 #a8443a */
+  --nc-danger-softer: rgba(168, 68, 58, 0.06);
+  --nc-danger-soft: rgba(168, 68, 58, 0.08);
+  --nc-danger-softest: rgba(168, 68, 58, 0.1);
+  --nc-danger-border: rgba(168, 68, 58, 0.32);
+  /* 警告态（琥珀）：主色深一档以过 AA */
+  --nc-warning: #8a5f14;
+  --nc-warning-weak: #9c6a1a;
+  --nc-warning-strong: #6f4a0f;
+  --nc-warning-surface: #fffdf2;
+  --nc-warning-soft: rgba(138, 95, 20, 0.14);
+  --nc-warning-soft-warm: rgba(138, 95, 20, 0.13);
+  /* 警告描边：三处原值不同（0.4 / 0.35 / 0.3），必须各留一个，合并会造成可见色偏 */
+  --nc-warning-border-strong: rgba(138, 95, 20, 0.4);
+  --nc-warning-border: rgba(138, 95, 20, 0.35);
+  --nc-warning-border-weak: rgba(138, 95, 20, 0.3);
+  /* 强调按钮上的字 */
+  --nc-on-accent: #ffffff;
+  /* 与 --nc-text 同值：修复 P0 前 global.css:1465 的未定义引用 */
+  --nc-text-primary: #2a4426;
+
+  /* ---- P2 新增：品牌素材层（日间全部为"无"，M2 拍板日间不加满幅背景） ---- */
+
+  /* 满幅星空底只压在 body 上，见 global.css 的 [data-theme='dark'] body。
+     这里不定义 --nc-bg-image：url() 放进自定义属性会被 Vite 的 url 重写跳过，
+     打包后可能 404（PHASE-2 §六 A5 的典型翻车），所以 URL 直接写在选择器里。 */
+
+  /* 压暗层：与背景图同层的线性渐变，日间不出现（M8：压暗，不是毛玻璃） */
+  --nc-veil: none;
+  /* 页面级面板（聊天区 / 设置区）：日间就是白面，与 --nc-surface 同值 */
+  --nc-page-surface: #ffffff;
+  /* 侧栏面板：日间透明（侧栏本来就没有底色） */
+  --nc-panel-veil: transparent;
+  /* 输入条：日间与 --nc-surface-subtle 同值 */
+  --nc-composer-surface: #fcfcf7;
+}
+
+/*
+ * 深色主题。只覆盖「含颜色」的 43 个令牌。
+ * 9 个非颜色令牌（radius-* / font-* / sidebar-width / content-gutter）与明暗无关，
+ * 故意不复制一份相同值——重复定义只会制造"两处都要改"的维护负担。
+ * 判据见 scripts/theme/check-hardcoded-colors.mjs parity（colors-only 口径，J-09）
+ * 与 check-contrast.mjs --theme dark --gate。
+ */
+[data-theme='dark'] {
+  /* ---- 底层：画布与面板 ---- */
+  --nc-canvas: #101722;
+  --nc-canvas-deep: #0c121b;
+  --nc-surface: #161d29;
+  --nc-surface-subtle: #1b2230;
+  --nc-user-bubble: #1e2a22;
+
+  /* ---- 文字：正文 13.44 / 次要 9.19 / 弱化 7.37（对 canvas 实算） ---- */
+  --nc-text: #d5e3cc;
+  --nc-text-primary: #d5e3cc;
+  --nc-text-secondary: #a9c09f;
+  --nc-text-tertiary: #96ac90;
+
+  /* ---- 强调：accent 是按钮底，accent-strong 是强调文字 ---- */
+  --nc-accent: #4b7242;
+  --nc-accent-strong: #c5dc9b;
+  --nc-accent-soft: rgba(197, 220, 155, 0.12);
+  --nc-accent-ring: rgba(197, 220, 155, 0.3);
+  --nc-on-accent: #f4fcd9;
+
+  /* ---- 选择框纹理（P4）：取 card-frame-active-dark.svg 的描边与缝针色 ---- */
+  --nc-frame-line: #c5dc9b;
+  --nc-frame-stitch: #94b574;
+
+  /* ---- 描边：深色下 alpha 必须比日间大得多才看得见（见 PHASE-1 §二 E5） ---- */
+  --nc-border: rgba(143, 168, 118, 0.28);
+  --nc-border-strong: rgba(143, 168, 118, 0.45);
+  --nc-border-hairline: rgba(143, 168, 118, 0.18);
+
+  /* ---- 中性填充：白 alpha 叠加，0.04~0.12 逐档 ---- */
+  --nc-fill-hover: rgba(255, 255, 255, 0.08);
+  --nc-fill-subtle: rgba(255, 255, 255, 0.04);
+  --nc-fill-subtle-strong: rgba(255, 255, 255, 0.06);
+
+  /* ---- 滚动条 ---- */
+  --nc-scrollbar-thumb: rgba(255, 255, 255, 0.14);
+  --nc-scrollbar-thumb-hover: rgba(255, 255, 255, 0.24);
+
+  /* ---- 阴影：深色下浅投影不可见，必须加深并提高 alpha ---- */
+  --nc-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --nc-shadow-md: 0 10px 30px rgba(0, 0, 0, 0.45);
+  --nc-shadow-lg: 0 18px 50px rgba(0, 0, 0, 0.55);
+
+  /* ---- 危险态：文字 6.92，填充走 alpha 叠加 ---- */
+  --nc-danger: #e08a78;
+  --nc-danger-softer: rgba(224, 138, 120, 0.08);
+  --nc-danger-soft: rgba(224, 138, 120, 0.14);
+  --nc-danger-softest: rgba(224, 138, 120, 0.18);
+  --nc-danger-border: rgba(224, 138, 120, 0.42);
+
+  /* ---- 警告态（琥珀）：文字 9.82；surface 是实底，不是 alpha ---- */
+  --nc-warning: #e8b862;
+  --nc-warning-weak: #e8b862;
+  --nc-warning-strong: #f0c878;
+  --nc-warning-surface: #2b2519;
+  --nc-warning-soft: rgba(232, 184, 98, 0.16);
+  --nc-warning-soft-warm: rgba(232, 184, 98, 0.14);
+  --nc-warning-border-strong: rgba(232, 184, 98, 0.5);
+  --nc-warning-border: rgba(232, 184, 98, 0.42);
+  --nc-warning-border-weak: rgba(232, 184, 98, 0.34);
+
+  /* ---- P2 新增：星空底 + 压暗层 + 半透明面板（M8：压暗，不是毛玻璃） ---- */
+
+  /* 压暗层：逐通道最小二乘拟合设计稿得主区等效 alpha≈0.75、叠加色≈rgb(35,39,47)；
+     这里取 0.58 起步（PHASE-2 §4.6c 的对比度表），出图后目视再调。 */
+  --nc-veil: linear-gradient(rgba(16, 23, 34, 0.58), rgba(16, 23, 34, 0.58));
+  /* 页面级面板：星空要透出来，同时正文压得住（最亮星云处正文 ≈10.9，见完成报告） */
+  --nc-page-surface: rgba(15, 22, 31, 0.62);
+  /* 侧栏：设计稿侧栏等效 alpha 0.86，比主区更重 */
+  --nc-panel-veil: rgba(15, 22, 31, 0.55);
+  /* 输入条：与背景图相关性 k≈-0.02（几乎无关）→ 它是实底而非半透明 */
+  --nc-composer-surface: rgba(16, 23, 34, 0.82);
+}
