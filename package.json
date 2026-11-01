@@ -1,0 +1,82 @@
+{
+  "name": "nahida-chat",
+  "productName": "Nahida Chat",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Nahida Chat - 桌面端 AI 聊天客户端",
+  "license": "UNLICENSED",
+  "packageManager": "pnpm@10.33.0",
+  "main": "./out/main/index.js",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "dev": "electron-vite dev",
+    "preview": "electron-vite preview",
+    "build": "electron-vite build && node scripts/build-snowluma-host.mjs",
+    "build:snowluma-host": "node scripts/build-snowluma-host.mjs",
+    "typecheck": "pnpm run typecheck:node && pnpm run typecheck:web",
+    "typecheck:node": "tsc -p tsconfig.node.json --noEmit",
+    "typecheck:web": "tsc -p tsconfig.web.json --noEmit",
+    "test:settings": "node scripts/test/settings-store.test.mjs",
+    "test": "pnpm run test:settings && pnpm run test:prompt && pnpm run test:memory && pnpm run test:permission && pnpm run test:discovery && pnpm run test:sandbox && pnpm run test:chat-guard && pnpm run test:qq-host && pnpm run test:qq-segment && pnpm run test:qq-queue && pnpm run test:qq-store && pnpm run test:qq-inbound && pnpm run test:qq-bridge && pnpm run test:qq-session-policy && pnpm run test:zones-store && pnpm run test:zones-scope && pnpm run test:channels-store && pnpm run test:channels-session && pnpm run test:memory-scope-migration && pnpm run test:memory-scope-isolation && pnpm run test:memory-scope-counts && pnpm run test:chat-sink",
+    "test:memory": "node scripts/test/memory-rag.test.mjs",
+    "test:permission": "node scripts/test/permission-modes.test.mjs",
+    "test:discovery": "node scripts/test/model-discovery.test.mjs",
+    "test:sandbox": "node scripts/test/workspace-sandbox.test.mjs",
+    "test:workspace": "electron scripts/test/workspace-multi-e2e.cjs",
+    "test:qq-host": "node scripts/test/qq-host.test.mjs",
+    "test:qq-host-action": "node scripts/test/qq-host-action.test.mjs",
+    "test:qq-segment": "node scripts/test/qq-segment.test.mjs",
+    "test:qq-queue": "node scripts/test/qq-queue.test.mjs",
+    "test:qq-store": "node scripts/test/qq-store.test.mjs",
+    "test:qq-inbound": "node scripts/test/qq-inbound.test.mjs",
+    "test:qq-bridge": "node scripts/test/qq-bridge.test.mjs",
+    "test:qq-session-policy": "node scripts/test/qq-session-policy.test.mjs",
+    "test:qq-bridge:electron": "electron scripts/test/qq-bridge-electron.cjs",
+    "test:qq-host:electron": "electron scripts/test/qq-host-electron.cjs",
+    "test:chat-sink": "node scripts/test/chat-sink.test.mjs",
+    "test:chat-guard": "node scripts/test/chat-broadcast-guard.test.mjs",
+    "test:zones-store": "node scripts/test/zones-store.test.mjs",
+    "test:zones-scope": "node scripts/test/zones-scope.test.mjs",
+    "test:channels-store": "node scripts/test/channels-store.test.mjs",
+    "test:channels-session": "node scripts/test/channels-session.test.mjs",
+    "test:memory-scope-migration": "node scripts/test/memory-scope-migration.test.mjs",
+    "test:memory-scope-isolation": "node scripts/test/memory-scope-isolation.test.mjs",
+    "test:memory-scope-counts": "node scripts/test/memory-scope-counts.test.mjs",
+    "test:chat-sink:electron": "electron scripts/test/chat-sink-electron.cjs",
+    "test:memory:model": "node scripts/test/memory-integration.test.mjs",
+    "test:memory:electron": "electron scripts/test/memory-electron.test.cjs",
+    "test:memory:e2e": "electron scripts/test/memory-e2e.cjs",
+    "test:model:conn": "node scripts/test/model-conn.test.mjs",
+    "test:model:live": "node scripts/test/chat-live.test.mjs",
+    "mock:llm": "node scripts/test/mock-openai-server.mjs",
+    "ui:map": "electron scripts/ui/generate-ui-map.cjs && node scripts/ui/write-ui-map-md.cjs docs/ui/ui-map-v0.json",
+    "test:prompt": "node scripts/test/prompt-library.test.mjs"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild",
+      "onnxruntime-node",
+      "protobufjs"
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^45.0.0",
+    "electron-vite": "^6.0.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-router-dom": "^7.18.4",
+    "typescript": "~5.9.3",
+    "vite": "^7.3.7",
+    "zustand": "^5.0.16"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "4.3.2"
+  }
+}

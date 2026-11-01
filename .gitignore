@@ -1,0 +1,34 @@
+# ---- 依赖与构建产物 ----
+node_modules/
+out/
+dist/
+release/
+*.log
+.DS_Store
+Thumbs.db
+.env
+.env.local
+
+# 本地 embedding 模型（几百 MB，不进仓库；首次运行前手动放到 models/）
+models/
+
+# ---- 开发过程产物：不进库 ----
+# 出图是「验收证据」，不是「程序资源」：可随时用 pnpm ui:map 重新生成。
+#
+# 注意必须写 docs/ui/* 而不是 docs/ui/ ：
+#   git 对「已被忽略的目录」根本不会进入，里面的 ! 取反规则就不会生效。
+#   写成 docs/ui/* 才能让下面的例外规则真正命中文件。
+docs/ui/*
+docs/ui-dark/*
+docs/ui-archive/
+docs/preview/
+
+# 例外：坐标表 + 手写对照表属于知识资产，保留进库（决策 H-19 / 方案乙）
+!docs/ui/UI_MAP.md
+!docs/ui/ui-map-v0.json
+!docs/ui-dark/UI_MAP.md
+!docs/ui-dark/ui-map-v0.json
+
+# 物理备份与一次性探针
+.p*-backup/
+.p*-probe/
