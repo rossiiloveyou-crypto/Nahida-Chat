@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 24" width="100%" height="24" preserveAspectRatio="none">
+  <!-- Left Line -->
+  <line x1="0" y1="12" x2="486" y2="12" stroke="#A3BA92" stroke-width="1" opacity="0.85" />
+  <!-- Center Floral Motif -->
+  <g transform="translate(500, 12)" fill="#8FA97C">
+    <!-- Diamond/Floral Center -->
+    <path d="M 0 -8 C 2 -3 4 -1 8 0 C 4 1 2 3 0 8 C -2 3 -4 1 -8 0 C -4 -1 -2 -3 0 -8 Z" />
+    <!-- Center Dot/Diamond Hole -->
+    <polygon points="0,-3 3,0 0,3 -3,0" fill="#F4F8F1" />
+    <!-- Flanking Nodes -->
+    <circle cx="-11" cy="0" r="1.5" fill="#8FA97C" />
+    <circle cx="11" cy="0" r="1.5" fill="#8FA97C" />
+  </g>
+  <!-- Right Line -->
+  <line x1="514" y1="12" x2="1000" y2="12" stroke="#A3BA92" stroke-width="1" opacity="0.85" />
+</svg>

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44" width="44" height="44" fill="none">
+  <defs>
+    <radialGradient id="sendBtnDarkGrad" cx="35%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#769E60" />
+      <stop offset="65%" stop-color="#4B7242" />
+      <stop offset="100%" stop-color="#355430" />
+    </radialGradient>
+  </defs>
+  <!-- Glowing Outer Ring -->
+  <circle cx="22" cy="22" r="20" fill="url(#sendBtnDarkGrad)" stroke="#DCECB2" stroke-width="1.5" />
+  <!-- Paper Plane Icon -->
+  <path d="M14 22 L29 14.5 L22 29.5 L20 23.5 L14 22 Z" fill="#F4FCD9" />
+  <path d="M20 23.5 L29 14.5" stroke="#4B7242" stroke-width="1.1" />
+</svg>

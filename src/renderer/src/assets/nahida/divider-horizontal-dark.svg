@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 24" width="100%" height="24" preserveAspectRatio="none">
+  <defs>
+    <linearGradient id="lineGradLeftDark" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#8FA876" stop-opacity="0.15" />
+      <stop offset="30%" stop-color="#9BB67E" stop-opacity="0.65" />
+      <stop offset="100%" stop-color="#D4E8B2" stop-opacity="0.9" />
+    </linearGradient>
+    <linearGradient id="lineGradRightDark" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#D4E8B2" stop-opacity="0.9" />
+      <stop offset="70%" stop-color="#9BB67E" stop-opacity="0.65" />
+      <stop offset="100%" stop-color="#8FA876" stop-opacity="0.15" />
+    </linearGradient>
+  </defs>
+  <!-- Left Line -->
+  <line x1="0" y1="12" x2="485" y2="12" stroke="url(#lineGradLeftDark)" stroke-width="1" />
+  <!-- Center Glowing Floral Motif -->
+  <g transform="translate(500, 12)" fill="#E2F2BA">
+    <path d="M 0 -8.5 C 2.2 -3.2 4.2 -1.2 8.5 0 C 4.2 1.2 2.2 3.2 0 8.5 C -2.2 3.2 -4.2 1.2 -8.5 0 C -4.2 -1.2 -2.2 -3.2 0 -8.5 Z" />
+    <polygon points="0,-3 3,0 0,3 -3,0" fill="#151D29" />
+    <circle cx="-11.5" cy="0" r="1.5" fill="#C5DC9B" />
+    <circle cx="11.5" cy="0" r="1.5" fill="#C5DC9B" />
+  </g>
+  <!-- Right Line -->
+  <line x1="515" y1="12" x2="1000" y2="12" stroke="url(#lineGradRightDark)" stroke-width="1" />
+</svg>

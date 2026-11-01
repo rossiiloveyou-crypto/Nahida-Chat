@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 800" width="28" height="100%" preserveAspectRatio="none">
+  <!-- Top Line -->
+  <line x1="14" y1="0" x2="14" y2="384" stroke="#A3BA92" stroke-width="1" opacity="0.85" />
+  <!-- Center Emblem -->
+  <g transform="translate(14, 400)" fill="#86A26F">
+    <path d="M0 -15 C2 -7 3 -3 0 0 C-3 -3 -2 -7 0 -15 Z" />
+    <path d="M0 15 C2 7 3 3 0 0 C-3 3 -2 7 0 15 Z" />
+    <path d="M-15 0 C-7 -2 -3 -3 0 0 C-3 3 -7 2 -15 0 Z" />
+    <path d="M15 0 C7 -2 3 -3 0 0 C3 3 7 2 15 0 Z" />
+    <path d="M-9 -9 C-4 -6 -2 -2 0 0 C-2 -2 -6 -4 -9 -9 Z" />
+    <path d="M9 -9 C4 -6 2 -2 0 0 C2 -2 6 -4 9 -9 Z" />
+    <path d="M-9 9 C-4 6 -2 2 0 0 C-2 2 -6 4 -9 9 Z" />
+    <path d="M9 9 C4 6 2 2 0 0 C2 2 6 4 9 9 Z" />
+    <polygon points="0,-4 4,0 0,4 -4,0" fill="#F4F8F1" />
+    <circle cx="0" cy="0" r="1.2" fill="#86A26F" />
+  </g>
+  <!-- Bottom Line -->
+  <line x1="14" y1="416" x2="14" y2="800" stroke="#A3BA92" stroke-width="1" opacity="0.85" />
+</svg>

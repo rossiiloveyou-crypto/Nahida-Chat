@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 800" width="28" height="100%" preserveAspectRatio="none">
+  <!-- Top Line -->
+  <line x1="14" y1="0" x2="14" y2="382" stroke="#8FA876" stroke-width="1" opacity="0.65" />
+  <!-- Center Luminous Sumeru Emblem -->
+  <g transform="translate(14, 400)" fill="#DCECB2">
+    <path d="M0 -15 C2.2 -7 3.2 -3 0 0 C-3.2 -3 -2.2 -7 0 -15 Z" />
+    <path d="M0 15 C2.2 -7 3.2 3 0 0 C-3.2 3 -2.2 7 0 15 Z" />
+    <path d="M-15 0 C-7 -2.2 -3 -3.2 0 0 C-3 3.2 -7 2.2 -15 0 Z" />
+    <path d="M15 0 C7 -2.2 3 -3.2 0 0 C3 3.2 7 2.2 15 0 Z" />
+    <path d="M-9 -9 C-4 -6 -2 -2 0 0 C-2 -2 -6 -4 -9 -9 Z" fill="#A9C682" />
+    <path d="M9 -9 C4 -6 2 -2 0 0 C2 -2 6 -4 9 -9 Z" fill="#A9C682" />
+    <path d="M-9 9 C-4 6 -2 2 0 0 C-2 2 -6 4 -9 9 Z" fill="#A9C682" />
+    <path d="M9 9 C4 6 2 2 0 0 C2 2 6 4 9 9 Z" fill="#A9C682" />
+    <polygon points="0,-4 4,0 0,4 -4,0" fill="#121924" />
+    <circle cx="0" cy="0" r="1.4" fill="#F2FCD6" />
+  </g>
+  <!-- Bottom Line -->
+  <line x1="14" y1="418" x2="14" y2="800" stroke="#8FA876" stroke-width="1" opacity="0.65" />
+</svg>
