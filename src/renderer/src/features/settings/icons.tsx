@@ -102,6 +102,18 @@ export function IconQq(props: IconProps) {
   )
 }
 
+/** P7：渠道控制台。两块白名单（私聊 / 群聊）—— 两条横杠各带一个圆点。 */
+export function IconChannels(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <circle cx="6" cy="8" r="1.8" />
+      <path d="M10 8h10" />
+      <circle cx="6" cy="16" r="1.8" />
+      <path d="M10 16h10" />
+    </svg>
+  )
+}
+
 export function IconPlus(props: IconProps) {
   return (
     <svg {...base(props)}>

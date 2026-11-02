@@ -1,8 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import type { ConversationMode } from '@shared/types'
-import { brandFor } from '../assets/nahida'
 import { useChatStore } from '../features/chat/store'
-import { useTheme } from '../features/settings/useTheme'
 import { WorkspaceSection } from '../features/workspace/WorkspaceSection'
 import { useWorkspaces } from '../features/workspace/useWorkspaces'
 
@@ -14,8 +12,6 @@ export function Sidebar() {
   const createSession = useChatStore((s) => s.createSession)
   const removeSession = useChatStore((s) => s.removeSession)
   const { catalog } = useWorkspaces()
-  // 品牌图日夜成对：resolved 是真正落到 DOM 的明暗，不是用户偏好（system 模式下两者不同）
-  const brand = brandFor(useTheme().resolved)
 
   /**
    * P6 G2：当前上下文模式 —— 有活动会话看会话，否则看草稿（草稿模式的真源在 store）。
@@ -48,8 +44,9 @@ export function Sidebar() {
 
   return (
     <aside className="sidebar" data-ui-region="A 会话侧栏">
+      {/* 侧栏顶部不再放品牌头像（用户 2026-11-02 指令：删掉）。
+          头像只用消息列表里的那一处，避免同一枚素材在窄侧栏里被压成 34px 糊成色块。 */}
       <div className="sidebar__brand">
-        <img className="brand-mark" src={brand.avatar} alt="" aria-hidden="true" />
         <div className="brand-text">
           <strong>Nahida Chat</strong>
           <span>本地优先的 AI 对话</span>

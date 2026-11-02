@@ -91,6 +91,8 @@ export type QqDropReason =
   | 'non-text'
   | 'unbound'
   | 'no-permission'
+  /** P9-R3：发言人不被允许（私聊不在账号白名单 / 群成员鉴权不通过） */
+  | 'not-authorized-member'
   | 'not-mentioned'
   | 'duplicate'
   | 'rate-limited'
@@ -130,8 +132,10 @@ export interface QqStats {
   droppedBadChat: number
   droppedNonText: number
   droppedUnbound: number
-  /** P6：在白名单里但 respond=false（P8 从这里分叉去旁听） */
+  /** 历史字段：v1 的「在白名单但 respond=false」。P9-R3 起群聊不再有这一位，保留只为兼容旧回执 */
   droppedNoPermission: number
+  /** P9-R3：发言人不在白名单 / 未授予该场景权限（按**人**判） */
+  droppedNotAuthorizedMember: number
   droppedNotMentioned: number
   droppedDuplicate: number
   droppedRateLimited: number

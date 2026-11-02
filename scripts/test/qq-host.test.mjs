@@ -102,6 +102,17 @@ const exitLog = []
 host.on('state', (s) => stateLog.push(s.state))
 host.on('exit', (info) => exitLog.push(info))
 
+// 🔴 D-06：`listProcesses().injected` 是**整台机器共享**的观测 ——
+// 用户桌面上正跑着的 Nahida Chat（或别的宿主）注入过的 QQ，在这里同样显示 injected=true。
+// 所以「所有 injected === false」实际断言的是「这台机器上没有任何人被注入」，
+// 这不是本测试要验的东西（要验的是：**本宿主自己**没有自动注入）。
+// 症状是假红：用户开着应用跑 pnpm test 必红，且与代码无关。
+//
+// 判据改成**本宿主自己的增量**：ready 之后取一次基线，跑完 RPC 再取一次，断言「没有新增」。
+// ⚠️ 不能把基线取在 host.start() **之前** —— 未启动的 QqHost 会让 listProcesses() 直接抛
+//    「snowluma-host is not ready」。启动窗口的注入由另一条判据守：
+//    「runtime.json 里 hookAutoLoad === false」+ 宿主不响应任何未经请求的 loadProcess。
+
 const t0 = Date.now()
 host.start()
 
@@ -136,11 +147,8 @@ check(
 console.log('RPC 往返')
 const list = await host.listProcesses()
 check('listProcesses 回数组', Array.isArray(list), Array.isArray(list) ? list.length + ' 条' : typeof list)
-check(
-  'listProcesses 里没有一个被注入（M2 / D2）',
-  list.every((p) => p.injected === false),
-  list.filter((p) => p.injected).map((p) => p.pid).join(',') || '全部 false'
-)
+// 基线：ready 时刻已经处于 injected 的 pid（可能是用户自己的 NC 干的，不算本宿主的账）
+const injectedAtReady = new Set(list.filter((p) => p.injected).map((p) => p.pid))
 check(
   '快照字段齐全（不残留 bigint 之类）',
   list.every(
@@ -164,6 +172,17 @@ check(
     Array.isArray(concurrent[1]) &&
     typeof concurrent[2].home === 'string'
 )
+
+// M2 / D2：本宿主运行期不得让任何进程变成 injected（判据是**增量**，不是全局全 false）
+{
+  const again = await host.listProcesses()
+  const added = again.filter((p) => p.injected && !injectedAtReady.has(p.pid)).map((p) => p.pid)
+  check(
+    '运行期没有新增被注入的进程（M2 / D2）',
+    added.length === 0,
+    'ready 时已注入 ' + injectedAtReady.size + ' 个（非本宿主所为）· 新增 ' + (added.join(',') || '无')
+  )
+}
 
 // 非法参数必须被宿主拒绝并原样回错误，而不是崩掉
 let badPidError = ''

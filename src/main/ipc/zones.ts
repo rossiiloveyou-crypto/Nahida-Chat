@@ -100,7 +100,7 @@ export function registerZonesIpcHandlers(): void {
       for (const member of zone.members) assigned.set(member.key, zone.zoneId)
     }
     return channelStore
-      .entries()
+      .sessions()
       .filter((entry) => !assigned.has(entry.key))
       .map((entry) => ({
         key: entry.key,

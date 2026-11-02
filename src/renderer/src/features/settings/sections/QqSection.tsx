@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import type { QqSettings } from '@shared/qq'
 import { useQq } from '../useQq'
 
@@ -26,6 +27,8 @@ const OUTCOME_LABEL: Record<string, string> = {
   'dropped-non-text': '非文本消息',
   'dropped-unbound': '不在白名单（不响应）',
   'dropped-no-permission': '在白名单但未授权回复',
+  // P9-R3：按「人」判 —— 私聊不在账号白名单 / 群成员鉴权没过，都记这个理由
+  'dropped-not-authorized-member': '发言人不被允许（按人授权）',
   'dropped-not-mentioned': '群里没 @ 她',
   'dropped-duplicate': '重复消息',
   'dropped-rate-limited': '触发限速',
@@ -81,8 +84,11 @@ export function QqSection() {
       </div>
 
       <p className="hint-text" data-ui-target="权限说明">
-        响应权限与白名单已移到「渠道控制台」（下一个版本提供）。当前版本可以在
-        %APPDATA%\Nahida Chat\channels\access.json 里直接写白名单条目。
+        谁来响应、谁能用工具，已经统一移到{' '}
+        <Link to="/settings/channels" data-ui-target="渠道控制台链接">
+          渠道控制台
+        </Link>
+        。这里只管宿主进程与出站行为。
       </p>
 
       {qq.loading && <p className="hint-text">读取中…</p>}

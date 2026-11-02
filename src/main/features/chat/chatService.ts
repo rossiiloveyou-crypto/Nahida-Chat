@@ -25,7 +25,9 @@ import type { ChatSink, ChatTurnOutcome, WindowLike } from './sink'
 import { windowSink } from './sink'
 import { sessionPolicy } from './sessionPolicy'
 import { permissionGate } from '../tools/permission'
+import { channelToolVerdict } from '../channels/toolGate'
 import { definitionOf, executeTool, listDefinitions } from '../tools/registry'
+import { clockNotice } from '../tools/clock'
 import { promptStore } from '../prompt/promptStore'
 import { memoryService } from '../rag'
 import { resolveProfile, resolveWorkspace, settingsStore } from '../settings/settingsStore'
@@ -303,12 +305,18 @@ class ChatService {
         ? ''
         : await this.recallMemory(userText, stored.memory, recallScopes).catch(() => '')
 
+    // 时间只在「这一轮开始时」采样一次。
+    // 放进循环里每步重取有两个坏处：工具循环一步一调会把时间戳刷成不同值，
+    // 模型刚说完「凌晨 0:27」下一步又看到「0:28」，会开始纠结自己算错了。
+    // 需要更新鲜的时间时，模型调 clock.now 即可。
+    const clockBlock = clockNotice()
+
     let outcome: ChatTurnOutcome
     try {
       for (let turn = 0; turn < MAX_TOOL_TURNS; turn += 1) {
         if (controller.signal.aborted) break
 
-        const payload = this.buildPayload(session, memoryBlock)
+        const payload = this.buildPayload(session, memoryBlock, clockBlock)
         const calls: ToolCallRecord[] = []
 
         for await (const event of provider.stream({
@@ -431,6 +439,28 @@ class ChatService {
       return
     }
 
+    // ── P9-R3：渠道工具闸门。**按发言人判，不按会话判**（在 permissionGate 之前）──
+    //
+    // 为什么必须在 permissionGate 之前：
+    //  1. 「这个人根本没被授权用工具」比「当前权限模式禁止」更前置、更好懂；
+    //  2. permissionGate 在 approve 模式下会 request()，对 QQ 会 emit 一张永远没人点的
+    //     审批卡（QqSink 会 presentApproval）。对本来就没权限的人弹卡是纯噪音。
+    //
+    // 为什么这里不看 session.mode：供给与授权正交（M24）。工具目录照常给模型，
+    // 拦的是**执行**，不是**可见性**（J-65）。
+    //
+    // senderId === null（桌面 / 无头 sink）→ 整体跳过，桌面行为零变化（R3-C12）。
+    const senderId = sink.senderId
+    if (senderId) {
+      const verdict = channelToolVerdict(senderId, session.id)
+      if (!verdict.allowed) {
+        record.status = 'denied'
+        record.error = verdict.reason
+        this.emitTool(sink, session, message)
+        return
+      }
+    }
+
     const decision = permissionGate.evaluate(record.name, record.readOnly)
     if (decision === 'deny') {
       record.status = 'denied'
@@ -482,7 +512,7 @@ class ChatService {
     this.emitTool(sink, session, message)
   }
 
-  private buildPayload(session: Session, memoryBlock: string): LlmMessage[] {
+  private buildPayload(session: Session, memoryBlock: string, clockBlock: string): LlmMessage[] {
     const payload: LlmMessage[] = []
 
     // 提示词按角色 + 模式现场拼：shared/base -> soul -> worldbook -> styles/<mode>
@@ -492,6 +522,12 @@ class ChatService {
     } catch (error) {
       console.warn('[chat] 系统提示词组装修复失败', error)
     }
+
+    // 时间作为独立的一段 system 注入，理由和记忆一样：
+    // 它是「事实」不是「人格」，而且会过期——用户改提示词文件时不该碰它，
+    // 它也不该出现在 Prompt/ 目录里让用户误以为是可编辑的人设文本。
+    // 必须在人格之后：越靠后越贴近这次回答，时间必须压过人设里的任何时间描述。
+    if (clockBlock) payload.push({ role: 'system', content: clockBlock })
 
     // 记忆作为独立的一段 system 注入，不拼进人格提示词。
     // 理由：人格是「怎么说话」，记忆是「已经知道什么」，两者的生命周期

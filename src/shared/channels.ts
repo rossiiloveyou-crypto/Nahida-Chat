@@ -1,12 +1,19 @@
 /**
- * 渠道授权（P6）——外部聊天对象 ↔ 本机权限的**唯一真源**。
+ * 渠道授权的**共享契约**（P6 → P9-R3）。
  *
- * 与 P4 绑定表的区别（这是本 Phase 的核心变更）：
- *   绑定表             : 外部会话 → **手工绑一条 NC 会话**（sessionId 是外来 UUID）
- *   ChannelAccessEntry : 外部会话 → **权限位**；会话 id 由外部键直接算出来
+ * 🔴 v1 的「会话级白名单」已经**不是授权主体**了（用户 2026-11-02：
+ *    「不是按照会话给权限，粒度太粗了」）。授权模型搬到了
+ *    `shared/channelAccess.ts`：一个 QQ 号一条账号记录 + 一个群号一条群记录。
  *
- * 「有条目」= 在白名单里；「respond=false」= 在白名单里但不自动回复（P8 的旁听就用它）。
- * 没有任何条目 = 完全不响应、不旁听、不落库。
+ * 本文件保留的**只有会话身份的工具**（key 的拼装 / 反解 / 认不认得出是渠道会话）
+ * 与两处仍需「会话维度」投影的展示类型：
+ *
+ *   ChannelAccessEntry  —— v1 条目的形状。**只剩迁移与兼容读**（store 的 normalizeConfig 读它）。
+ *   UnzonedChannelItem  —— 区块面板的候选行（会话维度，由白名单投影而来）。
+ *   ChannelPermissions  —— v1 权限位。同样只剩迁移用途。
+ *
+ * 「有条目」这套 v1 语义已由 `boundOf()`（bridge.ts）取代：
+ *   群聊 = 群号在 groups[] 里；私聊 = 该号在 accounts[] 里。
  *
  * 本文件**零运行时依赖**（只 export 类型与纯函数），主进程 / preload / 渲染层都能直接引。
  * host 侧不 import 它。
@@ -18,11 +25,18 @@ export type ChannelChatType = 'private' | 'group'
 /** 会话 id 前缀（渠道会话 id = 外部键本身，见 channelSessionIdOf） */
 const CHANNEL_SESSION_PREFIX = 'qq:'
 
-/** 权限位。P6 只存，P9 才按 tool 拦截；respond 在 P6 就生效（bridge 闸门） */
+/**
+ * v1 的会话级权限位。
+ *
+ * 🔴 **P9-R3 起不再是授权判定的依据**（判定改按「人」，见 shared/channelAccess.ts）。
+ *    它只剩两个用途：
+ *      ① 迁移：v1 条目 → v2 账号/群时逐条读它（chatType='private' 的 respond → private 位）；
+ *      ② 兼容：手改的老文件仍能被读进来，不必先跑迁移。
+ */
 export interface ChannelPermissions {
   /** 允许自动回复（触达模型） */
   respond: boolean
-  /** 允许工具调用（P9 生效；P6 仅存值） */
+  /** 允许工具调用 */
   tool: boolean
 }
 
@@ -32,9 +46,8 @@ export const DEFAULT_CHANNEL_PERMISSIONS: ChannelPermissions = {
 }
 
 /**
- * 一条白名单条目。
- * key 与 P4 的 bindingKey 完全同构（qq:<uin>:<chatType>:<chatId>），
- * 目的：zones.json 里已存在的成员 key **一个字节都不用改**（P6 §4.7 断言 A6）。
+ * v1 的一条白名单条目（**只剩迁移读它**）。
+ * key 与 P4 的 bindingKey 完全同构（qq:<uin>:<chatType>:<chatId>）。
  */
 export interface ChannelAccessEntry {
   key: string
@@ -45,52 +58,44 @@ export interface ChannelAccessEntry {
   /** 群名 / 昵称。空串表示用户没填；UI 显示时回落 chatId */
   label: string
   permissions: ChannelPermissions
-  /** 最近一次命中白名单的时间（0 = 从未）。P7 面板按它排序 */
+  /** 最近一次命中白名单的时间（0 = 从未） */
   lastAt: number
   createdAt: number
   updatedAt: number
 }
 
-/** `userData/channels/access.json` 的整体形状 */
+/** v1 文件的整体形状。**只用于迁移读取**；v2 见 shared/channelAccess.ts */
 export interface ChannelAccessFile {
   version: 1
   entries: ChannelAccessEntry[]
 }
 
-/** 新建 / 修改白名单时提交的草稿 */
-export interface ChannelAccessDraft {
-  channel?: ChannelId
-  uin: string
-  chatType: ChannelChatType
-  chatId: string
-  label?: string
-  permissions?: Partial<ChannelPermissions>
-}
-
-/** `channels:status` 的回执：让用户知道文件在哪（和 QqStatusPayload.dataDir 同一思路） */
+/** `channels:status` 的回执：让用户知道文件在哪 */
 export interface ChannelStatusPayload {
   dataDir: string
   file: string
+  /** 账号数 + 群数 */
   count: number
+  accounts: number
+  groups: number
 }
 
 /**
- * 「还没归区」的候选会话（P6 G8，P7 面板要用）。
+ * 「还没归区」的候选会话（P6 G8，P7 面板要用）—— **会话维度**的投影。
  *
- * 只有白名单条目才会出现在这里：加了白名单就能在区块面板里看到它，
- * 与「有没有说过话」彻底解耦（用户明确要求的行为，M20）。
+ * 来源是白名单（v2 的 accounts + groups × 已知 uin），与「有没有说过话」彻底解耦。
  */
 export interface UnzonedChannelItem {
   key: string
   uin: string
   chatType: ChannelChatType
   chatId: string
-  /** 白名单 label（群名/昵称），空串表示没填 */
+  /** 备注（群名 / 昵称），空串表示没填 */
   label: string
   /** 已经在某个区块里？是的话 zoneId 给出 */
   inZone: boolean
   zoneId: string | null
-  /** 权限位（P7 面板显示用；P6 只是带出去） */
+  /** 权限位（区块面板显示用，**判定不信它**） */
   permissions: ChannelPermissions
   lastAt: number
 }

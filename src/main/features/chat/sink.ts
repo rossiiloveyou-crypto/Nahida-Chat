@@ -41,6 +41,15 @@ export interface WebContentsLike {
  */
 export interface ChatSink {
   readonly kind: 'webContents' | 'headless' | 'qq'
+  /**
+   * 渠道消息的发言人（QQ 号）。桌面 / 无头 sink 恒为 null。
+   *
+   * P9-R3：工具闸门按**人**判权限，判定点在 chatService.runTool。
+   * 把发言人挂在 sink 上，而不是给 runStream 再加一个位置参数 ——
+   * 那个改法要动 begin / sendAwait 的三处转发，还会让「桌面永远传 null」散落各处。
+   * sink 是这一轮的呈现端，发言人本来就属于「谁发起了这一轮」。
+   */
+  readonly senderId: string | null
   /** 替代原来的 sender.isDestroyed() */
   isAlive(): boolean
   /**
@@ -63,6 +72,8 @@ export interface ChatSink {
  */
 export class WebContentsSink implements ChatSink {
   readonly kind = 'webContents' as const
+  /** 桌面会话没有渠道发言人：整体跳过渠道闸门（R3-C12） */
+  readonly senderId: null = null
 
   constructor(private readonly sender: WebContentsLike) {}
 
@@ -108,6 +119,8 @@ export class WebContentsSink implements ChatSink {
  */
 export class HeadlessSink implements ChatSink {
   readonly kind: 'headless' | 'qq' = 'headless'
+  /** 无头 / QQ 基类没有发言人。QqSink 覆盖它 */
+  readonly senderId: string | null = null
 
   /** 累积的正文（delta 逐片追加） */
   content = ''
@@ -170,6 +183,7 @@ export function windowSink(sender: WebContentsLike): ChatSink {
 /** 全部 no-op 的 sink：压测 / 冒烟 / 只想跑完一轮不要结果时用。 */
 export class NullSink implements ChatSink {
   readonly kind = 'headless' as const
+  readonly senderId: null = null
   isAlive(): boolean {
     return true
   }

@@ -65,26 +65,67 @@ function groupEvent(id, value, { mentioned = true, overrides = {} } = {}) {
   }
 }
 
-/** 构造一条白名单条目（key 与 channelKeyOf 同构） */
+/**
+ * 把「会话键」翻译成 v2 授权配置（P9-R3：授权主体是**人 + 群**，不再是会话）。
+ *
+ * 测试里仍然想用 qq:<uin>:private:<号> / qq:<uin>:group:<群号> 这种一眼能读懂的字面量，
+ * 所以留了这一层翻译：私聊键 → 一个账号（默认 private=true），群键 → 一个群条目。
+ * overrides.permissions 里给的位原样套到账号上（群条目没有权限位）。
+ */
 function entry(key, overrides = {}) {
   const parts = key.split(':')
+  const chatType = parts[2]
+  const chatId = parts[3]
+  const permissions = overrides.permissions || {}
+  const label = overrides.label || ''
+  return { chatType, chatId, uin: parts[1], permissions, label }
+}
+
+/** 把 entry(...) 的数组折成 v2 配置（同一批 uin 也记下来） */
+function configOf(list = [], patch = {}) {
+  const accounts = []
+  const groups = []
+  const uins = []
+  for (const item of list) {
+    if (item.uin && !uins.includes(item.uin)) uins.push(item.uin)
+    if (item.chatType === 'private') {
+      accounts.push({
+        channel: 'qq',
+        userId: item.chatId,
+        label: item.label,
+        addedAt: 1,
+        lastAt: 0,
+        permissions: {
+          private: item.permissions.respond !== false,
+          group: true,
+          tool: item.permissions.tool === true
+        }
+      })
+    } else {
+      groups.push({ channel: 'qq', chatId: item.chatId, label: item.label, addedAt: 1, lastAt: 0 })
+    }
+  }
   return {
-    key,
-    channel: 'qq',
-    uin: parts[1],
-    chatType: parts[2],
-    chatId: parts[3],
-    label: '',
-    permissions: { respond: true, tool: false },
-    lastAt: 0,
-    createdAt: 1,
-    updatedAt: 1,
-    ...overrides
+    version: 2,
+    groupMemberGate: false,
+    toolGate: true,
+    accounts,
+    groups,
+    uins,
+    ...patch
   }
 }
 
 function harness(options = {}) {
-  const state = { calls: [], chatCalls: [], broadcasts: [], handler: null, sessionCalls: [], touched: [] }
+  const state = {
+    calls: [],
+    chatCalls: [],
+    broadcasts: [],
+    handler: null,
+    sessionCalls: [],
+    touched: [],
+    uins: []
+  }
   const settings = {
     ...DEFAULT_QQ_SETTINGS,
     segmentDelayMs: 30,
@@ -134,19 +175,41 @@ function harness(options = {}) {
     }
   }
   const store = {
-    access: () => options.access || [],
+    // P9-R3：授权配置（账号 + 群 + 两个开关）。options.access 仍是一串会话键构造器，
+    // 由 configOf 折成 v2 形状；要测「群成员鉴权打开」时给 options.config 覆盖。
+    access: () => options.config || configOf(options.access || []),
     settings: () => settings,
-    touchAccess: (key, at) => state.touched.push({ key, at })
+    touchAccess: (key, at) => state.touched.push({ key, at }),
+    rememberUin: (uin) => state.uins.push(uin)
   }
+  // P8：旁听。默认**不注入**（= 不旁听），要测采集的用例显式给 options.observe。
+  // 注入的这个假 store 记录每次 append 的整条记录，供断言检查全文与 outcome。
+  const observeRecords = []
+  const observe =
+    options.observe === undefined
+      ? undefined
+      : options.observe === 'throw'
+        ? {
+            append: (record) => {
+              observeRecords.push(record)
+              throw new Error('磁盘满了')
+            }
+          }
+        : {
+            append: (record) => {
+              observeRecords.push(record)
+            }
+          }
   const bridge = createQqBridge({
     host,
     chat,
     store,
+    ...(observe ? { observe } : {}),
     ensureSession: (sessionId, title) => state.sessionCalls.push({ sessionId, title }),
     broadcast: (channel, payload) => state.broadcasts.push({ channel, payload }),
     sleep
   })
-  return { bridge, state, settings }
+  return { bridge, state, settings, observeRecords }
 }
 
 const typingCalls = (state, settings) =>
@@ -243,10 +306,15 @@ console.log('不该响应的三类')
   check('计成 dropped-self-echo', h.bridge.feed().some((item) => item.outcome === 'dropped-self-echo'))
 }
 {
+  // P9-R3：私聊**没有「unbound」这个理由了**。私聊准入按**发言人**判，
+  // 陌生人私聊记 dropped-not-authorized-member（「不在 QQ 号白名单中」）。
+  // unbound 现在只表示「这个群不在群白名单里」。
   const h = harness({ access: [] })
   await h.bridge.handleEvent(SELF, privateEvent(7, '没在白名单'))
-  check('不在白名单 → sendAwait 0 次', h.state.chatCalls.length === 0, h.state.chatCalls.length)
-  check('计成 dropped-unbound', h.bridge.feed().some((item) => item.outcome === 'dropped-unbound'))
+  check('陌生人私聊 → sendAwait 0 次', h.state.chatCalls.length === 0, h.state.chatCalls.length)
+  check('计成 dropped-not-authorized-member', h.bridge.feed().some((item) => item.outcome === 'dropped-not-authorized-member'))
+  check('统计进 droppedNotAuthorizedMember', h.bridge.stats().droppedNotAuthorizedMember === 1, h.bridge.stats().droppedNotAuthorizedMember)
+  check('不碰 unbound 计数（两种理由可区分，J-29）', h.bridge.stats().droppedUnbound === 0, h.bridge.stats().droppedUnbound)
   check('也不创建会话', h.state.sessionCalls.length === 0, h.state.sessionCalls.length)
 }
 {
@@ -254,6 +322,11 @@ console.log('不该响应的三类')
   await h.bridge.handleEvent(SELF, groupEvent(8, '没叫她', { mentioned: false }))
   check('白名单里的群但没 @ → sendAwait 0 次', h.state.chatCalls.length === 0, h.state.chatCalls.length)
   check('计成 dropped-not-mentioned', h.bridge.feed().some((item) => item.outcome === 'dropped-not-mentioned'))
+  // 🔴 F-01 已修（P9-R3 §15.6.2 / J-56）：ensureSession / touchAccess 整体后移到
+  //    「群白名单 → @ → 成员鉴权」全部判定**之后**。被挡下的消息不建会话、不写盘。
+  check('F-01 回归：未 @ 不建会话（副作用排在判定之后）', h.state.sessionCalls.length === 0, h.state.sessionCalls.length)
+  check('F-01 回归：未 @ 不 touch 写盘', h.state.touched.length === 0, h.state.touched.length)
+  check('F-01 回归：未 @ 也不记 droppedNotAuthorizedMember（顺序对）', h.bridge.stats().droppedNotAuthorizedMember === 0, h.bridge.stats().droppedNotAuthorizedMember)
 }
 
 /* ── 13-14：typing 仅私聊 ─────────────────────────────────────────────── */
@@ -365,17 +438,19 @@ console.log('记忆隔离接线')
 
 /* ── P6 新增：白名单权限位 / 会话自动派生 ─────────────────────────────── */
 
-console.log('P6 · no-permission 分叉')
+console.log('P9-R3 · 私聊准入改按人（原 P6 的 respond 位已废弃）')
 {
+  // v1 的「在白名单但 respond=false」在 v2 里就是「账号存在但 private=false」。
+  // 两者的**外部表现一致**（不回），但理由变了：现在是「未授予私聊权限」，按人判。
   const h = harness({
     access: [entry(PRIVATE_KEY, { permissions: { respond: false, tool: false } })]
   })
   await h.bridge.handleEvent(SELF, privateEvent(19, '只旁听'))
-  check('在白名单但 respond=false → sendAwait 0 次', h.state.chatCalls.length === 0, h.state.chatCalls.length)
-  check('计成 dropped-no-permission（不是 unbound）', h.bridge.feed().some((item) => item.outcome === 'dropped-no-permission'))
-  check('统计进 droppedNoPermission', h.bridge.stats().droppedNoPermission === 1, h.bridge.stats().droppedNoPermission)
+  check('private=false → sendAwait 0 次', h.state.chatCalls.length === 0, h.state.chatCalls.length)
+  check('计成 dropped-not-authorized-member', h.bridge.feed().some((item) => item.outcome === 'dropped-not-authorized-member'))
+  check('统计进 droppedNotAuthorizedMember', h.bridge.stats().droppedNotAuthorizedMember === 1, h.bridge.stats().droppedNotAuthorizedMember)
   check('unbound 计数保持 0（两种理由可区分，J-29）', h.bridge.stats().droppedUnbound === 0, h.bridge.stats().droppedUnbound)
-  check('也不创建会话（P8 才从这里分叉去旁听）', h.state.sessionCalls.length === 0, h.state.sessionCalls.length)
+  check('也不创建会话（副作用排在判定之后）', h.state.sessionCalls.length === 0, h.state.sessionCalls.length)
 }
 
 console.log('P6 · 会话自动派生')
@@ -400,6 +475,202 @@ console.log('P6 · 会话自动派生')
     void h3.bridge.handleEvent(SELF, privateEvent(23, '在吗'))
     return h3.state.sessionCalls[0].title === '20002'
   })())
+}
+
+/* ── P8：旁听采集（§4.3 资格 / §4.4 单点写入） ─────────────────────────── */
+
+console.log('P8 · 旁听采集')
+{
+  const h = harness({ access: [entry(PRIVATE_KEY)], observe: true, content: '收到。' })
+  await h.bridge.handleEvent(SELF, privateEvent(30, '你好呀，今天过得怎么样？'))
+  check('1 私聊在白名单 → 采了 1 次', h.observeRecords.length === 1, h.observeRecords.length)
+  check(
+    '1 record.text 是全文（不是 60 字预览）',
+    h.observeRecords[0]?.text === '你好呀，今天过得怎么样？',
+    h.observeRecords[0]?.text
+  )
+  const rec = h.observeRecords[0] || {}
+  check('1 allowed=true / triggered=true / outcome=responded', rec.allowed === true && rec.triggered === true && rec.outcome === 'responded', [rec.allowed, rec.triggered, rec.outcome].join('/'))
+  check('1 sessionId 与 key 都是外部键', rec.sessionId === PRIVATE_KEY && rec.key === PRIVATE_KEY, rec.key)
+  check('1 segmentTypes 是 [text]', JSON.stringify(rec.segmentTypes) === '["text"]', JSON.stringify(rec.segmentTypes))
+}
+{
+  // 2026-11-01「P8 = 群语料」：群聊**全采**，不看白名单、不看区块开关
+  const h = harness({ access: [entry(GROUP_KEY)], observe: true, content: '嗯。' })
+  await h.bridge.handleEvent(
+    SELF,
+    groupEvent(31, '没叫她', { mentioned: false, overrides: { group_name: '测试群' } })
+  )
+  check('2 not-mentioned 的群消息仍被采', h.observeRecords.length === 1, h.observeRecords.length)
+  check('2 triggered===false', h.observeRecords[0]?.triggered === false)
+  check('2 outcome===dropped-not-mentioned', h.observeRecords[0]?.outcome === 'dropped-not-mentioned', h.observeRecords[0]?.outcome)
+  check('2 群名从原始事件取到（chatLabel 非空）', h.observeRecords[0]?.chatLabel === '测试群', h.observeRecords[0]?.chatLabel)
+}
+{
+  // 区块开关在 P8 已不参与采集：没有开关可用，这里验「不在白名单的群照采」
+  const h = harness({ access: [], observe: true })
+  await h.bridge.handleEvent(SELF, groupEvent(32, '野生群里的闲聊'))
+  check('3 不在白名单的群 → **照采**（P8 群语料口径）', h.observeRecords.length === 1, h.observeRecords.length)
+  check('3 allowed=false 被如实记下', h.observeRecords[0]?.allowed === false)
+  check('3 outcome===dropped-unbound', h.observeRecords[0]?.outcome === 'dropped-unbound', h.observeRecords[0]?.outcome)
+}
+{
+  const h = harness({
+    access: [entry(PRIVATE_KEY, { permissions: { respond: false, tool: false } })],
+    observe: true
+  })
+  await h.bridge.handleEvent(SELF, privateEvent(33, '只旁听'))
+  check('4 账号存在但没给私聊权限 → 仍采（旁听主场景）', h.observeRecords.length === 1, h.observeRecords.length)
+  check('4 outcome===dropped-not-authorized-member', h.observeRecords[0]?.outcome === 'dropped-not-authorized-member', h.observeRecords[0]?.outcome)
+}
+{
+  const h = harness({ access: [], observe: true })
+  await h.bridge.handleEvent(SELF, privateEvent(34, '陌生人私聊'))
+  check('5 陌生人私聊 → 不采', h.observeRecords.length === 0, h.observeRecords.length)
+  check('5 统计记 droppedNotAuthorizedMember', h.bridge.stats().droppedNotAuthorizedMember === 1, h.bridge.stats().droppedNotAuthorizedMember)
+  check('5 unbound 计数保持 0（私聊不再产生这个理由）', h.bridge.stats().droppedUnbound === 0, h.bridge.stats().droppedUnbound)
+}
+{
+  const h = harness({ access: [entry(PRIVATE_KEY)], observe: true, content: '收到。' })
+  await h.bridge.handleEvent(SELF, privateEvent(35, '同一句'))
+  await h.bridge.handleEvent(SELF, privateEvent(35, '同一句'))
+  check('6 duplicate → 只采第一次', h.observeRecords.length === 1, h.observeRecords.length)
+  check('6 去重计数照常', h.bridge.stats().droppedDuplicate === 1, h.bridge.stats().droppedDuplicate)
+}
+{
+  const h = harness({ access: [entry(PRIVATE_KEY)], observe: 'throw', content: '照发。' })
+  await h.bridge.handleEvent(SELF, privateEvent(36, '写盘会炸'))
+  const body = bodyCalls(h.state, h.settings)
+  check('7 写盘抛错 → 回复照常发出（sendAwait 被调用）', h.state.chatCalls.length === 1, h.state.chatCalls.length)
+  check('7 正文仍然发出去了', body.length > 0, body.length)
+  check('7 append 确实被调过（不是没走到）', h.observeRecords.length === 1, h.observeRecords.length)
+}
+{
+  const h = harness({ access: [entry(GROUP_KEY)], observe: true, content: '嗯。' })
+  await h.bridge.handleEvent(SELF, groupEvent(37, '叫她'))
+  check('8 responded → triggered===true', h.observeRecords[0]?.triggered === true && h.observeRecords[0]?.outcome === 'responded', h.observeRecords[0]?.outcome)
+  check('8 群名片落库（speakerCard）', h.observeRecords[0]?.speakerCard === '小明', h.observeRecords[0]?.speakerCard)
+}
+{
+  const h = harness({ access: [entry(PRIVATE_KEY)], content: '不管。' })
+  await h.bridge.handleEvent(SELF, privateEvent(38, '不注入 observe'))
+  check('9 不注入 observe → 一条都不写（默认不旁听）', h.observeRecords.length === 0, h.observeRecords.length)
+  check('9 但回复照常', h.state.chatCalls.length === 1, h.state.chatCalls.length)
+}
+{
+  const h = harness({ access: [entry(PRIVATE_KEY)], observe: true, content: '嗯。', settings: { rateLimitPerUser: 1 } })
+  await h.bridge.handleEvent(SELF, privateEvent(39, '第一句'))
+  await h.bridge.handleEvent(SELF, privateEvent(40, '第二句'))
+  check('10 限速挡下的那条也采（outcome=dropped-rate-limited）', h.observeRecords.length === 2 && h.observeRecords[1].outcome === 'dropped-rate-limited', h.observeRecords.map((r) => r.outcome).join(','))
+  check('10 被挡的那条 triggered=false', h.observeRecords[1].triggered === false)
+}
+
+/* ── P8 附二 B：去重键必须带会话维度（J-59） ────────────────────────────── */
+
+console.log('P8 · 去重键带 chatId')
+{
+  // 旧的 uin:messageId 会让后到的消息被静默丢弃：群 A 与私聊撞同一个 message_id
+  const h = harness({
+    access: [entry(GROUP_KEY), entry(PRIVATE_KEY), entry('qq:10001:group:99999')],
+    observe: true,
+    content: '嗯。'
+  })
+  await h.bridge.handleEvent(SELF, groupEvent(77, '群里说的'))
+  await h.bridge.handleEvent(SELF, privateEvent(77, '私聊说的'))
+  await h.bridge.handleEvent(SELF, groupEvent(77, '另一个群说的', { overrides: { group_id: 99999 } }))
+  check('不同会话的同 message_id 不互相去重（3 条都进管线）', h.state.chatCalls.length === 3, h.state.chatCalls.length)
+  check('三条都被旁听记下', h.observeRecords.length === 3, h.observeRecords.length)
+}
+{
+  const h = harness({ access: [entry(GROUP_KEY), entry(PRIVATE_KEY)], observe: true, content: '嗯。' })
+  await h.bridge.handleEvent(SELF, groupEvent(78, '同一句'))
+  await h.bridge.handleEvent(SELF, groupEvent(78, '同一句'))
+  check('同一会话同一 message_id 仍然去重', h.state.chatCalls.length === 1, h.state.chatCalls.length)
+}
+
+/* ── P9-R3：按「人」判的端到端（R3-B1…B9） ─────────────────────────────── */
+
+console.log('P9-R3 · 私聊准入按发言人')
+{
+  const h = harness({ access: [], content: '嗯。' })
+  await h.bridge.handleEvent(SELF, privateEvent(90, '陌生人'))
+  check(
+    'B1 私聊 + 不在白名单 → sendAwait 0 次、计 droppedNotAuthorizedMember',
+    h.state.chatCalls.length === 0 && h.bridge.stats().droppedNotAuthorizedMember === 1,
+    h.state.chatCalls.length + '/' + h.bridge.stats().droppedNotAuthorizedMember
+  )
+}
+{
+  const h = harness({ access: [entry(PRIVATE_KEY)], content: '嗯。' })
+  await h.bridge.handleEvent(SELF, privateEvent(91, '在白名单'))
+  check('B2 私聊 + private=true → 回复', h.state.chatCalls.length === 1, h.state.chatCalls.length)
+}
+
+console.log('P9-R3 · 群聊三件事')
+{
+  const h = harness({ access: [], observe: true })
+  await h.bridge.handleEvent(SELF, groupEvent(92, '野生群'))
+  check(
+    'B3 群 + 不在群白名单 → 0 回复、计 droppedUnbound',
+    h.state.chatCalls.length === 0 && h.bridge.stats().droppedUnbound === 1,
+    h.state.chatCalls.length + '/' + h.bridge.stats().droppedUnbound
+  )
+  check('B3 旁听仍写一行（M32：未加白的群照样攒语料）', h.observeRecords.length === 1, h.observeRecords.length)
+}
+{
+  const h = harness({ access: [entry(GROUP_KEY)], observe: true })
+  await h.bridge.handleEvent(SELF, groupEvent(93, '没叫她', { mentioned: false }))
+  check(
+    'B4 群 + 在白名单 + 未 @ → 0 回复、计 droppedNotMentioned',
+    h.state.chatCalls.length === 0 && h.bridge.stats().droppedNotMentioned === 1,
+    h.bridge.stats().droppedNotMentioned
+  )
+  check('B4 旁听仍写', h.observeRecords.length === 1, h.observeRecords.length)
+}
+{
+  const h = harness({ access: [entry(GROUP_KEY)], content: '嗯。' })
+  await h.bridge.handleEvent(SELF, groupEvent(94, '叫她'))
+  check('B5 群成员鉴权关闭（默认）→ 发言人不在白名单也回', h.state.chatCalls.length === 1, h.state.chatCalls.length)
+}
+{
+  const config = { ...configOf([entry(GROUP_KEY)]), groupMemberGate: true }
+  const h = harness({ config, content: '嗯。' })
+  await h.bridge.handleEvent(SELF, groupEvent(95, '叫她'))
+  check(
+    'B6 群成员鉴权打开 + 发言人不在白名单 → 0 回复、计 droppedNotAuthorizedMember',
+    h.state.chatCalls.length === 0 && h.bridge.stats().droppedNotAuthorizedMember === 1,
+    h.state.chatCalls.length + '/' + h.bridge.stats().droppedNotAuthorizedMember
+  )
+}
+{
+  // 同一个群里两个人不同待遇：A（20002）在名单；B（40004）不在名单
+  const config = { ...configOf([entry(GROUP_KEY), entry(PRIVATE_KEY)]), groupMemberGate: true }
+  const h = harness({ config, content: '嗯。' })
+  await h.bridge.handleEvent(SELF, groupEvent(96, 'A 说话'))
+  const afterA = h.state.chatCalls.length
+  await h.bridge.handleEvent(
+    SELF,
+    groupEvent(97, 'B 说话', { overrides: { user_id: 40004, sender: { user_id: 40004, nickname: '小红' } } })
+  )
+  check(
+    'B7 鉴权打开 + 发言人在名单 → 回；不在名单 → 不回（同一群两种待遇）',
+    afterA === 1 && h.state.chatCalls.length === 1,
+    afterA + '→' + h.state.chatCalls.length
+  )
+}
+{
+  const h = harness({ access: [] })
+  await h.bridge.handleEvent(SELF, groupEvent(98, '野生群没叫她', { mentioned: false }))
+  check(
+    'B8 闸门顺序：群未加白 + 未 @ → droppedUnbound（不是 not-mentioned）',
+    h.bridge.stats().droppedUnbound === 1 && h.bridge.stats().droppedNotMentioned === 0,
+    JSON.stringify({ unbound: h.bridge.stats().droppedUnbound, notMentioned: h.bridge.stats().droppedNotMentioned })
+  )
+}
+{
+  const h = harness({ access: [entry(GROUP_KEY)], content: '嗯。' })
+  await h.bridge.handleEvent(SELF, groupEvent(99, '叫她'))
+  check('B9 机器人登录号被记下来（群白名单要能展开成会话键）', h.state.uins.includes(SELF), JSON.stringify(h.state.uins))
 }
 
 done()

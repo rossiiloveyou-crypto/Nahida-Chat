@@ -89,11 +89,27 @@ const DEFAULT_VIEWS = [
   //   workspaces:'empty' = 开拍前把工作区清单清空（用来复现门禁态）
   { hash: '/chat', name: 'chat-agent', click: '[data-ui-target="Agent"]' },
   { hash: '/chat', name: 'chat-agent-gated', click: '[data-ui-target="Agent"]', workspaces: 'empty' },
+  // P9：对话样本 —— 把「AI 头像 / 用户头像 / 气泡」变成可定位的。
+  // 空态图上根本没有消息，MessageList 里的头像与气泡一个都不存在，改头像样式时无从报坐标。
+  // seedChat 用演示模式（本地回显、不联网）跑真实一轮，落库后整页重载再拍。
+  {
+    hash: '/chat',
+    name: 'chat-conversation',
+    seedChat: [
+      '用三句话说明 RAG 和微调的区别',
+      '那在本地优先的客户端里，你会先做哪一个'
+    ]
+  },
   { hash: '/settings/models', name: 'settings-models' },
   { hash: '/settings/prompts', name: 'settings-prompts' },
   { hash: '/settings/memory', name: 'settings-memory' },
   { hash: '/settings/zones', name: 'settings-zones' },
   { hash: '/settings/zones', name: 'settings-zones-lower', scrollY: 900 },
+  // P7：渠道控制台（私聊 / 群聊两块 + 数据位置）。面板高约两屏，故补一张下滚视图。
+  { hash: '/settings/channels', name: 'settings-channels' },
+  { hash: '/settings/channels', name: 'settings-channels-lower', scrollY: 760 },
+  // P8：D 区「旁听库」在 C 区之后（面板最下方），单独一张把它变成可定位的
+  { hash: '/settings/channels', name: 'settings-channels-observe', scrollY: 1560 },
   { hash: '/settings/qq', name: 'settings-qq' },
   { hash: '/settings/qq', name: 'settings-qq-lower', scrollY: 520 },
   { hash: '/settings/qq', name: 'settings-qq-events', scrollY: 1350 },
@@ -215,6 +231,62 @@ app.whenReady().then(async () => {
           requestAnimationFrame(tick)
         })
       `)
+    }
+
+    /**
+     * 对话样本（P9）：把视图从「空态」变成「有消息的会话」。
+     *
+     * 为什么必须走 IPC 而不是往渲染层塞假数据：
+     * 消息列表的来源是 chatStore.sessions，它是模块级单例，只有整页重载才重新拉取；
+     * 直接在页内改 zustand 会被下一次 init 覆盖，而且测不到真实链路。
+     * 这里用主进程真正的 send()（演示模式 mockProvider，不联网、不需要 key），
+     * 跑完一轮后**整页重载**让 store 从主进程读回落库结果——截到的就是真实持久化之后的画面。
+     *
+     * 消息文本不要含「工作区/目录/文件/列表/ls/工具」：mockProvider 见到这些词会改走
+     * 工具调用分支（弹审批卡），对话样本就拍不成两栏气泡了。
+     */
+    if (Array.isArray(view.seedChat) && view.seedChat.length > 0) {
+      const seeded = await win.webContents.executeJavaScript(`
+        (async () => {
+          const lines = ${JSON.stringify(view.seedChat)}
+          let sessions = await window.nahida.chat.listSessions()
+          // 干净 userData 下不会有会话；复用第一条避免多个视图堆积互相影响
+          let session = sessions[0]
+          if (!session) session = await window.nahida.chat.createSession({ mode: 'chat' })
+          for (const line of lines) {
+            await window.nahida.chat.send({ sessionId: session.id, content: line })
+            // send() 同步返回「立即结果」，生成在后台继续；等它从 streaming 变 done
+            const deadline = Date.now() + 15000
+            for (;;) {
+              const list = await window.nahida.chat.listSessions()
+              const now = list.find((s) => s.id === session.id)
+              const tail = now && now.messages[now.messages.length - 1]
+              if (tail && tail.role === 'assistant' && tail.status === 'done' && tail.content.length > 0) break
+              if (Date.now() > deadline) return { ok: false, reason: '等待生成超时' }
+              await new Promise((r) => setTimeout(r, 120))
+            }
+          }
+          const final = await window.nahida.chat.listSessions()
+          const done = final.find((s) => s.id === session.id)
+          return { ok: true, sessionId: session.id, messages: done ? done.messages.length : 0 }
+        })()
+      `)
+      if (!seeded || !seeded.ok) {
+        console.error('对话播种失败：' + JSON.stringify(seeded) + '（视图 ' + view.name + '）')
+        app.exit(4)
+        return
+      }
+      // 整页重载：让 chatStore 的模块级单例从主进程重新拉取刚落库的消息。
+      // 不加这个的话页内还是空态——store 只在 init() 时读一次。
+      await win.loadFile(indexHtml, {
+        hash: view.hash,
+        query: { grid: '1', v: String(viewIndex), seed: String(Date.now()) }
+      })
+      await win.webContents.executeJavaScript(
+        "document.querySelector('.ui-grid')?.classList.remove('ui-grid--hidden')"
+      ).catch(() => {})
+      await win.webContents.executeJavaScript("window.dispatchEvent(new Event('scroll'))")
+      console.log('  已播种对话 ' + seeded.messages + ' 条消息')
     }
 
     // 等到「当前路由的量测结果」就绪再截图：

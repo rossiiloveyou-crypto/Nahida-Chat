@@ -32,10 +32,17 @@ const KNOWN_TITLES = {
   // 「工作区列表」和「零工作区门禁态」重新变成可定位的（见 generate-ui-map.cjs 的 click / workspaces）
   'chat-agent': '对话首页 · Agent 模式（侧栏含工作区列表）',
   'chat-agent-gated': '对话首页 · Agent 模式 + 零工作区（输入区门禁态）',
+  // P9：空态图里没有任何消息，MessageList 的头像与气泡一个都不存在。
+  // 这张用演示模式跑了两轮真实对话，把「AI 头像 / 用户头像 / 气泡」变成可定位的。
+  'chat-conversation': '对话中（含 AI 头像与用户头像）',
   'settings-models': '设置 · 模型配置',
   'settings-prompts': '设置 · 提示词库',
   'settings-memory': '设置 · 长期记忆',
   'settings-zones': '设置 · 区块',
+  // P9-R3：渠道控制台从「按会话」重做成「按人」，三张图覆盖 A/B/C/D 四个区。
+  'settings-channels': '设置 · 渠道控制台（QQ 号白名单 / 群白名单）',
+  'settings-channels-lower': '设置 · 渠道控制台（下半屏 / 鉴权开关）',
+  'settings-channels-observe': '设置 · 渠道控制台（旁听库）',
   'settings-zones-lower': '设置 · 区块（下半屏 / 行为开关）',
   'settings-qq': '设置 · QQ 接入',
   'settings-qq-lower': '设置 · QQ 接入（下半屏 / 行为开关）',

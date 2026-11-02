@@ -44,8 +44,8 @@
         {
           "label": "C1 输入区工具条",
           "top": 773,
-          "left": 379,
-          "width": 760,
+          "left": 278,
+          "width": 962,
           "height": 28
         }
       ],
@@ -54,7 +54,7 @@
           "index": 1,
           "label": "新建对话",
           "tag": "button",
-          "top": 76,
+          "top": 80,
           "left": 20,
           "width": 216,
           "height": 38
@@ -63,10 +63,10 @@
           "index": 2,
           "label": "会话列表",
           "tag": "nav",
-          "top": 176,
+          "top": 180,
           "left": 20,
           "width": 216,
-          "height": 482
+          "height": 479
         },
         {
           "index": 3,
@@ -109,8 +109,8 @@
           "label": "输入框",
           "tag": "div",
           "top": 710,
-          "left": 379,
-          "width": 760,
+          "left": 278,
+          "width": 962,
           "height": 56
         },
         {
@@ -118,7 +118,7 @@
           "label": "模型选择",
           "tag": "button",
           "top": 773,
-          "left": 379,
+          "left": 278,
           "width": 97,
           "height": 28
         },
@@ -136,7 +136,7 @@
           "label": "权限模式",
           "tag": "button",
           "top": 773,
-          "left": 1078,
+          "left": 1179,
           "width": 61,
           "height": 28
         }
@@ -157,7 +157,7 @@
         },
         {
           "label": "A2 工作区列表",
-          "top": 128,
+          "top": 132,
           "left": 20,
           "width": 216,
           "height": 74
@@ -186,8 +186,8 @@
         {
           "label": "C1 输入区工具条",
           "top": 773,
-          "left": 379,
-          "width": 760,
+          "left": 278,
+          "width": 962,
           "height": 28
         }
       ],
@@ -196,7 +196,7 @@
           "index": 1,
           "label": "新建对话",
           "tag": "button",
-          "top": 76,
+          "top": 80,
           "left": 20,
           "width": 216,
           "height": 38
@@ -205,7 +205,7 @@
           "index": 2,
           "label": "新建工作区",
           "tag": "button",
-          "top": 135,
+          "top": 139,
           "left": 212,
           "width": 20,
           "height": 20
@@ -214,7 +214,7 @@
           "index": 3,
           "label": "工作区条目",
           "tag": "div",
-          "top": 166,
+          "top": 170,
           "left": 20,
           "width": 216,
           "height": 36
@@ -223,10 +223,10 @@
           "index": 4,
           "label": "会话列表",
           "tag": "nav",
-          "top": 264,
+          "top": 268,
           "left": 20,
           "width": 216,
-          "height": 394
+          "height": 390
         },
         {
           "index": 5,
@@ -269,8 +269,8 @@
           "label": "输入框",
           "tag": "div",
           "top": 710,
-          "left": 379,
-          "width": 760,
+          "left": 278,
+          "width": 962,
           "height": 56
         },
         {
@@ -278,7 +278,7 @@
           "label": "模型选择",
           "tag": "button",
           "top": 773,
-          "left": 379,
+          "left": 278,
           "width": 97,
           "height": 28
         },
@@ -296,7 +296,7 @@
           "label": "权限模式",
           "tag": "button",
           "top": 773,
-          "left": 1078,
+          "left": 1179,
           "width": 61,
           "height": 28
         }
@@ -317,7 +317,7 @@
         },
         {
           "label": "A2 工作区列表",
-          "top": 128,
+          "top": 132,
           "left": 20,
           "width": 216,
           "height": 69
@@ -346,8 +346,8 @@
         {
           "label": "C1 输入区工具条",
           "top": 773,
-          "left": 379,
-          "width": 760,
+          "left": 278,
+          "width": 962,
           "height": 28
         }
       ],
@@ -356,7 +356,7 @@
           "index": 1,
           "label": "新建对话",
           "tag": "button",
-          "top": 76,
+          "top": 80,
           "left": 20,
           "width": 216,
           "height": 38
@@ -365,7 +365,7 @@
           "index": 2,
           "label": "新建工作区",
           "tag": "button",
-          "top": 135,
+          "top": 139,
           "left": 212,
           "width": 20,
           "height": 20
@@ -374,7 +374,7 @@
           "index": 3,
           "label": "工作区条目",
           "tag": "div",
-          "top": 166,
+          "top": 170,
           "left": 20,
           "width": 216,
           "height": 31
@@ -383,10 +383,10 @@
           "index": 4,
           "label": "会话列表",
           "tag": "nav",
-          "top": 259,
+          "top": 263,
           "left": 20,
           "width": 216,
-          "height": 399
+          "height": 395
         },
         {
           "index": 5,
@@ -429,8 +429,8 @@
           "label": "输入框",
           "tag": "div",
           "top": 710,
-          "left": 379,
-          "width": 760,
+          "left": 278,
+          "width": 962,
           "height": 56
         },
         {
@@ -438,7 +438,7 @@
           "label": "模型选择",
           "tag": "button",
           "top": 773,
-          "left": 379,
+          "left": 278,
           "width": 97,
           "height": 28
         },
@@ -456,7 +456,189 @@
           "label": "权限模式",
           "tag": "button",
           "top": 773,
-          "left": 1078,
+          "left": 1179,
+          "width": 61,
+          "height": 28
+        }
+      ]
+    },
+    "chat-conversation": {
+      "viewport": {
+        "width": 1280,
+        "height": 860
+      },
+      "regions": [
+        {
+          "label": "A 会话侧栏",
+          "top": 10,
+          "left": 10,
+          "width": 236,
+          "height": 840
+        },
+        {
+          "label": "A 对话头部",
+          "top": 16,
+          "left": 252,
+          "width": 1014,
+          "height": 73
+        },
+        {
+          "label": "C 输入区",
+          "top": 696,
+          "left": 252,
+          "width": 1014,
+          "height": 148
+        },
+        {
+          "label": "C1 输入区工具条",
+          "top": 773,
+          "left": 278,
+          "width": 962,
+          "height": 28
+        }
+      ],
+      "targets": [
+        {
+          "index": 1,
+          "label": "新建对话",
+          "tag": "button",
+          "top": 80,
+          "left": 20,
+          "width": 216,
+          "height": 38
+        },
+        {
+          "index": 2,
+          "label": "会话列表",
+          "tag": "nav",
+          "top": 180,
+          "left": 20,
+          "width": 216,
+          "height": 479
+        },
+        {
+          "index": 3,
+          "label": "设置入口",
+          "tag": "div",
+          "top": 794,
+          "left": 20,
+          "width": 216,
+          "height": 48
+        },
+        {
+          "index": 4,
+          "label": "模式与模型角标",
+          "tag": "div",
+          "top": 39,
+          "left": 1054,
+          "width": 186,
+          "height": 26
+        },
+        {
+          "index": 5,
+          "label": "用户头像 1",
+          "tag": "div",
+          "top": 15,
+          "left": 1166,
+          "width": 64,
+          "height": 64
+        },
+        {
+          "index": 6,
+          "label": "用户气泡 1",
+          "tag": "div",
+          "top": 15,
+          "left": 897,
+          "width": 254,
+          "height": 51
+        },
+        {
+          "index": 7,
+          "label": "AI 头像 2",
+          "tag": "div",
+          "top": 97,
+          "left": 278,
+          "width": 64,
+          "height": 64
+        },
+        {
+          "index": 8,
+          "label": "AI 气泡 2",
+          "tag": "div",
+          "top": 97,
+          "left": 358,
+          "width": 558,
+          "height": 240
+        },
+        {
+          "index": 9,
+          "label": "用户头像 3",
+          "tag": "div",
+          "top": 355,
+          "left": 1166,
+          "width": 64,
+          "height": 64
+        },
+        {
+          "index": 10,
+          "label": "用户气泡 3",
+          "tag": "div",
+          "top": 355,
+          "left": 832,
+          "width": 319,
+          "height": 51
+        },
+        {
+          "index": 11,
+          "label": "AI 头像 4",
+          "tag": "div",
+          "top": 437,
+          "left": 278,
+          "width": 64,
+          "height": 64
+        },
+        {
+          "index": 12,
+          "label": "AI 气泡 4",
+          "tag": "div",
+          "top": 437,
+          "left": 358,
+          "width": 558,
+          "height": 240
+        },
+        {
+          "index": 13,
+          "label": "输入框",
+          "tag": "div",
+          "top": 710,
+          "left": 278,
+          "width": 962,
+          "height": 56
+        },
+        {
+          "index": 14,
+          "label": "模型选择",
+          "tag": "button",
+          "top": 773,
+          "left": 278,
+          "width": 97,
+          "height": 28
+        },
+        {
+          "index": 15,
+          "label": "工作区选择",
+          "tag": "button",
+          "top": 773,
+          "left": 698,
+          "width": 159,
+          "height": 28
+        },
+        {
+          "index": 16,
+          "label": "权限模式",
+          "tag": "button",
+          "top": 773,
+          "left": 1179,
           "width": 61,
           "height": 28
         }
@@ -495,7 +677,7 @@
           "index": 1,
           "label": "返回对话",
           "tag": "button",
-          "top": 64,
+          "top": 68,
           "left": 22,
           "width": 212,
           "height": 34
@@ -504,10 +686,10 @@
           "index": 2,
           "label": "导航条目",
           "tag": "nav",
-          "top": 112,
+          "top": 116,
           "left": 20,
           "width": 216,
-          "height": 689
+          "height": 685
         },
         {
           "index": 3,
@@ -573,7 +755,7 @@
           "index": 1,
           "label": "返回对话",
           "tag": "button",
-          "top": 64,
+          "top": 68,
           "left": 22,
           "width": 212,
           "height": 34
@@ -582,10 +764,10 @@
           "index": 2,
           "label": "导航条目",
           "tag": "nav",
-          "top": 112,
+          "top": 116,
           "left": 20,
           "width": 216,
-          "height": 689
+          "height": 685
         },
         {
           "index": 3,
@@ -651,7 +833,7 @@
           "index": 1,
           "label": "返回对话",
           "tag": "button",
-          "top": 64,
+          "top": 68,
           "left": 22,
           "width": 212,
           "height": 34
@@ -660,10 +842,10 @@
           "index": 2,
           "label": "导航条目",
           "tag": "nav",
-          "top": 112,
+          "top": 116,
           "left": 20,
           "width": 216,
-          "height": 689
+          "height": 685
         },
         {
           "index": 3,
@@ -734,28 +916,28 @@
         },
         {
           "label": "A 区块列表",
-          "top": 151,
+          "top": 172,
           "left": 394,
           "width": 720,
           "height": 283
         },
         {
           "label": "B 区块成员",
-          "top": 460,
+          "top": 481,
           "left": 394,
           "width": 720,
           "height": 203
         },
         {
-          "label": "C 未归区的 QQ 会话",
-          "top": 689,
+          "label": "C 白名单里的会话",
+          "top": 710,
           "left": 394,
           "width": 720,
-          "height": 206
+          "height": 187
         },
         {
           "label": "D 区块开关",
-          "top": 921,
+          "top": 923,
           "left": 394,
           "width": 720,
           "height": 162
@@ -766,7 +948,7 @@
           "index": 1,
           "label": "返回对话",
           "tag": "button",
-          "top": 64,
+          "top": 68,
           "left": 22,
           "width": 212,
           "height": 34
@@ -775,10 +957,10 @@
           "index": 2,
           "label": "导航条目",
           "tag": "nav",
-          "top": 112,
+          "top": 116,
           "left": 20,
           "width": 216,
-          "height": 689
+          "height": 685
         },
         {
           "index": 3,
@@ -787,13 +969,13 @@
           "top": 46,
           "left": 394,
           "width": 720,
-          "height": 79
+          "height": 100
         },
         {
           "index": 4,
           "label": "区块表格",
           "tag": "div",
-          "top": 249,
+          "top": 270,
           "left": 415,
           "width": 678,
           "height": 79
@@ -802,7 +984,7 @@
           "index": 5,
           "label": "区块 主区块",
           "tag": "div",
-          "top": 273,
+          "top": 295,
           "left": 415,
           "width": 678,
           "height": 55
@@ -811,7 +993,7 @@
           "index": 6,
           "label": "新建区块",
           "tag": "div",
-          "top": 344,
+          "top": 365,
           "left": 415,
           "width": 678,
           "height": 69
@@ -820,7 +1002,7 @@
           "index": 7,
           "label": "成员表格",
           "tag": "div",
-          "top": 558,
+          "top": 579,
           "left": 415,
           "width": 678,
           "height": 68
@@ -829,7 +1011,7 @@
           "index": 8,
           "label": "开关组",
           "tag": "div",
-          "top": 1000,
+          "top": 1002,
           "left": 415,
           "width": 678,
           "height": 52
@@ -858,24 +1040,24 @@
         },
         {
           "label": "A 区块列表",
-          "top": -129,
+          "top": -109,
           "left": 394,
           "width": 720,
           "height": 283
         },
         {
           "label": "B 区块成员",
-          "top": 181,
+          "top": 200,
           "left": 394,
           "width": 720,
           "height": 203
         },
         {
-          "label": "C 未归区的 QQ 会话",
-          "top": 410,
+          "label": "C 白名单里的会话",
+          "top": 429,
           "left": 394,
           "width": 720,
-          "height": 206
+          "height": 187
         },
         {
           "label": "D 区块开关",
@@ -890,7 +1072,7 @@
           "index": 1,
           "label": "返回对话",
           "tag": "button",
-          "top": 64,
+          "top": 68,
           "left": 22,
           "width": 212,
           "height": 34
@@ -899,25 +1081,25 @@
           "index": 2,
           "label": "导航条目",
           "tag": "nav",
-          "top": 112,
+          "top": 116,
           "left": 20,
           "width": 216,
-          "height": 689
+          "height": 685
         },
         {
           "index": 3,
           "label": "页头",
           "tag": "div",
-          "top": -233,
+          "top": -235,
           "left": 394,
           "width": 720,
-          "height": 79
+          "height": 100
         },
         {
           "index": 4,
           "label": "区块表格",
           "tag": "div",
-          "top": -30,
+          "top": -11,
           "left": 415,
           "width": 678,
           "height": 79
@@ -926,7 +1108,7 @@
           "index": 5,
           "label": "区块 主区块",
           "tag": "div",
-          "top": -6,
+          "top": 14,
           "left": 415,
           "width": 678,
           "height": 55
@@ -935,7 +1117,7 @@
           "index": 6,
           "label": "新建区块",
           "tag": "div",
-          "top": 65,
+          "top": 84,
           "left": 415,
           "width": 678,
           "height": 69
@@ -944,7 +1126,7 @@
           "index": 7,
           "label": "成员表格",
           "tag": "div",
-          "top": 279,
+          "top": 299,
           "left": 415,
           "width": 678,
           "height": 68
@@ -957,6 +1139,582 @@
           "left": 415,
           "width": 678,
           "height": 52
+        }
+      ]
+    },
+    "settings-channels": {
+      "viewport": {
+        "width": 1280,
+        "height": 860
+      },
+      "regions": [
+        {
+          "label": "A 设置导航",
+          "top": 10,
+          "left": 10,
+          "width": 236,
+          "height": 840
+        },
+        {
+          "label": "B 设置内容",
+          "top": 16,
+          "left": 252,
+          "width": 1014,
+          "height": 828
+        },
+        {
+          "label": "A0 机器人账号",
+          "top": 151,
+          "left": 394,
+          "width": 720,
+          "height": 280
+        },
+        {
+          "label": "A QQ 号白名单",
+          "top": 457,
+          "left": 394,
+          "width": 720,
+          "height": 319
+        },
+        {
+          "label": "B 群白名单",
+          "top": 802,
+          "left": 394,
+          "width": 720,
+          "height": 319
+        },
+        {
+          "label": "C 鉴权开关",
+          "top": 1148,
+          "left": 394,
+          "width": 720,
+          "height": 349
+        },
+        {
+          "label": "D 数据位置",
+          "top": 1523,
+          "left": 394,
+          "width": 720,
+          "height": 187
+        },
+        {
+          "label": "D 旁听库",
+          "top": 1736,
+          "left": 394,
+          "width": 720,
+          "height": 450
+        }
+      ],
+      "targets": [
+        {
+          "index": 1,
+          "label": "返回对话",
+          "tag": "button",
+          "top": 68,
+          "left": 22,
+          "width": 212,
+          "height": 34
+        },
+        {
+          "index": 2,
+          "label": "导航条目",
+          "tag": "nav",
+          "top": 116,
+          "left": 20,
+          "width": 216,
+          "height": 685
+        },
+        {
+          "index": 3,
+          "label": "页头",
+          "tag": "div",
+          "top": 46,
+          "left": 394,
+          "width": 720,
+          "height": 79
+        },
+        {
+          "index": 4,
+          "label": "账号表",
+          "tag": "div",
+          "top": 555,
+          "left": 415,
+          "width": 678,
+          "height": 68
+        },
+        {
+          "index": 5,
+          "label": "新增账号权限",
+          "tag": "div",
+          "top": 719,
+          "left": 415,
+          "width": 678,
+          "height": 36
+        },
+        {
+          "index": 6,
+          "label": "群表",
+          "tag": "div",
+          "top": 901,
+          "left": 415,
+          "width": 678,
+          "height": 68
+        },
+        {
+          "index": 7,
+          "label": "群成员鉴权",
+          "tag": "label",
+          "top": 1191,
+          "left": 415,
+          "width": 678,
+          "height": 21
+        },
+        {
+          "index": 8,
+          "label": "工具调用拦截",
+          "tag": "label",
+          "top": 1277,
+          "left": 415,
+          "width": 678,
+          "height": 21
+        },
+        {
+          "index": 9,
+          "label": "全局权限模式说明",
+          "tag": "p",
+          "top": 1382,
+          "left": 415,
+          "width": 678,
+          "height": 78
+        },
+        {
+          "index": 10,
+          "label": "授权文件",
+          "tag": "p",
+          "top": 1621,
+          "left": 415,
+          "width": 678,
+          "height": 19
+        },
+        {
+          "index": 11,
+          "label": "旁听根目录",
+          "tag": "p",
+          "top": 1963,
+          "left": 415,
+          "width": 678,
+          "height": 19
+        },
+        {
+          "index": 12,
+          "label": "旁听合计",
+          "tag": "p",
+          "top": 1995,
+          "left": 415,
+          "width": 678,
+          "height": 19
+        },
+        {
+          "index": 13,
+          "label": "旁听会话表",
+          "tag": "div",
+          "top": 2026,
+          "left": 415,
+          "width": 678,
+          "height": 87
+        },
+        {
+          "index": 14,
+          "label": "旁听操作",
+          "tag": "div",
+          "top": 2129,
+          "left": 415,
+          "width": 678,
+          "height": 36
+        }
+      ]
+    },
+    "settings-channels-lower": {
+      "viewport": {
+        "width": 1280,
+        "height": 860
+      },
+      "regions": [
+        {
+          "label": "A 设置导航",
+          "top": 10,
+          "left": 10,
+          "width": 236,
+          "height": 840
+        },
+        {
+          "label": "B 设置内容",
+          "top": 16,
+          "left": 252,
+          "width": 1014,
+          "height": 828
+        },
+        {
+          "label": "A0 机器人账号",
+          "top": -609,
+          "left": 394,
+          "width": 720,
+          "height": 280
+        },
+        {
+          "label": "A QQ 号白名单",
+          "top": -303,
+          "left": 394,
+          "width": 720,
+          "height": 319
+        },
+        {
+          "label": "B 群白名单",
+          "top": 42,
+          "left": 394,
+          "width": 720,
+          "height": 319
+        },
+        {
+          "label": "C 鉴权开关",
+          "top": 388,
+          "left": 394,
+          "width": 720,
+          "height": 349
+        },
+        {
+          "label": "D 数据位置",
+          "top": 763,
+          "left": 394,
+          "width": 720,
+          "height": 187
+        },
+        {
+          "label": "D 旁听库",
+          "top": 976,
+          "left": 394,
+          "width": 720,
+          "height": 450
+        }
+      ],
+      "targets": [
+        {
+          "index": 1,
+          "label": "返回对话",
+          "tag": "button",
+          "top": 68,
+          "left": 22,
+          "width": 212,
+          "height": 34
+        },
+        {
+          "index": 2,
+          "label": "导航条目",
+          "tag": "nav",
+          "top": 116,
+          "left": 20,
+          "width": 216,
+          "height": 685
+        },
+        {
+          "index": 3,
+          "label": "页头",
+          "tag": "div",
+          "top": -714,
+          "left": 394,
+          "width": 720,
+          "height": 79
+        },
+        {
+          "index": 4,
+          "label": "账号表",
+          "tag": "div",
+          "top": -205,
+          "left": 415,
+          "width": 678,
+          "height": 68
+        },
+        {
+          "index": 5,
+          "label": "新增账号权限",
+          "tag": "div",
+          "top": -41,
+          "left": 415,
+          "width": 678,
+          "height": 36
+        },
+        {
+          "index": 6,
+          "label": "群表",
+          "tag": "div",
+          "top": 141,
+          "left": 415,
+          "width": 678,
+          "height": 68
+        },
+        {
+          "index": 7,
+          "label": "群成员鉴权",
+          "tag": "label",
+          "top": 431,
+          "left": 415,
+          "width": 678,
+          "height": 21
+        },
+        {
+          "index": 8,
+          "label": "工具调用拦截",
+          "tag": "label",
+          "top": 517,
+          "left": 415,
+          "width": 678,
+          "height": 21
+        },
+        {
+          "index": 9,
+          "label": "全局权限模式说明",
+          "tag": "p",
+          "top": 622,
+          "left": 415,
+          "width": 678,
+          "height": 78
+        },
+        {
+          "index": 10,
+          "label": "授权文件",
+          "tag": "p",
+          "top": 861,
+          "left": 415,
+          "width": 678,
+          "height": 19
+        },
+        {
+          "index": 11,
+          "label": "旁听根目录",
+          "tag": "p",
+          "top": 1203,
+          "left": 415,
+          "width": 678,
+          "height": 19
+        },
+        {
+          "index": 12,
+          "label": "旁听合计",
+          "tag": "p",
+          "top": 1235,
+          "left": 415,
+          "width": 678,
+          "height": 19
+        },
+        {
+          "index": 13,
+          "label": "旁听会话表",
+          "tag": "div",
+          "top": 1266,
+          "left": 415,
+          "width": 678,
+          "height": 87
+        },
+        {
+          "index": 14,
+          "label": "旁听操作",
+          "tag": "div",
+          "top": 1369,
+          "left": 415,
+          "width": 678,
+          "height": 36
+        }
+      ]
+    },
+    "settings-channels-observe": {
+      "viewport": {
+        "width": 1280,
+        "height": 860
+      },
+      "regions": [
+        {
+          "label": "A 设置导航",
+          "top": 10,
+          "left": 10,
+          "width": 236,
+          "height": 840
+        },
+        {
+          "label": "B 设置内容",
+          "top": 16,
+          "left": 252,
+          "width": 1014,
+          "height": 828
+        },
+        {
+          "label": "A0 机器人账号",
+          "top": -1231,
+          "left": 394,
+          "width": 720,
+          "height": 280
+        },
+        {
+          "label": "A QQ 号白名单",
+          "top": -925,
+          "left": 394,
+          "width": 720,
+          "height": 319
+        },
+        {
+          "label": "B 群白名单",
+          "top": -579,
+          "left": 394,
+          "width": 720,
+          "height": 319
+        },
+        {
+          "label": "C 鉴权开关",
+          "top": -234,
+          "left": 394,
+          "width": 720,
+          "height": 349
+        },
+        {
+          "label": "D 数据位置",
+          "top": 141,
+          "left": 394,
+          "width": 720,
+          "height": 187
+        },
+        {
+          "label": "D 旁听库",
+          "top": 354,
+          "left": 394,
+          "width": 720,
+          "height": 450
+        }
+      ],
+      "targets": [
+        {
+          "index": 1,
+          "label": "返回对话",
+          "tag": "button",
+          "top": 68,
+          "left": 22,
+          "width": 212,
+          "height": 34
+        },
+        {
+          "index": 2,
+          "label": "导航条目",
+          "tag": "nav",
+          "top": 116,
+          "left": 20,
+          "width": 216,
+          "height": 685
+        },
+        {
+          "index": 3,
+          "label": "页头",
+          "tag": "div",
+          "top": -1336,
+          "left": 394,
+          "width": 720,
+          "height": 79
+        },
+        {
+          "index": 4,
+          "label": "账号表",
+          "tag": "div",
+          "top": -826,
+          "left": 415,
+          "width": 678,
+          "height": 68
+        },
+        {
+          "index": 5,
+          "label": "新增账号权限",
+          "tag": "div",
+          "top": -662,
+          "left": 415,
+          "width": 678,
+          "height": 36
+        },
+        {
+          "index": 6,
+          "label": "群表",
+          "tag": "div",
+          "top": -481,
+          "left": 415,
+          "width": 678,
+          "height": 68
+        },
+        {
+          "index": 7,
+          "label": "群成员鉴权",
+          "tag": "label",
+          "top": -190,
+          "left": 415,
+          "width": 678,
+          "height": 21
+        },
+        {
+          "index": 8,
+          "label": "工具调用拦截",
+          "tag": "label",
+          "top": -104,
+          "left": 415,
+          "width": 678,
+          "height": 21
+        },
+        {
+          "index": 9,
+          "label": "全局权限模式说明",
+          "tag": "p",
+          "top": 1,
+          "left": 415,
+          "width": 678,
+          "height": 78
+        },
+        {
+          "index": 10,
+          "label": "授权文件",
+          "tag": "p",
+          "top": 240,
+          "left": 415,
+          "width": 678,
+          "height": 19
+        },
+        {
+          "index": 11,
+          "label": "旁听根目录",
+          "tag": "p",
+          "top": 582,
+          "left": 415,
+          "width": 678,
+          "height": 19
+        },
+        {
+          "index": 12,
+          "label": "旁听合计",
+          "tag": "p",
+          "top": 613,
+          "left": 415,
+          "width": 678,
+          "height": 19
+        },
+        {
+          "index": 13,
+          "label": "旁听会话表",
+          "tag": "div",
+          "top": 644,
+          "left": 415,
+          "width": 678,
+          "height": 87
+        },
+        {
+          "index": 14,
+          "label": "旁听操作",
+          "tag": "div",
+          "top": 747,
+          "left": 415,
+          "width": 678,
+          "height": 36
         }
       ]
     },
@@ -982,28 +1740,28 @@
         },
         {
           "label": "A 宿主状态",
-          "top": 239,
+          "top": 289,
           "left": 394,
           "width": 720,
-          "height": 310
+          "height": 419
         },
         {
           "label": "B QQ 进程",
-          "top": 575,
+          "top": 735,
           "left": 394,
           "width": 720,
-          "height": 182
+          "height": 184
         },
         {
           "label": "C 行为开关",
-          "top": 783,
+          "top": 945,
           "left": 394,
           "width": 720,
           "height": 579
         },
         {
           "label": "D 最近事件",
-          "top": 1388,
+          "top": 1550,
           "left": 394,
           "width": 720,
           "height": 143
@@ -1014,7 +1772,7 @@
           "index": 1,
           "label": "返回对话",
           "tag": "button",
-          "top": 64,
+          "top": 68,
           "left": 22,
           "width": 212,
           "height": 34
@@ -1023,10 +1781,10 @@
           "index": 2,
           "label": "导航条目",
           "tag": "nav",
-          "top": 112,
+          "top": 116,
           "left": 20,
           "width": 216,
-          "height": 689
+          "height": 685
         },
         {
           "index": 3,
@@ -1044,49 +1802,58 @@
           "top": 163,
           "left": 394,
           "width": 720,
-          "height": 39
+          "height": 19
         },
         {
           "index": 5,
-          "label": "宿主状态表",
-          "tag": "dl",
-          "top": 318,
-          "left": 415,
-          "width": 678,
-          "height": 162
+          "label": "渠道控制台链接",
+          "tag": "a",
+          "top": 164,
+          "left": 602,
+          "width": 60,
+          "height": 15
         },
         {
           "index": 6,
+          "label": "宿主状态表",
+          "tag": "dl",
+          "top": 368,
+          "left": 415,
+          "width": 678,
+          "height": 228
+        },
+        {
+          "index": 7,
           "label": "宿主操作",
           "tag": "div",
-          "top": 492,
+          "top": 609,
           "left": 415,
           "width": 678,
           "height": 36
         },
         {
-          "index": 7,
+          "index": 8,
           "label": "进程列表",
           "tag": "div",
-          "top": 654,
+          "top": 814,
           "left": 415,
           "width": 678,
-          "height": 66
+          "height": 68
         },
         {
-          "index": 8,
+          "index": 9,
           "label": "开关组",
           "tag": "div",
-          "top": 862,
+          "top": 1024,
           "left": 415,
           "width": 678,
           "height": 479
         },
         {
-          "index": 9,
+          "index": 10,
           "label": "事件列表",
           "tag": "div",
-          "top": 1467,
+          "top": 1629,
           "left": 415,
           "width": 678,
           "height": 43
@@ -1115,28 +1882,28 @@
         },
         {
           "label": "A 宿主状态",
-          "top": -281,
+          "top": -231,
           "left": 394,
           "width": 720,
-          "height": 310
+          "height": 419
         },
         {
           "label": "B QQ 进程",
-          "top": 55,
+          "top": 215,
           "left": 394,
           "width": 720,
-          "height": 182
+          "height": 184
         },
         {
           "label": "C 行为开关",
-          "top": 263,
+          "top": 425,
           "left": 394,
           "width": 720,
           "height": 579
         },
         {
           "label": "D 最近事件",
-          "top": 868,
+          "top": 1030,
           "left": 394,
           "width": 720,
           "height": 143
@@ -1147,7 +1914,7 @@
           "index": 1,
           "label": "返回对话",
           "tag": "button",
-          "top": 64,
+          "top": 68,
           "left": 22,
           "width": 212,
           "height": 34
@@ -1156,10 +1923,10 @@
           "index": 2,
           "label": "导航条目",
           "tag": "nav",
-          "top": 112,
+          "top": 116,
           "left": 20,
           "width": 216,
-          "height": 689
+          "height": 685
         },
         {
           "index": 3,
@@ -1177,49 +1944,58 @@
           "top": -357,
           "left": 394,
           "width": 720,
-          "height": 39
+          "height": 19
         },
         {
           "index": 5,
-          "label": "宿主状态表",
-          "tag": "dl",
-          "top": -202,
-          "left": 415,
-          "width": 678,
-          "height": 162
+          "label": "渠道控制台链接",
+          "tag": "a",
+          "top": -356,
+          "left": 602,
+          "width": 60,
+          "height": 15
         },
         {
           "index": 6,
+          "label": "宿主状态表",
+          "tag": "dl",
+          "top": -152,
+          "left": 415,
+          "width": 678,
+          "height": 228
+        },
+        {
+          "index": 7,
           "label": "宿主操作",
           "tag": "div",
-          "top": -28,
+          "top": 89,
           "left": 415,
           "width": 678,
           "height": 36
         },
         {
-          "index": 7,
+          "index": 8,
           "label": "进程列表",
           "tag": "div",
-          "top": 134,
+          "top": 294,
           "left": 415,
           "width": 678,
-          "height": 66
+          "height": 68
         },
         {
-          "index": 8,
+          "index": 9,
           "label": "开关组",
           "tag": "div",
-          "top": 342,
+          "top": 504,
           "left": 415,
           "width": 678,
           "height": 479
         },
         {
-          "index": 9,
+          "index": 10,
           "label": "事件列表",
           "tag": "div",
-          "top": 947,
+          "top": 1109,
           "left": 415,
           "width": 678,
           "height": 43
@@ -1248,17 +2024,17 @@
         },
         {
           "label": "A 宿主状态",
-          "top": -488,
+          "top": -599,
           "left": 394,
           "width": 720,
-          "height": 310
+          "height": 419
         },
         {
           "label": "B QQ 进程",
-          "top": -152,
+          "top": -154,
           "left": 394,
           "width": 720,
-          "height": 182
+          "height": 184
         },
         {
           "label": "C 行为开关",
@@ -1280,7 +2056,7 @@
           "index": 1,
           "label": "返回对话",
           "tag": "button",
-          "top": 64,
+          "top": 68,
           "left": 22,
           "width": 212,
           "height": 34
@@ -1289,16 +2065,16 @@
           "index": 2,
           "label": "导航条目",
           "tag": "nav",
-          "top": 112,
+          "top": 116,
           "left": 20,
           "width": 216,
-          "height": 689
+          "height": 685
         },
         {
           "index": 3,
           "label": "页头",
           "tag": "div",
-          "top": -681,
+          "top": -843,
           "left": 394,
           "width": 720,
           "height": 79
@@ -1307,40 +2083,49 @@
           "index": 4,
           "label": "权限说明",
           "tag": "p",
-          "top": -565,
+          "top": -726,
           "left": 394,
           "width": 720,
-          "height": 39
+          "height": 19
         },
         {
           "index": 5,
-          "label": "宿主状态表",
-          "tag": "dl",
-          "top": -409,
-          "left": 415,
-          "width": 678,
-          "height": 162
+          "label": "渠道控制台链接",
+          "tag": "a",
+          "top": -725,
+          "left": 602,
+          "width": 60,
+          "height": 15
         },
         {
           "index": 6,
+          "label": "宿主状态表",
+          "tag": "dl",
+          "top": -521,
+          "left": 415,
+          "width": 678,
+          "height": 228
+        },
+        {
+          "index": 7,
           "label": "宿主操作",
           "tag": "div",
-          "top": -235,
+          "top": -280,
           "left": 415,
           "width": 678,
           "height": 36
         },
         {
-          "index": 7,
+          "index": 8,
           "label": "进程列表",
           "tag": "div",
-          "top": -73,
+          "top": -75,
           "left": 415,
           "width": 678,
-          "height": 66
+          "height": 68
         },
         {
-          "index": 8,
+          "index": 9,
           "label": "开关组",
           "tag": "div",
           "top": 135,
@@ -1349,7 +2134,7 @@
           "height": 479
         },
         {
-          "index": 9,
+          "index": 10,
           "label": "事件列表",
           "tag": "div",
           "top": 740,
@@ -1385,7 +2170,7 @@
           "index": 1,
           "label": "返回对话",
           "tag": "button",
-          "top": 64,
+          "top": 68,
           "left": 22,
           "width": 212,
           "height": 34
@@ -1394,10 +2179,10 @@
           "index": 2,
           "label": "导航条目",
           "tag": "nav",
-          "top": 112,
+          "top": 116,
           "left": 20,
           "width": 216,
-          "height": 689
+          "height": 685
         },
         {
           "index": 3,
@@ -1497,7 +2282,7 @@
           "index": 1,
           "label": "返回对话",
           "tag": "button",
-          "top": 64,
+          "top": 68,
           "left": 22,
           "width": 212,
           "height": 34
@@ -1506,10 +2291,10 @@
           "index": 2,
           "label": "导航条目",
           "tag": "nav",
-          "top": 112,
+          "top": 116,
           "left": 20,
           "width": 216,
-          "height": 689
+          "height": 685
         },
         {
           "index": 3,
@@ -1602,7 +2387,7 @@
           "index": 1,
           "label": "返回对话",
           "tag": "button",
-          "top": 64,
+          "top": 68,
           "left": 22,
           "width": 212,
           "height": 34
@@ -1611,10 +2396,10 @@
           "index": 2,
           "label": "导航条目",
           "tag": "nav",
-          "top": 112,
+          "top": 116,
           "left": 20,
           "width": 216,
-          "height": 689
+          "height": 685
         },
         {
           "index": 3,

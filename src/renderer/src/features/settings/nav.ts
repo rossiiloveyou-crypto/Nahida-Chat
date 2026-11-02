@@ -1,5 +1,6 @@
 import type { ComponentType } from 'react'
 import {
+  IconChannels,
   IconInfo,
   IconMemory,
   IconModels,
@@ -15,6 +16,7 @@ export type SettingsSectionId =
   | 'prompts'
   | 'memory'
   | 'zones'
+  | 'channels'
   | 'qq'
   | 'tools'
   | 'appearance'
@@ -63,9 +65,19 @@ export const SETTINGS_NAV: SettingsNavItem[] = [
     group: '能力与安全'
   },
   {
+    // P7：用户的操作链是「先划域（区块）→ 再授权谁能进这个域（渠道控制台）→ 最后看运行时状态（QQ 接入）」。
+    // 放在 QQ 接入前面，符合「配置 → 运行」的阅读顺序。
+    id: 'channels',
+    label: '渠道控制台',
+    description: '私聊 / 群聊的响应权限',
+    icon: IconChannels,
+    group: '能力与安全'
+  },
+  {
     id: 'qq',
+    // P7：「绑定」概念已随 P6 删除，留着会让用户去找一个不存在的面板
     label: 'QQ 接入',
-    description: '进程、白名单与回复',
+    description: '进程状态与出站行为',
     icon: IconQq,
     group: '能力与安全'
   },

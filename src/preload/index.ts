@@ -106,10 +106,22 @@ const api: NahidaApi = {
     unzoned: () => ipcRenderer.invoke(IPC.zoneUnzoned)
   },
   channels: {
-    list: () => ipcRenderer.invoke(IPC.channelsList),
-    upsert: (draft) => ipcRenderer.invoke(IPC.channelsUpsert, draft),
-    remove: (key) => ipcRenderer.invoke(IPC.channelsRemove, key),
+    config: () => ipcRenderer.invoke(IPC.channelsConfig),
+    setGates: (patch) => ipcRenderer.invoke(IPC.channelsGates, patch),
+    saveAccount: (draft) => ipcRenderer.invoke(IPC.channelsAccount, draft),
+    removeAccount: (userId) => ipcRenderer.invoke(IPC.channelsRemoveAccount, userId),
+    saveGroup: (draft) => ipcRenderer.invoke(IPC.channelsGroup, draft),
+    removeGroup: (chatId) => ipcRenderer.invoke(IPC.channelsRemoveGroup, chatId),
+    rememberUin: (uin) => ipcRenderer.invoke(IPC.channelsUin, uin),
+    sessions: () => ipcRenderer.invoke(IPC.channelsSessions),
     status: () => ipcRenderer.invoke(IPC.channelsStatus)
+  },
+  // P8：旁听库只有这四个只读入口。**没有** clear / delete —— 见 PHASE-8 §4.6。
+  observe: {
+    status: () => ipcRenderer.invoke(IPC.observeStatus),
+    conversations: () => ipcRenderer.invoke(IPC.observeConversations),
+    tail: (payload) => ipcRenderer.invoke(IPC.observeTail, payload),
+    openDir: () => ipcRenderer.invoke(IPC.observeOpenDir)
   }
 }
 

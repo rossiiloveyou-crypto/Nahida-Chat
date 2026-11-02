@@ -1,6 +1,4 @@
 import { useNavigate } from 'react-router-dom'
-import { brandFor } from '../../assets/nahida'
-import { useTheme } from './useTheme'
 import { SETTINGS_NAV, type SettingsSectionId } from './nav'
 import { IconBack } from './icons'
 
@@ -15,14 +13,11 @@ interface SettingsSidebarProps {
  */
 export function SettingsSidebar({ active, version }: SettingsSidebarProps) {
   const navigate = useNavigate()
-  // 与对话侧栏共用同一枚品牌头像：.brand-mark 在 P2 已改成图片容器，
-  // 留着汉字 div 会变成"没有白底的裸字"（P2 施工实测）。
-  const brand = brandFor(useTheme().resolved)
 
   return (
     <aside className="sidebar sidebar--settings" data-ui-region="A 设置导航">
+      {/* 与对话侧栏一致：顶部不放品牌头像（用户 2026-11-02 指令）。 */}
       <div className="sidebar__brand">
-        <img className="brand-mark" src={brand.avatar} alt="" aria-hidden="true" />
         <div className="brand-text">
           <strong>设置</strong>
           <span>Nahida Chat</span>

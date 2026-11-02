@@ -1,4 +1,5 @@
 import { BrowserWindow } from 'electron'
+import { randomUUID } from 'node:crypto'
 import { IPC } from '@shared/ipc'
 import type {
   QqChatType,
@@ -9,8 +10,11 @@ import type {
   QqSettings,
   QqStats
 } from '@shared/qq'
-import type { ChannelAccessEntry } from '@shared/channels'
 import { channelKeyOf, channelSessionIdOf, isChannelSessionId } from '@shared/channels'
+import type { ChannelAccessConfig } from '@shared/channelAccess'
+import { findAccount, findGroup, resolveMessageAccess } from '@shared/channelAccess'
+import type { ObserveOutcome, ObserveRecord } from '@shared/observe'
+import { observeStore } from '../observe/store'
 import type { QqActionResult, QqHostEventMessage } from '@shared/qqHost'
 import type { ChatSink, ChatTurnOutcome } from '../chat/sink'
 import { chatService } from '../chat/chatService'
@@ -48,12 +52,28 @@ export interface QqBridgeDeps {
     sendAwait(input: { sessionId: string; content: string }, sink: ChatSink): Promise<ChatTurnOutcome>
   }
   store: {
-    /** P6：白名单来源。替换 P4 的绑定表 —— 留两个来源等于留两条真源 */
-    access(): ChannelAccessEntry[]
+    /**
+     * P9-R3：授权配置来源（账号 + 群 + 两个总开关）。
+     * 替换 P6 的 `access(): ChannelAccessEntry[]` —— 会话级条目已不再是授权主体。
+     */
+    access(): ChannelAccessConfig
     settings(): QqSettings
     /** 记一次命中（P7 面板的「最近活动」）。可选，测试里可以不给 */
     touchAccess?(key: string, at: number): void
+    /**
+     * 记下机器人自己的登录号（P9-R3）。可选。
+     *
+     * 为什么需要：群白名单存的是**群号**，区块 / 旁听要的是会话键 qq:<uin>:group:<群号>。
+     * 没有 uin 就把群展不开成会话（区块面板会看不到它）。
+     */
+    rememberUin?(uin: string): void
   }
+  /**
+   * P8：旁听库。**可选** —— 不注入 = 不旁听（测试与将来的重放工具用）。
+   * 生产接线在 startQqBridge() 里注入 observeStore。
+   * 写盘失败**绝不能**影响回复，见 §4.4.3。
+   */
+  observe?: { append(record: ObserveRecord): void }
   /** P6：渠道会话的幂等创建。不注入时用全局 chatService */
   ensureSession?: (sessionId: string, title: string) => unknown
   broadcast: (channel: string, payload: unknown) => void
@@ -83,6 +103,7 @@ export function emptyStats(): QqStats {
     droppedNonText: 0,
     droppedUnbound: 0,
     droppedNoPermission: 0,
+    droppedNotAuthorizedMember: 0,
     droppedNotMentioned: 0,
     droppedDuplicate: 0,
     droppedRateLimited: 0,
@@ -99,6 +120,7 @@ const DROP_COUNTER: Record<QqDropReason, keyof QqStats> = {
   'non-text': 'droppedNonText',
   unbound: 'droppedUnbound',
   'no-permission': 'droppedNoPermission',
+  'not-authorized-member': 'droppedNotAuthorizedMember',
   'not-mentioned': 'droppedNotMentioned',
   duplicate: 'droppedDuplicate',
   'rate-limited': 'droppedRateLimited',
@@ -115,6 +137,138 @@ function oneBotId(value: string): string | number {
 
 function previewOf(text: string): string {
   return Array.from(text.trim()).slice(0, 60).join('')
+}
+
+/* ── P8：旁听（§4.3 采集资格 / §4.4 单点写入 / §4.5 原始事件取群名） ───────── */
+
+/** 环境变量应急开关。设了 NC_OBSERVE=0 / false / off / no 就停采（已有文件一个字节不动）。 */
+function observeDisabled(): boolean {
+  const raw = String(process.env.NC_OBSERVE ?? '').trim().toLowerCase()
+  return raw === '0' || raw === 'false' || raw === 'off' || raw === 'no'
+}
+
+function rawRecord(event: unknown): Record<string, unknown> | null {
+  return typeof event === 'object' && event !== null ? (event as Record<string, unknown>) : null
+}
+
+/**
+ * 这条消息要不要进旁听库（PHASE-8 §4.3，2026-11-01 按「P8 = 群语料」修订）。
+ * 只做判定，不写盘 —— 写盘在 finally 里一次性完成（§4.4）。
+ *
+ *   R1 群聊：一律采，不管在不在白名单（「加白之前的历史已经在攒了」）
+ *   R2 私聊：只在白名单里才采（私聊没有「旁观」语义）
+ *   R3 有非空文本（纯图片/语音不算语料）
+ *
+ * ⚠️ 区块开关 observeGroupMessages 在这里**不读**（见 §4.3 末尾的说明）。
+ */
+export function shouldObserve(chatType: QqChatType, bound: boolean, text: string): boolean {
+  if (observeDisabled()) return false
+  if (!text.trim()) return false
+  if (chatType === 'group') return true
+  return bound
+}
+
+/**
+ * 这条会话「在不在白名单」的 v2 判定（P9-R3）。
+ *
+ *  群聊：群号在 `groups[]` 里 → true（与「群里谁能触发她」是两个问题）
+ *  私聊：这个号在 `accounts[]` 里 → true
+ *
+ * ⚠️ 它**不看** permissions 的任何一个位，只回答「名单里有没有」。
+ *    这正是旁听库里 allowed 字段的语义（P8 §4.4）。
+ */
+export function boundOf(
+  config: ChannelAccessConfig,
+  chatType: QqChatType,
+  chatId: string
+): boolean {
+  if (chatType === 'group') return findGroup(config.groups, chatId) !== null
+  return findAccount(config.accounts, chatId) !== null
+}
+
+/** 白名单里的备注 / 群名（面板与旁听都用它，空串表示没填） */
+export function labelOf(
+  config: ChannelAccessConfig,
+  chatType: QqChatType,
+  chatId: string
+): string {
+  if (chatType === 'group') return findGroup(config.groups, chatId)?.label ?? ''
+  return findAccount(config.accounts, chatId)?.label ?? ''
+}
+
+/** 从 OneBot 原始事件里读群名。只读不改：QqInbound 保持原样，三端契约不动。 */
+function groupNameOf(event: unknown): string {
+  const value = rawRecord(event)?.group_name
+  return typeof value === 'string' ? value : ''
+}
+
+/** 群名片（sender.card）。空卡时由调用方回落昵称，这里只报事实。 */
+function senderCardOf(event: unknown): string {
+  const sender = rawRecord(rawRecord(event)?.sender)
+  const card = sender?.card
+  return typeof card === 'string' ? card : ''
+}
+
+/** 段的类型名列表，去重。**绝不**序列化 data（data 里可能有 base64 文件）。 */
+export function segmentTypesOf(segments: unknown[]): string[] {
+  const types: string[] = []
+  for (const seg of Array.isArray(segments) ? segments : []) {
+    const type = rawRecord(seg)?.type
+    if (typeof type === 'string' && !types.includes(type)) types.push(type)
+  }
+  return types
+}
+
+/** 由 outcome 反推 triggered，**不单独维护一个布尔**（§4.4.3 第 3 条）。 */
+const TRIGGERED_OUTCOMES: ReadonlySet<ObserveOutcome> = new Set<ObserveOutcome>([
+  'responded',
+  'empty-reply',
+  'failed',
+  'error-reply'
+])
+
+export function triggeredOf(outcome: ObserveOutcome): boolean {
+  return TRIGGERED_OUTCOMES.has(outcome)
+}
+
+/**
+ * 造一行旁听记录（纯函数，便于单测）。
+ *
+ * triggered / outcome 先给占位值，由调用方在 finally 里覆盖 ——
+ * 这样即使某条出口忘了赋值，行也会被写下来（兜底值一眼就能看出问题，见 §九 K5）。
+ */
+export function buildRecord(
+  uin: string,
+  inbound: QqInbound,
+  bound: boolean,
+  entryLabel: string,
+  rawEvent: unknown
+): ObserveRecord {
+  const key = channelKeyOf(inbound.uin, inbound.chatType, inbound.chatId)
+  return {
+    v: 1,
+    id: 'ob-' + randomUUID(),
+    at: inbound.at,
+    sessionId: channelSessionIdOf(key),
+    key,
+    channel: 'qq',
+    uin,
+    chatType: inbound.chatType,
+    chatId: inbound.chatId,
+    chatLabel: groupNameOf(rawEvent),
+    entryLabel,
+    messageId: inbound.messageId,
+    speakerId: inbound.senderId,
+    speakerName: inbound.senderName,
+    speakerCard: senderCardOf(rawEvent),
+    isBot: inbound.senderId === uin,
+    mentioned: inbound.mentioned,
+    triggered: false,
+    allowed: bound,
+    outcome: 'dropped-queue-full',
+    text: inbound.text,
+    segmentTypes: segmentTypesOf(inbound.segments)
+  }
 }
 
 export function createQqBridge(deps: QqBridgeDeps): QqBridge {
@@ -273,12 +427,16 @@ export function createQqBridge(deps: QqBridgeDeps): QqBridge {
     return okCount
   }
 
+  /**
+   * 真正跑一轮。**返回真实 outcome**（P8 §4.4.4）：
+   * finally 里要用它反推 triggered 并写进旁听行，绝不在外层再猜一次。
+   */
   async function processInbound(
     sessionId: string,
     key: string,
     inbound: QqInbound,
     settings: QqSettings
-  ): Promise<void> {
+  ): Promise<ObserveOutcome> {
     const base = {
       uin: inbound.uin,
       chatType: inbound.chatType,
@@ -290,11 +448,11 @@ export function createQqBridge(deps: QqBridgeDeps): QqBridge {
     // 10. 限速（在管道内：排队期间不计入，比较的是"真正开始处理"的时刻）
     if (!allowHit(userHits, key + ':' + inbound.senderId, settings.rateLimitPerUser)) {
       countDrop('rate-limited', { ...base, detail: '用户 ' + inbound.senderId + ' 超限' })
-      return
+      return 'dropped-rate-limited'
     }
     if (!allowHit(channelHits, key, settings.rateLimitPerChannel)) {
       countDrop('rate-limited', { ...base, detail: '渠道超限' })
-      return
+      return 'dropped-rate-limited'
     }
 
     // 11. typing：只在"正要送进模型"这一刻、且只在私聊（M12）
@@ -308,7 +466,8 @@ export function createQqBridge(deps: QqBridgeDeps): QqBridge {
         ? '[群聊 ' + inbound.senderName + '(' + inbound.senderId + ')]\n' + inbound.text
         : inbound.text
 
-    const sink = new QqSink(deps.broadcast)
+    // P9-R3：把发言人挂到 sink 上。工具闸门在 chatService.runTool 里按它判权限。
+    const sink = new QqSink(deps.broadcast, inbound.senderId)
     let outcome: ChatTurnOutcome
     try {
       outcome = await deps.chat.sendAwait({ sessionId, content }, sink)
@@ -320,7 +479,7 @@ export function createQqBridge(deps: QqBridgeDeps): QqBridge {
       if (settings.errorReplyText.trim()) {
         await sendText(inbound.uin, inbound.chatType, inbound.chatId, settings.errorReplyText)
       }
-      return
+      return 'failed'
     } finally {
       // typing 收尾：status 模式发 event_type 0（text 模式不用收尾，那是正文之一）
       if (inbound.chatType === 'private' && settings.typingMode === 'status') {
@@ -342,7 +501,7 @@ export function createQqBridge(deps: QqBridgeDeps): QqBridge {
       if (settings.errorReplyText.trim()) {
         await sendText(inbound.uin, inbound.chatType, inbound.chatId, settings.errorReplyText)
       }
-      return
+      return 'error-reply'
     }
 
     // C1：正文用 outcome.content（done 的权威全文），不用 sink.content
@@ -352,7 +511,7 @@ export function createQqBridge(deps: QqBridgeDeps): QqBridge {
     })
     if (parts.length === 0) {
       record({ ...base, outcome: 'empty-reply' })
-      return
+      return 'empty-reply'
     }
 
     const okCount = await sendSegments(inbound.uin, inbound.chatType, inbound.chatId, parts, {
@@ -369,10 +528,11 @@ export function createQqBridge(deps: QqBridgeDeps): QqBridge {
         outcome: 'responded',
         detail: String(okCount) + '/' + String(parts.length) + ' 段'
       })
-    } else {
-      stats.failed += 1
-      record({ ...base, outcome: 'failed', detail: '全部段发送失败' })
+      return 'responded'
     }
+    stats.failed += 1
+    record({ ...base, outcome: 'failed', detail: '全部段发送失败' })
+    return 'failed'
   }
 
   async function handleEvent(uin: string, event: unknown): Promise<void> {
@@ -397,102 +557,150 @@ export function createQqBridge(deps: QqBridgeDeps): QqBridge {
     }
     const inbound = result.inbound
 
-    // 3-4. 白名单语义（P6）：没条目就绝不响应；有条目但 respond=false 也不响应。
-    //
-    //   unbound        = **不在白名单**。完全不管这条会话，不回复、不落库、不旁听。
-    //   no-permission  = **在白名单但 respond=false**。P6 阶段表现与 unbound 相同（都不回），
-    //                    但 P8 会从这里分叉：这些消息要进旁听库。分成两个计数就是为了让 P8 有地方挂。
     const key = channelKeyOf(inbound.uin, inbound.chatType, inbound.chatId)
     const settings = deps.store.settings()
-    const entry = deps.store.access().find((item) => item.key === key)
-    if (!entry) {
-      countDrop('unbound', {
-        uin,
-        chatType: inbound.chatType,
-        chatId: inbound.chatId,
-        senderName: inbound.senderName,
-        preview: previewOf(inbound.text)
-      })
-      return
-    }
-    if (!entry.permissions.respond) {
-      countDrop('no-permission', {
-        uin,
-        chatType: inbound.chatType,
-        chatId: inbound.chatId,
-        senderName: inbound.senderName,
-        preview: previewOf(inbound.text)
-      })
-      return
-    }
-    // 会话 id = 外部键（P6 核心）。第一次收到消息时凭空建出来，之后一直复用。
-    const sessionId = channelSessionIdOf(entry.key)
-    ensureSession(sessionId, entry.label || entry.chatId)
-    deps.store.touchAccess?.(key, now())
+    // P9-R3：授权配置（按人 + 按群 + 两个总开关）。每条消息读一次盘（store 不做缓存，J-23）
+    const access = deps.store.access()
+    const bound = boundOf(access, inbound.chatType, inbound.chatId)
+    // 机器人自己的登录号要记下来：群白名单存的是群号，区块 / 旁听要的是会话键 qq:<uin>:group:<群号>
+    deps.store.rememberUin?.(inbound.uin)
 
-    // 6. 群聊必须 @ 才回应
-    if (inbound.chatType === 'group' && settings.groupRequireMention && !inbound.mentioned) {
-      countDrop('not-mentioned', {
-        uin,
-        chatType: inbound.chatType,
-        chatId: inbound.chatId,
-        senderName: inbound.senderName,
-        preview: previewOf(inbound.text)
-      })
-      return
+    // ── P8：旁听（§4.3 采集资格 / §4.4 单点写入）───────────────────────────
+    //
+    // 入口在**归一化成功之后**（2026-11-01 修订）：群聊要全采，unbound 的群消息也得记。
+    // 写入收敛到**一个** finally 里，不散落在各个 return 上 ——
+    // 散着写必然出现「加一个出口就忘了加一次 append」。
+    //
+    // 三件不变量：
+    //  1. 只判定一次：pending 为 null 就什么都不写。
+    //  2. outcome 初值不是 'responded'：兜底成 dropped-queue-full，漏赋值时一眼看得出（K5）。
+    //  3. triggered 由 outcome 反推，不单独维护布尔（§4.4.3-3）。
+    // let 而非常量：去重分支是**唯一**一处「丢弃但不记录」的出口（§4.3），要把 pending 清空。
+    /** 事件上下文（丢弃记录用），一次造好，各出口共用 —— 少写一份预览就少一处走样 */
+    const base = {
+      uin,
+      chatType: inbound.chatType,
+      chatId: inbound.chatId,
+      senderName: inbound.senderName,
+      preview: previewOf(inbound.text)
     }
+    let pending: ObserveRecord | null = shouldObserve(inbound.chatType, bound, inbound.text)
+      ? buildRecord(uin, inbound, bound, labelOf(access, inbound.chatType, inbound.chatId), event)
+      : null
+    /** 兜底值：走到没预料到的出口时行照样写下来，统计里 queue-full 会异常变大（K5） */
+    let outcome: ObserveOutcome = 'dropped-queue-full'
 
-    // 7. 去重（必须在队列之外：重放的同一事件不能排队两次）
-    if (inbound.messageId) {
-      const dedupeKey = inbound.uin + ':' + inbound.messageId
-      const expiry = dedupe.get(dedupeKey)
-      if (expiry !== undefined && expiry > now()) {
-        countDrop('duplicate', {
-          uin,
-          chatType: inbound.chatType,
-          chatId: inbound.chatId,
-          senderName: inbound.senderName,
-          preview: previewOf(inbound.text)
+    try {
+      // ── 闸门顺序（P9-R3 §15.6.2）。**副作用一律排在所有判定之后**（J-56 / F-01）──
+      //
+      //   私聊：① 准入（按**发言人**判，始终校验）
+      //   群聊：① 群是否加白 → ② 是否 @ 她 → ③ 成员鉴权（groupMemberGate，默认关闭）
+      //   两者共同：④ ensureSession + touchAccess → ⑤ 去重 → ⑥ 队列
+      //
+      // 为什么 ④ 必须在 ① ② ③ 之后：
+      //   F-01 实测过「未 @ 的消息也建会话、也全量写一次 access.json」——
+      //   群里刷屏 = 每条都读一次写一次。J-56：挡住 ≠ 没副作用，副作用必须排在判定之后。
+      if (inbound.chatType === 'private') {
+        // ① 私聊准入：**按发言人判**（plus 的 classifyQqEvent 同款）。
+        //    私聊没有「旁观」语义：陌生号发消息 → 直接丢，不进模型。
+        const decision = resolveMessageAccess(access, {
+          channel: 'qq',
+          chatType: 'private',
+          senderId: inbound.senderId
         })
-        return
-      }
-      dedupe.set(dedupeKey, now() + DEDUPE_TTL_MS)
-      if (dedupe.size > DEDUPE_PRUNE_AT) {
-        const at = now()
-        for (const [id, until] of dedupe) {
-          if (until <= at) dedupe.delete(id)
+        if (decision.blocked) {
+          countDrop('not-authorized-member', { ...base, detail: decision.reason })
+          outcome = 'dropped-not-authorized-member'
+          return
+        }
+      } else {
+        // ① 群白名单：这个群允不允许她说话。注意旁听在**这之前**就写完了 ——
+        //    未加白的群照样攒语料（M32「P8 就是群语料」）。
+        if (!bound) {
+          countDrop('unbound', { ...base })
+          outcome = 'dropped-unbound'
+          return
+        }
+        // ② 必须 @（既有闸门，位置不变）
+        if (settings.groupRequireMention && !inbound.mentioned) {
+          countDrop('not-mentioned', { ...base })
+          outcome = 'dropped-not-mentioned'
+          return
+        }
+        // ③ 群成员鉴权（groupMemberGate，**默认关闭**）。
+        //    关闭 = 群里谁 @ 她都回（现状）；打开 = 只有 QQ 号白名单里的人能触发。
+        const memberDecision = resolveMessageAccess(access, {
+          channel: 'qq',
+          chatType: 'group',
+          senderId: inbound.senderId
+        })
+        if (memberDecision.blocked) {
+          countDrop('not-authorized-member', { ...base, detail: memberDecision.reason })
+          outcome = 'dropped-not-authorized-member'
+          return
         }
       }
-    }
 
-    // 8-9. 双键串行：同外部会话串行 + 同 NC 会话串行（P6 起两者其实同构，保留双键是零成本）
-    const outer = queue.run('ext:' + key, () =>
-      queue.run('session:' + sessionId, () => processInbound(sessionId, key, inbound, settings))
-    )
-    try {
-      await outer
-    } catch (error) {
-      const message = errorMessage(error)
-      if (message.startsWith('queue_full:')) {
-        countDrop('queue-full', {
-          uin,
-          chatType: inbound.chatType,
-          chatId: inbound.chatId,
-          senderName: inbound.senderName,
-          preview: previewOf(inbound.text)
-        })
-      } else {
-        stats.failed += 1
-        stats.lastError = message
-        record({
-          uin,
-          chatType: inbound.chatType,
-          chatId: inbound.chatId,
-          senderName: inbound.senderName,
-          preview: previewOf(inbound.text),
-          outcome: 'failed',
-          detail: message
-        })
+      // ④ 会话 id = 外部键（P6 核心）。第一次收到消息时凭空建出来，之后一直复用。
+      const sessionId = channelSessionIdOf(key)
+      ensureSession(sessionId, labelOf(access, inbound.chatType, inbound.chatId) || inbound.chatId)
+      deps.store.touchAccess?.(key, now())
+
+      // 7. 去重（必须在队列之外：重放的同一事件不能排队两次）
+      //
+      //  🔴 去重键**必须带 chatType + chatId**（P8 附二 B / J-59）：
+      //     message_id 只在单个会话内唯一，群 A 与群 B 完全可能撞同一个 id。
+      //     旧的 uin:messageId 会让后到的那条被静默丢弃 ——「消息偶尔少了，但没有任何报错」。
+      if (inbound.messageId) {
+        const dedupeKey =
+          inbound.uin + ':' + inbound.chatType + ':' + inbound.chatId + ':' + inbound.messageId
+        const expiry = dedupe.get(dedupeKey)
+        if (expiry !== undefined && expiry > now()) {
+          countDrop('duplicate', { ...base })
+          outcome = 'dropped-duplicate'
+          // §4.3：duplicate 是唯一「丢弃但不记录」的 drop 原因 ——
+          // 同一 message_id 的重放，原文已经记过一次，再记一行会让「这个群说过什么」出现复读。
+          pending = null
+          return
+        }
+        dedupe.set(dedupeKey, now() + DEDUPE_TTL_MS)
+        if (dedupe.size > DEDUPE_PRUNE_AT) {
+          const at = now()
+          for (const [id, until] of dedupe) {
+            if (until <= at) dedupe.delete(id)
+          }
+        }
+      }
+
+      // 8-9. 双键串行：同外部会话串行 + 同 NC 会话串行（P6 起两者其实同构，保留双键是零成本）
+      const outer = queue.run('ext:' + key, () =>
+        queue.run('session:' + sessionId, () => processInbound(sessionId, key, inbound, settings))
+      )
+      try {
+        outcome = await outer
+      } catch (error) {
+        const message = errorMessage(error)
+        if (message.startsWith('queue_full:')) {
+          countDrop('queue-full', { ...base })
+          outcome = 'dropped-queue-full'
+        } else {
+          stats.failed += 1
+          stats.lastError = message
+          record({ ...base, outcome: 'failed', detail: message })
+          outcome = 'failed'
+        }
+      }
+    } finally {
+      // §4.4.3-1：写盘是**次生副作用**。失败少一行语料可接受，抛出去用户看不到回复不可接受。
+      if (pending && deps.observe) {
+        pending.outcome = outcome
+        pending.triggered = triggeredOf(outcome)
+        try {
+          deps.observe.append(pending)
+        } catch (error) {
+          // 不重试：重试会写出重复行
+          console.warn('[observe] 写入失败：' + errorMessage(error))
+        }
       }
     }
   }
@@ -530,10 +738,13 @@ export function startQqBridge(): QqBridge {
     host: qqHost,
     chat: { sendAwait: (input, sink) => chatService.sendAwait(input, sink) },
     store: {
-      access: () => channelStore.entries(),
+      access: () => channelStore.config(),
       settings: () => qqStore.settings(),
-      touchAccess: (key, at) => channelStore.touch(key, at)
+      touchAccess: (key, at) => channelStore.touch(key, at),
+      rememberUin: (uin) => channelStore.addUin(uin)
     },
+    // P8：旁听库。这是**生产环境唯一的写入注入点**（§6.1 I1 守卫盯着这句）。
+    observe: observeStore,
     broadcast: broadcastToWindows
   })
   return activeBridge

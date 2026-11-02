@@ -75,9 +75,9 @@ export function ZonesSection() {
       <div className="settings-page__head" data-ui-target="页头">
         <h1>区块</h1>
         <p>
-          区块 = 长期记忆的「域」。同一个区块里的群能共享记忆，不同区块之间读不到彼此的；
-          桌面会话永远在主区块里。区块**只共享长期记忆，不共享短期上下文** ——
-          每个群仍然是各自的一条会话（各自的人设、模式、消息历史）。
+          区块 = 记忆的「域」。同一个区块里的会话共享长期记忆，不同区块之间读不到彼此的；
+          桌面会话永远在主区块里。每个群仍然各自是一条会话（各自的人设、模式、消息历史），
+          区块管的是「它们之间共享哪些记忆」，不是「把它们合成一条会话」。
         </p>
       </div>
 
@@ -227,16 +227,15 @@ export function ZonesSection() {
         )}
       </section>
 
-      <section className="setting-group" data-ui-region="C 未归区的 QQ 会话">
-        <h3 className="setting-group__title">加入未归区的 QQ 会话（{unassigned.length}）</h3>
+      <section className="setting-group" data-ui-region="C 白名单里的会话">
+        <h3 className="setting-group__title">白名单里的会话（勾选后加入本区块）· {unassigned.length}</h3>
         <p className="setting-group__desc">
-          这里列出渠道白名单里还没划区块的会话 —— 加了白名单就会出现，不需要先聊过天。
-          勾选后点「加入本区块」，它们就会和本区块的其它群共享长期记忆。没勾的保持 solo（只读自己）。
+          这里列出的是渠道控制台里已授权的会话，<strong>不需要先聊过天</strong>。
+          加进区块后，它们的对话共享本区块的长期记忆。没勾的保持 solo（只读自己）。
         </p>
         {unassigned.length === 0 && (
           <p className="hint-text">
-            白名单里还没有可归区的会话。先在「渠道控制台」加白（P7 起提供；当前版本可手改
-            %APPDATA%\Nahida Chat\channels\access.json）。
+            渠道控制台还没有授权任何会话 → 去「渠道控制台」加一条。
           </p>
         )}
         {unassigned.length > 0 && (
@@ -250,7 +249,21 @@ export function ZonesSection() {
                 />
                 <span>
                   {CHAT_TYPE_LABEL[item.chatType]} · {zoneOf(item)}
-                  {!item.permissions.respond && <em className="zones-table__note"> · 未授权自动回复</em>}
+                  <em className="zones-table__note">
+                    {' · '}
+                    {/* P9-R3：投影口径改了 —— 私聊条目看 private 位（没勾就是「只在群里响应」），
+                        群条目恒为「群聊」（群白名单本身就是「允许她在这个群说话」）。 */}
+                    {item.chatType === 'private'
+                      ? item.permissions.respond
+                        ? '可私聊'
+                        : '仅群聊'
+                      : '群聊'}
+                    {item.permissions.tool ? ' · 可工具' : ''}
+                  </em>
+                  <em className="zones-table__note">
+                    {' · '}
+                    {item.lastAt ? new Date(item.lastAt).toLocaleString('zh-CN', { hour12: false }) : '从未活动'}
+                  </em>
                   <em className="zones-table__note"> · {item.key}</em>
                 </span>
               </label>

@@ -125,37 +125,26 @@ select {
   padding: 10px 10px 8px;
 }
 
+/* 侧栏顶部：只有文字，没有头像。
+   用户 2026-11-02 指令：侧栏头像删掉（原来 34px 的圆形素材在 236px 侧栏里
+   被压成一团色块，细节全丢；头像统一只保留在消息列表里，那里可以给到 72px）。
+   因此 .brand-mark 整条规则已随之删除，不要再加回来。 */
 .sidebar__brand {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 8px 2px;
-}
-
-/* 侧栏头像：素材是 101×101 透明 PNG，contain 保证不变形。
-   原来那 8 条文字版声明（background、color、font-weight、font-size、box-shadow、
-   border、place-items、display:grid）
-   必须整段替换 —— 与文字版共用类名会变成"图里还压着一个汉字"。
-   注：注释里不能出现裸的 *斜杠 组合，会提前闭合注释并吃掉整条规则（本次已踩，见完成报告偏差）。 */
-.brand-mark {
-  width: 34px;
-  height: 34px;
-  border-radius: 11px;
-  display: block;
-  object-fit: contain;
-  background: transparent;
-  box-shadow: none;
-  border: 0;
+  padding: 8px 10px 4px;
 }
 
 .brand-text {
   display: flex;
   flex-direction: column;
-  line-height: 1.25;
+  line-height: 1.3;
+  min-width: 0;
 }
 
 .brand-text strong {
-  font-size: 14px;
+  font-size: 15px;
   letter-spacing: 0.2px;
 }
 
@@ -421,8 +410,14 @@ select {
   padding: 26px var(--nc-content-gutter) 10px;
 }
 
+/* 阅读列宽度：原先写死 760px，在 1600 宽窗口下左右各空 294px，
+   全屏 1920 时空 484px —— 用户 2026-11-02 反馈「对话挤在中间，左右空置没用上」。
+   改成 min(1180px, 100%)：窄窗口时铺满可用宽度，宽屏时留出舒适行宽上限。
+   ---
+   为什么不是 100%：正文行长超过约 90 个汉字后，眼睛回扫会明显吃力。
+   1180px 配 15px 字号约 78 个汉字/行，仍在上限内。 */
 .message-list__inner {
-  max-width: 760px;
+  max-width: min(1180px, 100%);
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -431,7 +426,7 @@ select {
 
 .message {
   display: flex;
-  gap: 12px;
+  gap: 16px;
   animation: msg-in 0.18s ease-out;
 }
 
@@ -450,20 +445,44 @@ select {
   }
 }
 
+/* 消息头像：28 -> 64px（用户 2026-11-02 指令「缩到一个网格块的大小」）。
+   64px = 网格覆盖层的一个粗格（GridOverlay 的 MAJOR_EVERY 8 x CELL 8 = 64），
+   所以头像边缘能正好压在粗线上，出图后可以被网格对齐验证。
+   28px 时眼睛只有约 6px，看不出细节；64px 下瞳孔高光与发饰金边都清晰。
+   侧栏那一处头像已删除，这里可以给到 64px 而不挤文字。
+   border-radius 与素材自身圆角比例（26%）一致，两层不会打架。 */
 .avatar {
-  flex: 0 0 28px;
-  width: 28px;
-  height: 28px;
-  border-radius: 9px;
+  flex: 0 0 64px;
+  width: 64px;
+  height: 64px;
+  border-radius: 17px;
   display: grid;
   place-items: center;
-  font-size: 12px;
+  font-size: 20px;
   font-weight: 700;
   user-select: none;
+  /*
+   * P9：AI 头像从「色块 + 文字」换成实拍素材，这一块变成图片容器。
+   * overflow:hidden 是必需的 —— 素材是方形 PNG，圆角靠容器裁，
+   * 否则四角会露出画布背景（28px 下尤其明显）。
+   */
+  overflow: hidden;
 }
 
+/* 头像图：铺满容器。素材已带圆形透明遮罩，object-fit 只是防止以后换素材被拉扁。 */
+.avatar__image {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+/*
+ * AI 头像不再需要底色：图本身不透明（圆角外是透明的），
+ * 保留 --nc-accent-soft 会在图加载前闪一块绿。
+ */
 .avatar--assistant {
-  background: var(--nc-accent-soft);
+  background: transparent;
   color: var(--nc-accent-strong);
 }
 
@@ -472,11 +491,14 @@ select {
   color: var(--nc-text-secondary);
 }
 
+/* 气泡随头像一起放大（用户 2026-11-02 指令：只放大头像会显得失衡）。
+   字号 14 -> 15px、内边距 10/14 -> 12/16；
+   阅读区变宽由 max-width 78 -> 82 吸收，不额外占布局。 */
 .bubble {
-  max-width: 78%;
-  padding: 10px 14px;
+  max-width: 82%;
+  padding: 12px 16px;
   border-radius: var(--nc-radius-lg);
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.72;
   white-space: pre-wrap;
   word-break: break-word;
@@ -484,7 +506,8 @@ select {
 
 .message--assistant .bubble {
   background: transparent;
-  padding: 2px 0;
+  /* 与 72px 头像垂直对齐：上留 4px，让首行文字与头像重心齐平 */
+  padding: 4px 0;
 }
 
 .message--user .bubble {
@@ -714,7 +737,8 @@ select {
 }
 
 .composer__box {
-  max-width: 760px;
+  /* 与 .message-list__inner 同宽：输入框必须和阅读列对齐，否则视觉断层 */
+  max-width: min(1180px, 100%);
   margin: 0 auto;
   display: flex;
   /*
@@ -816,7 +840,7 @@ select {
 }
 
 .composer__hint {
-  max-width: 760px;
+  max-width: min(1180px, 100%);
   margin: 6px auto 0;
   display: flex;
   justify-content: space-between;
@@ -833,7 +857,7 @@ select {
 
 /* 两个选择器贴在输入框上方、与输入框同宽同边距，读起来像输入框的一部分。 */
 .composer-bar {
-  max-width: 760px;
+  max-width: min(1180px, 100%);
   margin: 8px auto 0;
   display: flex;
   align-items: center;
@@ -1348,7 +1372,7 @@ input[type='range'] {
 }
 
 .approval {
-  max-width: 760px;
+  max-width: min(1180px, 100%);
   margin: 0 auto;
   border: 1px solid var(--nc-warning-border);
   border-radius: var(--nc-radius-lg);
@@ -3070,6 +3094,65 @@ input[type='range'] {
   display: flex;
   gap: 6px;
   justify-content: flex-end;
+}
+
+/* P7 渠道控制台 → P9-R3 重做：现在是几张**列数不同**的表，每张必须单独一条
+   grid-template-columns（J-62：列数与别人不同却沿用别人的类名，表头会折到第二行，
+   屏幕上看着像「少了几个字段」）。骨架仍然复用，私有部分只有列宽。 */
+
+/* A 区 QQ 号白名单：五列（QQ 号 / 备注 / 权限位 / 最近活动 / 操作）。
+   「权限位」那一格塞三个 checkbox，所以给得比别处宽。 */
+.qq-table--accounts .qq-table__head,
+.qq-table--accounts .qq-table__row {
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 0.9fr) 232px 116px 72px;
+}
+
+/* B 区群白名单：四列（群号 / 群名 / 最近活动 / 操作） */
+.qq-table--groups .qq-table__head,
+.qq-table--groups .qq-table__row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) 132px 72px;
+}
+
+/* P8 旁听库会话表 → P9-R2 从七列扩成八列（类型 / **账号** / 会话号 / 名称 / 行数 / 大小 / 最近 / 操作）。
+   账号列是 P9-R2 加的：同一句群消息会被每个登录号各记一份，不显示 uin 时
+   用户会以为「同一个群记了两遍 / 出 bug 了」（J-64）。
+
+   ⚠️ 八列塞进 678px 的表宽里，固定列必须先把宽度算掉 —— 这是 J-62 的同类坑：
+   **列数对了，但没算宽度**。第一版 64+96+88+88+132+72 = 540，只剩 138px 给
+   「会话号 / 名称」两个 fr 列（每列 69px），实测群号被截成「7...」、名称被截成「<...」。
+   现在固定列收到 456，两个 fr 列各约 111px，9 位群号 + 中文群名都能完整显示。 */
+.qq-table--observe .qq-table__head,
+.qq-table--observe .qq-table__row {
+  grid-template-columns: 44px 76px minmax(0, 1fr) minmax(0, 1fr) 56px 56px 116px 56px;
+}
+
+/* 旁听抽屉：时间 / 说话人 / 判定 / 正文。正文那一列吃掉剩余宽度。 */
+.qq-table--observe-tail .qq-table__row {
+  grid-template-columns: 148px minmax(0, 0.6fr) 112px minmax(0, 2fr);
+  align-items: start;
+  white-space: normal;
+}
+
+.qq-table__flags {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.qq-table__flags .memory-check {
+  margin-bottom: 0;
+  font-size: 11.5px;
+}
+
+/* P9-R2：跨账号角标（同一个群被多个号同时记录）。淡色、不抢列宽。 */
+.qq-tag-multi {
+  margin-left: 6px;
+  font-style: normal;
+  font-size: 11px;
+  color: var(--nc-text-tertiary);
+  opacity: 0.75;
+  white-space: nowrap;
 }
 
 .qq-tag {

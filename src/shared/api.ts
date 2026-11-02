@@ -28,12 +28,9 @@ import type {
 } from './types'
 import type { ToolApprovalReply, ToolDefinition } from './tools'
 import type { QqEventFeedItem, QqSettings, QqStatusPayload } from './qq'
-import type {
-  ChannelAccessDraft,
-  ChannelAccessEntry,
-  ChannelStatusPayload,
-  UnzonedChannelItem
-} from './channels'
+import type { ChannelStatusPayload, UnzonedChannelItem } from './channels'
+import type { ChannelAccount, ChannelAccessConfig, ChannelGroup } from './channelAccess'
+import type { ObserveConversation, ObserveRecord, ObserveStatus } from './observe'
 import type { QqHostStatus, QqProcessSnapshot } from './qqHost'
 import type { Zone, ZoneAdoptResult, ZoneConfig, ZoneDraft, ZoneMemberDraft, ZoneStat } from './zones'
 
@@ -165,16 +162,58 @@ export interface NahidaApi {
     unzoned: () => Promise<UnzonedChannelItem[]>
   }
   /**
-   * 渠道白名单（P6）——「谁能回 / 谁能用工具」的唯一真源。
+   * 渠道授权（P6 → **P9-R3 v2：按「人」授权**）。
    *
-   * 白名单条目 = 允许响应；`permissions.respond=false` = 在白名单里但不自动回复（P8 旁听用）。
-   * 文件在 `userData/channels/access.json`，用户可以直接手改（每次读盘，没有缓存）。
+   * 真源：`userData/channels/access.json`，用户可以直接手改（每次读盘，没有缓存）。
+   * 判定主体是**发言人 QQ 号**，不是会话 —— 见 shared/channelAccess.ts。
    */
   channels: {
-    list: () => Promise<ChannelAccessEntry[]>
-    upsert: (draft: ChannelAccessDraft) => Promise<ChannelAccessEntry>
-    remove: (key: string) => Promise<boolean>
-    /** 数据目录 / 文件路径 / 条目数（面板的「数据在哪」） */
+    /** 整份配置：账号 + 群 + 两个总开关 + 已知机器人号 */
+    config: () => Promise<ChannelAccessConfig>
+    /** 改两个总开关（groupMemberGate 默认关 / toolGate 默认开） */
+    setGates: (patch: { groupMemberGate?: boolean; toolGate?: boolean }) => Promise<ChannelAccessConfig>
+    /** 增改一个账号（权限是部分更新） */
+    saveAccount: (draft: {
+      userId: string
+      label?: string
+      permissions?: Partial<ChannelAccount['permissions']>
+    }) => Promise<ChannelAccessConfig>
+    removeAccount: (userId: string) => Promise<boolean>
+    /** 增改一个群 */
+    saveGroup: (draft: { chatId: string; label?: string }) => Promise<ChannelAccessConfig>
+    removeGroup: (chatId: string) => Promise<boolean>
+    /** 记一个机器人登录号（面板识别到已注入进程时调；不参与授权） */
+    rememberUin: (uin: string) => Promise<ChannelAccessConfig>
+    /** 白名单在会话维度上的投影（区块面板的候选集来源） */
+    sessions: () => Promise<Array<{
+      key: string
+      uin: string
+      chatType: 'private' | 'group'
+      chatId: string
+      label: string
+      lastAt: number
+      permissions: { respond: boolean; tool: boolean }
+    }>>
+    /** 数据目录 / 文件路径 / 计数（面板的「数据在哪」） */
     status: () => Promise<ChannelStatusPayload>
+  }
+  /**
+   * 旁听库（P8）—— 群语料。**只增不清**，程序没有任何删除路径。
+   *
+   * 采集口径（2026-11-01「P8 就是群语料」）：群聊全采（不看白名单），私聊只采放行的。
+   * 旁听内容不进 memory.db，当前也不参与任何 prompt —— 它是原料，不是行为。
+   */
+  observe: {
+    status: () => Promise<ObserveStatus>
+    conversations: () => Promise<ObserveConversation[]>
+    /** 某会话最近 limit 条（面板抽屉用，1..200） */
+    tail: (payload: {
+      uin: string
+      chatType: 'private' | 'group'
+      chatId: string
+      limit?: number
+    }) => Promise<ObserveRecord[]>
+    /** 用系统文件管理器打开 observe/ 根目录，返回空串表示成功 */
+    openDir: () => Promise<string>
   }
 }

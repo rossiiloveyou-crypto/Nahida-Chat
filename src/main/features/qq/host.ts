@@ -245,7 +245,10 @@ export class QqHost extends EventEmitter {
         SNOWLUMA_UPDATE_ROOT: hostDir,
         NC_SL_HOME: this.home,
         // 双保险（M2）：即便有人把 runtime.json 改回 true，宿主仍不自动注入
-        SNOWLUMA_HOOK_AUTOLOAD: '0'
+        SNOWLUMA_HOOK_AUTOLOAD: '0',
+        // 诊断开关：默认 info。设成 debug 才能看到 MsgPush 的
+        // 「no decoder for PkgType=X subType=Y」——那是消息没进管线的唯一现场。
+        ...(process.env.NC_SL_LOG_LEVEL ? { SNOWLUMA_LOG_LEVEL: process.env.NC_SL_LOG_LEVEL } : {})
       },
       windowsHide: true
     })

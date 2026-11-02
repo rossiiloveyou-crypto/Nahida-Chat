@@ -76,11 +76,22 @@ export const IPC = {
   /** P6：未归区的白名单会话（区块面板 C 区，只读） */
   zoneUnzoned: 'zone:unzoned',
 
-  // 渠道白名单（P6）：外部会话的授权真源 userData/channels/access.json
-  channelsList: 'channels:list',
-  channelsUpsert: 'channels:upsert',
-  channelsRemove: 'channels:remove',
-  channelsStatus: 'channels:status'
+  // 渠道授权（P6 → P9-R3 v2：按「人」授权）。真源 userData/channels/access.json
+  channelsConfig: 'channels:config',
+  channelsGates: 'channels:gates',
+  channelsAccount: 'channels:account',
+  channelsRemoveAccount: 'channels:remove-account',
+  channelsGroup: 'channels:group',
+  channelsRemoveGroup: 'channels:remove-group',
+  channelsUin: 'channels:uin',
+  channelsSessions: 'channels:sessions',
+  channelsStatus: 'channels:status',
+
+  // 旁听库（P8）：只增不清的群语料。**没有** delete / clear 通道，这是设计不是遗漏
+  observeStatus: 'observe:status',
+  observeConversations: 'observe:conversations',
+  observeTail: 'observe:tail',
+  observeOpenDir: 'observe:open-dir'
 } as const
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC]

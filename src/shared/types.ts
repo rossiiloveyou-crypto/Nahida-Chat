@@ -353,6 +353,14 @@ export interface AppInfo {
 export interface SendInput {
   sessionId: string
   content: string
+  /**
+   * P9-R3：渠道消息的发言人（QQ 号）。桌面会话不传。
+   *
+   * ⚠️ 它**不是**权限判定入口 —— 工具闸门读的是 `ChatSink.senderId`
+   * （那个由 bridge 在造 QqSink 时带上）。这里保留字段是为了让将来
+   * 别的无窗口调用方（重放工具、CLI）也能标注发言人，不必另开一条契约。
+   */
+  senderId?: string
 }
 
 /** 新建会话时可选带入的初始设置 */

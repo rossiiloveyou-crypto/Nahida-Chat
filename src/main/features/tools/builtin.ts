@@ -1,5 +1,6 @@
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { basename, join, sep } from 'node:path'
+import { registerClockTools } from './clock'
 import { registerTool } from './registry'
 import { relativeToWorkspace, resolveToolPath } from './sandbox'
 
@@ -12,8 +13,13 @@ const MAX_READ_BYTES = 64 * 1024
  * readOnly 是唯一的自我描述字段：它决定在「只读」和「审批」模式下
  * 这个工具能不能直接跑。写入/执行类工具（M3 后期）声明 readOnly: false 即可，
  * 不需要再回来改权限代码。
+ *
+ * 时间工具在 ./clock 里单独实现：它同时服务「工具调用」和「每轮 system 注入」两条路，
+ * 两处必须共用同一份格式化代码，所以不能塞回这个文件。
  */
 export function registerBuiltinTools(): void {
+  registerClockTools()
+
   registerTool({
     definition: {
       name: 'fs.list_dir',
@@ -84,24 +90,6 @@ export function registerBuiltinTools(): void {
         relativeToWorkspace(target, context.scope) +
         '（' + buffer.length + ' 字节' + (truncated ? '，已截断' : '') + '）'
       return { ok: true, output: header + '\n\n' + text }
-    }
-  })
-
-  registerTool({
-    definition: {
-      name: 'clock.now',
-      title: '当前时间',
-      description: '返回本机当前时间（ISO 8601）与时区。',
-      readOnly: true,
-      parameters: { type: 'object', properties: {}, required: [] }
-    },
-    async run() {
-      const now = new Date()
-      const offset = -now.getTimezoneOffset() / 60
-      return {
-        ok: true,
-        output: now.toISOString() + '（本机时区 UTC' + (offset >= 0 ? '+' : '') + offset + '）'
-      }
     }
   })
 }

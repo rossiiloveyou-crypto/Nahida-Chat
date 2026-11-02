@@ -23,6 +23,7 @@ import { memoryService } from '../features/rag'
 import { permissionGate } from '../features/tools/permission'
 import { listDefinitions } from '../features/tools/registry'
 import { registerChannelsIpcHandlers } from './channels'
+import { registerObserveIpcHandlers } from './observe'
 import { registerQqIpcHandlers } from './qq'
 import { registerZonesIpcHandlers } from './zones'
 
@@ -129,4 +130,6 @@ export function registerIpcHandlers(): void {
   registerChannelsIpcHandlers()
   // 区块（P5）：记忆域 / 群角色绑定
   registerZonesIpcHandlers()
+  // 旁听库（P8）：只增不清的群语料，只读转发
+  registerObserveIpcHandlers()
 }

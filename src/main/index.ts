@@ -1,6 +1,6 @@
 import { app, BrowserWindow, shell } from 'electron'
 import { registerIpcHandlers } from './ipc'
-import { migrateFromBindings } from './features/channels/store'
+import { channelStore, migrateFromBindings } from './features/channels/store'
 import { startQqHost } from './features/qq/host'
 import { startQqBridge } from './features/qq/bridge'
 import { settingsStore } from './features/settings/settingsStore'
@@ -48,6 +48,19 @@ if (!gotTheLock) {
     // 旧文件原地保留（只增不清）。必须在注册 IPC 之前跑，面板一打开就该看到迁移结果。
     const migrated = migrateFromBindings()
     if (migrated > 0) console.log('[channels] 已把 ' + String(migrated) + ' 条旧绑定迁移为白名单条目')
+    // P9-R3：v1（会话级）→ v2（人 + 群）。**破坏性改写，先备份**（access.v1.backup.json）。
+    // 幂等：已经是 v2 就直接返回，不重复迁。必须在注册 IPC 之前跑，面板一打开就该看到新形状。
+    const upgrade = channelStore.migrateToV2()
+    if (upgrade.migrated) {
+      console.log(
+        '[channels] access.json 已升级到 v2：' +
+          String(upgrade.accounts) +
+          ' 个账号 / ' +
+          String(upgrade.groups) +
+          ' 个群' +
+          (upgrade.backedUp ? '（已备份 access.v1.backup.json）' : '（备份文件已存在，未覆盖）')
+      )
+    }
 
     registerIpcHandlers()
     createMainWindow()
