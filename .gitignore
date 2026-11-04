@@ -32,3 +32,11 @@ docs/preview/
 # 物理备份与一次性探针
 .p*-backup/
 .p*-probe/
+
+# ---- 一次性探针与候选素材：不进公开库 ----
+# probe-memory.mjs 会读真实 %APPDATA%/Nahida Chat/settings.json（含 apiKey），
+# 虽然只写到临时目录、不打印内容，但把它公开等于把「怎么读用户密钥」示范出去。
+# 🔴 只忽略**仓库根**的一次性探针；scripts/test/ 下的 probe-mode-supply*.mjs 是正式测试套件，必须入库
+/probe-*.mjs
+.probe-lock.ps1
+.avatar-cand/

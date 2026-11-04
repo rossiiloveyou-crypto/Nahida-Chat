@@ -2,7 +2,7 @@
  * 主进程 / 预加载 / 渲染进程共用的数据契约。
  * 任何跨进程传递的结构都先在这里定义，避免三端各写一份。
  */
-import type { ToolApprovalTicket, ToolCallRecord } from './tools'
+import type { ChatToolsSettings, ToolApprovalTicket, ToolCallRecord } from './tools'
 
 export type MessageRole = 'system' | 'user' | 'assistant'
 
@@ -181,6 +181,21 @@ export interface Settings {
   memory: MemorySettings
   /** 主题偏好。缺省（老配置）时按 DEFAULT_APPEARANCE 补齐，见 normalizeAppearance */
   appearance: AppearanceSettings
+  /**
+   * Chat 工具增强（P1）。**可选**：老配置无此字段时按「全部关闭」处理，
+   * 行为与改动前完全一致（三端共用类型只做加法，A43）。
+   */
+  chatTools?: ChatToolsSettings
+  /**
+   * 渠道会话的工具工作区根（P3 / M21）。
+   *
+   * 渠道会话由 QQ 消息驱动出现，用户无法在侧栏切换工作区，所以给它一个**独立、确定**的根：
+   * 缺省 = `userData/workspace`（应用私有目录），可配置成任意绝对路径。
+   *
+   * 🔴 它**不是**桌面工作区清单的一员，不进 `workspaces[]`，也不会被 `resolveWorkspace` 看到。
+   * 三端共用类型只做加法：老配置没有该字段时按缺省值处理（A43）。
+   */
+  channelWorkspaceDir?: string
 }
 
 /**

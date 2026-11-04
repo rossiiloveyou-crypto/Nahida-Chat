@@ -66,15 +66,48 @@ export function ToolsSection() {
   const permission = draft?.permission
   const mode: PermissionMode = permission?.mode ?? 'approve'
 
+  // ── P2 · Chat 工具增强 ────────────────────────────────────
+  // 🔴 缺省方向（P2 §1.2）：enabled 缺省 = 关（=== true 才显示为开）；
+  //    groupEnabled 缺省 = **开**（!== false 才是开），两个方向相反，别写成同一个写法。
+  const chatTools = draft?.chatTools
+  const chatToolsEnabled = chatTools?.enabled === true
+
   const patchMode = (next: PermissionMode): void => {
     setDraft((prev) =>
       prev ? { ...prev, permission: { ...prev.permission, mode: next } } : prev
     )
   }
 
+  /**
+   * 改 chatTools 的某个字段。
+   *
+   * 渲染层这里只是**改草稿**（不动磁盘）；真正的合并由主进程 settingsStore.save() 兜底，
+   * 所以这里不做「先读后并」的第二套语义（B2：同一语义两处载体）。
+   * tools 是个 Record，改单个工具走 patchChatTool。
+   */
+  const patchChatTools = (patch: Partial<NonNullable<Settings['chatTools']>>): void => {
+    setDraft((prev) => (prev ? { ...prev, chatTools: { ...(prev.chatTools ?? {}), ...patch } } : prev))
+  }
+
+  const patchChatTool = (name: string, on: boolean): void => {
+    setDraft((prev) =>
+      prev
+        ? {
+            ...prev,
+            chatTools: {
+              ...(prev.chatTools ?? {}),
+              tools: { ...(prev.chatTools?.tools ?? {}), [name]: on }
+            }
+          }
+        : prev
+    )
+  }
+
   const handleSave = async (): Promise<void> => {
     if (!draft) return
-    const ok = await save({ permission: draft.permission })
+    // 一次保存权限模式 + chatTools：主进程 save() 会深合并，
+    // 但这里仍传完整草稿，避免将来 save 语义变化时把另一边冲掉。
+    const ok = await save({ permission: draft.permission, chatTools: draft.chatTools })
     if (ok) setSavedAt(Date.now())
   }
 
@@ -120,6 +153,53 @@ export function ToolsSection() {
         {mode === 'full' && (
           <p className="hint-text hint-text--error">
             完全访问意味着模型的每一次工具调用都会直接执行，包括写文件和执行命令。只在你清楚风险时使用。
+          </p>
+        )}
+      </section>
+
+      <section className="setting-group" data-ui-region="B Chat 工具增强">
+        <h3 className="setting-group__title">Chat 工具增强</h3>
+        <p className="setting-group__desc">
+          让 Chat 会话也能调用工具。逐个勾选要放行的工具；没勾的一律不给模型。
+          这只影响「供给」—— 能不能真的执行还要看上面的权限模式与渠道白名单。
+        </p>
+
+        <label className="memory-check" data-ui-target="Chat 工具增强总开关">
+          <input
+            type="checkbox"
+            checked={chatToolsEnabled}
+            onChange={(event) => patchChatTools({ enabled: event.target.checked })}
+          />
+          <span>启用 Chat 工具</span>
+        </label>
+
+        {chatToolsEnabled && (
+          <div className="tool-registry tool-registry--pick" data-ui-target="Chat 逐工具勾选">
+            {toolList.map((tool) => {
+              const on = chatTools?.tools?.[tool.name] === true
+              return (
+                <label className="tool-registry__item tool-registry__item--pick" key={tool.name}>
+                  <input
+                    type="checkbox"
+                    checked={on}
+                    onChange={(event) => patchChatTool(tool.name, event.target.checked)}
+                  />
+                  <span className={tool.readOnly ? 'tool-registry__tag' : 'tool-registry__tag is-write'}>
+                    {tool.readOnly ? READ_ONLY_LABEL : WRITE_LABEL}
+                  </span>
+                  {tool.title}
+                  <code className="tool-registry__name">{tool.name}</code>
+                </label>
+              )
+            })}
+            {toolList.length === 0 && <span className="hint-text">主进程还没有注册任何工具。</span>}
+          </div>
+        )}
+
+        {!chatToolsEnabled && (
+          <p className="hint-text">
+            总开关关闭时 Chat 会话拿不到任何工具（与改动前一致）。已勾选的工具会保留，
+            重新打开后继续生效。
           </p>
         )}
       </section>

@@ -1523,6 +1523,24 @@ input[type='range'] {
   font-size: 11px;
 }
 
+/* P2：逐工具勾选行 —— 与只读清单同一外观，但整行可点、指针可交互 */
+.tool-registry--pick {
+  margin-top: 8px;
+}
+
+.tool-registry__item--pick {
+  cursor: pointer;
+  user-select: none;
+}
+
+.tool-registry__item--pick:hover {
+  border-color: var(--nc-accent);
+}
+
+.tool-registry__item--pick input {
+  accent-color: var(--nc-accent);
+}
+
 .tool-registry__tag.is-write {
   color: var(--nc-warning);
 }

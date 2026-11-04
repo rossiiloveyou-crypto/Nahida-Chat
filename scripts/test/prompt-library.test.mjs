@@ -171,6 +171,20 @@ try {
     missing.length
   )
 
+  // ---- P1 · M04：chat 有工具时才注入工具规范（A-16 / A-17，成对判定）----
+  const chatNoTools = promptStore.compose('nahida', 'chat', { toolsEnabled: false })
+  const chatWithTools = promptStore.compose('nahida', 'chat', { toolsEnabled: true })
+  check('A-16a chat + toolsEnabled:false 不含工具规范', !chatNoTools.includes('事实以工具返回为准'))
+  check('A-16b chat + toolsEnabled:true 含工具规范（与 a 成对，防零样本假通过）', chatWithTools.includes('事实以工具返回为准'))
+  check('A-16c chat 不传 opts 时按「无工具」处理（老调用方行为不变）', !chat.includes('事实以工具返回为准'))
+  check('A-16d chat 带工具时其余各段一字不少', ['不要编造事实', '你是纳西妲', '会一直陪着你', '教令院所在', '短一点'].every((text) => chatWithTools.includes(text)))
+  check(
+    'A-16e chat 带工具时工具规范仍压轴（排在风格之后）',
+    chatWithTools.indexOf('事实以工具返回为准') > chatWithTools.indexOf('短一点')
+  )
+  check('A-17 agent 不传 opts 也注入（行为不变）', agent.includes('事实以工具返回为准'))
+  check('A-17b agent + toolsEnabled:false 仍注入（agent 恒有工具，不因传参降级）', promptStore.compose('nahida', 'agent', { toolsEnabled: false }).includes('事实以工具返回为准'))
+
   const missingAgent = promptStore.compose('does-not-exist', 'agent')
   check(
     '角色不存在时 Agent 仍保留工具规范',

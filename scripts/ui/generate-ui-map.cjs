@@ -119,6 +119,22 @@ const DEFAULT_VIEWS = [
 ]
 const VIEWS = JSON.parse(argValue('views', JSON.stringify(DEFAULT_VIEWS)))
 
+/**
+ * 只拍需要的那几张（避免每次全量出图，一轮要几分钟）。
+ *
+ *   --only=settings-tools,settings-channels   只拍这两张
+ *   --only=diff                              只拍「与上次的逐字节差异不为零」的视图
+ *
+ * 两种模式都会**合并**进已有的 ui-map-v{版本}.json：
+ * 没拍的视图保留上一次的坐标，UI_MAP.md 仍然是完整的一张表。
+ * 不合并的话「只拍一张」会把整份坐标表清空，之后按旧编号报位置就会指错地方。
+ *
+ * 注意：新增 data-ui-target 会让 DOM 顺序里后面的元素编号后移，
+ * 所以**改了那块 UI** 时，除了本视图，还要把同一页面的其它视图一起重拍（用 --only 列出来即可）。
+ */
+const onlyArg = argValue('only', '')
+const ONLY = onlyArg ? onlyArg.split(',').map((item) => item.trim()).filter(Boolean) : null
+
 app.whenReady().then(async () => {
   await new Promise((resolve) => setTimeout(resolve, 1000))
   const win = BrowserWindow.getAllWindows()[0]
@@ -158,11 +174,48 @@ app.whenReady().then(async () => {
   }
   const report = { version, projectRoot, theme, contentSize: { width: viewWidth, height: viewHeight }, views: {} }
 
+  // ── --only 的筛选（P2 新增）──────────────────────────────────────────
+  // diff 模式：读上一次的 JSON 与磁盘上的 PNG，把「还没拍过」或「上次拍的哈希对不上」的视图挑出来。
+  // 用 PNG 的 sha256 而不是像素比对：这里只需要知道「要不要重拍」，不需要知道差多少。
+  const crypto = require('node:crypto')
+  const sha = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')
+  let targets = DEFAULT_VIEWS
+  if (ONLY && !(ONLY.length === 1 && ONLY[0] === 'diff')) {
+    const wanted = new Set(ONLY)
+    const unknown = ONLY.filter((name) => !VIEWS.some((view) => view.name === name))
+    if (unknown.length > 0) {
+      console.error('--only 里有不存在的视图：' + unknown.join(', '))
+      console.error('可选：' + VIEWS.map((view) => view.name).join(', '))
+      app.exit(5)
+      return
+    }
+    targets = VIEWS.filter((view) => wanted.has(view.name))
+  } else if (ONLY && ONLY[0] === 'diff') {
+    const prevPath = path.join(outDir, 'ui-map-v' + version + '.json')
+    const prev = fs.existsSync(prevPath) ? JSON.parse(fs.readFileSync(prevPath, 'utf8')) : { views: {} }
+    targets = VIEWS.filter((view) => {
+      const file = path.join(outDir, 'ui-map-v' + version + '-' + view.name + '.png')
+      if (!fs.existsSync(file)) return true
+      const record = prev.views[view.name]
+      // 老 JSON 里没有哈希（P2 之前生成的）→ 一律重拍，宁可多拍一张也不要拿旧坐标
+      if (!record || !record.pngSha256) return true
+      return sha(file) !== record.pngSha256
+    })
+    console.log('diff 模式：需要重拍 ' + targets.length + ' / ' + VIEWS.length + ' 张' + (targets.length ? '：' + targets.map((v) => v.name).join(', ') : ''))
+  }
+
+  if (targets.length === 0) {
+    // 没有要拍的：直接退出，不白起一轮窗口、也不重写坐标 JSON（它一个字都没变）
+    console.log('没有需要重拍的视图（--only=diff）')
+    app.exit(0)
+    return
+  }
+
   // 播种用的目录：必须真实存在，否则 workspaces.save 会以「目录不存在」拒绝
   const seedDir = path.join(userData, 'ui-map-workspace')
   fs.mkdirSync(seedDir, { recursive: true })
 
-  for (const [viewIndex, view] of VIEWS.entries()) {
+  for (const [viewIndex, view] of targets.entries()) {
     // 开拍前把工作区清单调到视图要求的状态（P6）。
     // 必须在 loadFile **之前**做：useWorkspaces 是模块级单例，只有整页重载才会重新拉取；
     // 直接调 IPC 改完再截，渲染层手里还是旧清单。
@@ -371,7 +424,9 @@ app.whenReady().then(async () => {
     `)
 
     // 网格图；主视图额外存一份不带后缀的 ui-map-v{版本}.png，方便直接引用
-    fs.writeFileSync(path.join(outDir, `ui-map-v${version}-${view.name}.png`), png)
+    const gridFile = path.join(outDir, `ui-map-v${version}-${view.name}.png`)
+    fs.writeFileSync(gridFile, png)
+    geometry.pngSha256 = sha(gridFile)
     if (view.primary) {
       fs.writeFileSync(path.join(outDir, `ui-map-v${version}.png`), png)
     }
@@ -424,7 +479,26 @@ app.whenReady().then(async () => {
     return
   }
 
-  fs.writeFileSync(path.join(outDir, `ui-map-v${version}.json`), JSON.stringify(report, null, 2), 'utf8')
+  // ── 只拍一部分时，把没拍的视图从旧 JSON 里合并回来 ──
+  // 不合并的话「只拍一张」会把整份坐标表清空，UI_MAP.md 变成一张只有单页的表，
+  // 之后按旧编号（元素 5、C7）报位置就会指到别的地方。
+  const reportPath = path.join(outDir, 'ui-map-v' + version + '.json')
+  if (ONLY && fs.existsSync(reportPath)) {
+    try {
+      const prev = JSON.parse(fs.readFileSync(reportPath, 'utf8'))
+      const merged = {}
+      for (const view of VIEWS) {
+        merged[view.name] = report.views[view.name] || prev.views?.[view.name]
+        if (!merged[view.name]) delete merged[view.name]
+      }
+      report.views = merged
+      console.log('已合并上次坐标：本次重拍 ' + targets.length + ' 张，保留 ' + (Object.keys(merged).length - targets.length) + ' 张')
+    } catch (error) {
+      console.error('合并上次坐标失败（将只写本次拍的）：' + (error && error.message ? error.message : error))
+    }
+  }
+
+  fs.writeFileSync(reportPath, JSON.stringify(report, null, 2), 'utf8')
   console.log('完成：docs/ui/ui-map-v' + version + '.json')
   app.exit(0)
 })

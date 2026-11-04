@@ -56,7 +56,8 @@ check("4 · SettingsPage.tsx 含 active === 'channels'", page.includes("active =
 // 5 · 四块各自成区（P9-R3 重做后的形状）
 //
 // P9-R3 把「按会话」改成「按人」，面板从 A/B 两块变成四块：
-//   A0 机器人账号 / A QQ 号白名单 / B 群白名单 / C 鉴权开关 / D 数据位置
+//   A0 机器人账号 / A QQ 号白名单 / B 群白名单 / C 鉴权开关 / E 渠道工作区 / D 数据位置
+//   （P3 补 E 区：M21 的「可配置」落点，J-01 要求它必须有可见入口）
 // 区域名是字面量（data-ui-region="…"），断言直接查四个字面量都在。
 const regions = (section.match(/data-ui-region="[^"]+"/g) || []).map((item) =>
   item.replace(/data-ui-region="|"/g, '')
@@ -68,6 +69,52 @@ check(
     regions.some((item) => item.includes('鉴权开关')),
   regions.join(' | ')
 )
+
+// 5b · P3：渠道工作区区必须存在且带标注（J-01：看得见的开关必须有行为断言，见 channel-tool-path）
+check(
+  '5b · 面板含「渠道工作区」区域（P3 / M21 的可配置落点）',
+  regions.some((item) => item.includes('渠道工作区')),
+  regions.join(' | ')
+)
+check(
+  '5c · 渠道工作区路径有 data-ui-target 标注（出图后能被指认）',
+  /data-ui-target="渠道工作区路径"/.test(section)
+)
+
+// 5d · P3 复核补正：F 渠道模型区**只读展示**，且真的接上了档案回落
+//
+// 为什么要有这一条：F 区是「新增提示，不改变行为」。但「不改变行为」这句话本身也要能变红 ——
+// 一旦有人顺手给它加一个写入路径（选择器 / settings.save / 会话 update），
+// 它就变成了功能变更，而 P3 的结论是那件事归 BL-12。
+// 同时守住另一头：不许把主进程的 resolveProfile 抄一份判定逻辑进来（J-34）。
+check(
+  '5d · 面板含「渠道模型」区域（P3 复核补正的只读提示）',
+  regions.some((item) => item.includes('渠道模型')),
+  regions.join(' | ')
+)
+check(
+  '5e · 渠道模型值有 data-ui-target 标注（出图后能被指认）',
+  /data-ui-target="渠道当前模型"/.test(section)
+)
+{
+  // 只读的三条硬边界，全部用「出现即红」的写法：
+  //   ① 不许出现任何 settings.save({ channelModel… }) 之类的新设置项
+  //   ② 不许对会话调用 updateSession / modelProfileId 写入
+  //   ③ 不许把 resolveProfile 的判定抄进渲染层（只允许同形的 find ?? [0]，见 ChatPage:69）
+  const writesModel = /channelModelProfileId|channelModelId/.test(section)
+  const updatesSession = /updateSession\s*\(/.test(section)
+  const ownsResolve = /function\s+resolveProfile|const\s+resolveProfile/.test(section)
+  // 回落形状：必须按 defaultProfileId 找、找不到取 [0]、再从档案的 defaultModel 取模型名
+  const picksProfile =
+    /catalog\.profiles\.find\(\(item\) => item\.id === [\w.]*catalog\.defaultProfileId\)/.test(section) &&
+    /\.profiles\[0\]/.test(section) &&
+    /\.defaultModel/.test(section)
+  check(
+    '5f · 渠道模型区不含任何写入路径（无新设置项 / 无 updateSession / 无自建 resolveProfile）',
+    !writesModel && !updatesSession && !ownsResolve && picksProfile,
+    '设置项=' + writesModel + ' updateSession=' + updatesSession + ' 自建判定=' + ownsResolve + ' 回落形状=' + picksProfile
+  )
+}
 
 // 6 · 「按人」与「按群」是两张表，各自有独立列宽类（J-62）
 check(

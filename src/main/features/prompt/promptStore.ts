@@ -109,12 +109,17 @@ class PromptStore {
    * - 前两段跨角色跨模式，「她是谁」不随模式变；
    * - 中间四段是角色的稳定事实（台词样本紧贴人格，因为它就是人格的说话证据）；
    * - 模式规则与表达风格按会话模式二选一，互不污染；
-   * - 工具规范只对 Agent 生效，放最后压轴，因为它是执行纪律，不该被语气覆盖。
+   * - 工具规范只对「这一轮真有工具」的模式生效（agent 恒有；chat 由 opts 告知），
+   *   放最后压轴，因为它是执行纪律，不该被语气覆盖。
    *
    * 任何一环缺失都跳过而不是报错，保证用户删文件时对话还能继续。
-   * 角色目录整个不在时，全局段与 Agent 工具规范仍然照发——缺人格不等于失去执行纪律。
+   * 角色目录整个不在时，全局段与工具规范仍然照发——缺人格不等于失去执行纪律。
    */
-  compose(characterId: string, mode: ConversationMode): string {
+  compose(
+    characterId: string,
+    mode: ConversationMode,
+    opts?: { toolsEnabled?: boolean }
+  ): string {
     const root = this.root()
     const sections: string[] = []
 
@@ -146,7 +151,11 @@ class PromptStore {
       push(sections, readIfExists(join(dir, STYLE_FILES[mode])))
     }
 
-    if (mode === 'agent') {
+    // 工具规范只在「这一轮确实有工具」时注入 ——
+    // 没有工具却给纪律，等于让模型去查一份空目录，还会污染闲聊语感（M01 的初衷）。
+    // agent 恒有工具（P1 的 capability.ts 保证），chat 由调用方按本轮 definitions 告知。
+    const wantsToolRules = mode === 'agent' || (mode === 'chat' && opts?.toolsEnabled === true)
+    if (wantsToolRules) {
       push(sections, readIfExists(join(root, SHARED_TOOL_USAGE)))
     }
 

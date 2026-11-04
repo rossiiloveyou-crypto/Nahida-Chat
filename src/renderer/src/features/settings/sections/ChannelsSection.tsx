@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { AccountPermissions, ChannelAccount, ChannelAccessConfig, ChannelGroup } from '@shared/channelAccess'
 import { DEFAULT_ACCOUNT_PERMISSIONS } from '@shared/channelAccess'
 import { useChannels } from '../useChannels'
+import { useModelProfiles } from '../useModelProfiles'
+import { useSettings } from '../useSettings'
 import { ObservePanel } from './ObservePanel'
 
 /**
@@ -11,7 +13,8 @@ import { ObservePanel } from './ObservePanel'
  *   A0 机器人账号     —— 我们自己登录的号（只用于展开会话键，不参与授权）
  *   A  QQ 号白名单    —— **一个号一行**：私聊 / 群聊 / 工具 三个位
  *   B  群白名单       —— 群号一行：管的是「这个群允不允许她说话」
- *   C  鉴权开关       —— 群成员鉴权（默认关）/ 工具调用拦截（默认开）
+ *   C  鉴权开关       —— 群成员鉴权（默认关）/ 工具调用拦截（默认开）/ 群聊工具增强（默认开）
+ *   E  渠道工作区     —— 渠道会话唯一允许落地的根（P3 / M21），可改、可恢复默认
  *   D  数据位置
  *   +  ObservePanel（旁听库，与其他区块无关）
  *
@@ -191,9 +194,47 @@ function GroupRow({ group, uinCount, busy, onRemove }: GroupRowProps) {
 
 export function ChannelsSection() {
   const channels = useChannels()
+  // 🔴 本页有**两个数据源**，物理分离（P2 §2.2）：
+  //    access.json  → 授权（谁能让工具「执行」），走 useChannels
+  //    settings.json → 供给（这一轮「给不给」工具），走 useSettings
+  //    群聊工具增强开关属于后者，所以必须额外接 useSettings，与 useChannels 并存。
+  const settings = useSettings()
+  // F 渠道模型（P3 复核补正）：只读展示渠道当前落在哪个档案/模型上。
+  // 🔴 这里**没有任何写入路径** —— 渠道面板不提供模型选择器，行为与改动前逐字节一致。
+  const models = useModelProfiles()
   const bot = useBotUin()
 
   const config: ChannelAccessConfig = channels.config
+
+  // 缺省 = 开（M02）：undefined 与 true 都显示为开，只有显式 false 才是关。
+  const groupChatToolsEnabled = settings.settings?.chatTools?.groupEnabled !== false
+
+  // 渠道工作区根（P3 / M21）：undefined = 走主进程缺省值 userData/workspace。
+  // 🔴 渲染层拿不到 app.getPath('userData')，所以这里只显示「默认」字样 + 可选项，
+  //    真值由主进程 defaultChannelWorkspaceDir() 现算，不在两端各算一份。
+  // 渠道会话的 modelProfileId / modelId 恒为 null（ensureChannelSession 建会话时不传），
+  // 所以每轮都由主进程 resolveProfile(stored, null, null) → activeProfile(settings) 现取。
+  // 这里照抄那份回落形状**只为显示它落在哪**：真源仍在主进程，渲染层不做任何判定（J-34）。
+  // 同形先例：ChatPage.tsx:69 / ComposerBar.tsx:94 / ModelSection.tsx:89。
+  const activeProfile =
+    models.catalog.profiles.find((item) => item.id === models.catalog.defaultProfileId) ??
+    models.catalog.profiles[0] ??
+    null
+  const channelModelLabel = activeProfile
+    ? (activeProfile.name || activeProfile.provider) + ' · ' + activeProfile.defaultModel
+    : '（没有可用的模型档案 —— 渠道发不出消息）'
+
+  const configuredChannelDir = settings.settings?.channelWorkspaceDir?.trim() ?? ''
+  const channelWorkspaceDirLabel = configuredChannelDir || '（默认）应用数据目录/workspace'
+
+  const pickChannelDir = async (): Promise<void> => {
+    const picked = await window.nahida.workspaces.pickDirectory()
+    // 用户取消时返回空串：不要拿空串覆盖已配置的目录
+    if (picked) await settings.save({ channelWorkspaceDir: picked })
+  }
+  const resetChannelDir = async (): Promise<void> => {
+    await settings.save({ channelWorkspaceDir: undefined })
+  }
 
   // 识别到机器人号就顺手记进 access.json 的 uins[] ——
   // 群白名单存的是群号，区块 / 旁听要的是会话键 qq:<uin>:group:<群号>，没有 uin 就展不开。
@@ -483,6 +524,23 @@ export function ChannelsSection() {
           关闭时：不做任何工具权限校验（不推荐）。
         </p>
 
+        <label className="memory-check" data-ui-target="群聊工具增强">
+          <input
+            type="checkbox"
+            checked={groupChatToolsEnabled}
+            disabled={settings.saving || settings.loading}
+            onChange={(event) => void settings.save({ chatTools: { groupEnabled: event.target.checked } })}
+          />
+          <span>群聊工具增强</span>
+        </label>
+        <p className="setting-group__desc">
+          打开后（默认）：群聊会话在「Chat 工具增强」开启时也能用工具。
+          关闭后：只影响群聊，私聊与桌面不受影响。
+          <br />
+          这是<strong>供给</strong>开关（有没有工具目录）；上面那个「工具调用拦截」是
+          <strong>授权</strong>开关（谁能真的执行）。两者都需要打开，群里才有工具可用。
+        </p>
+
         <p className="setting-group__desc" data-ui-target="全局权限模式说明">
           ⚠️ 「允许工具」还要看设置里的<strong>全局工具权限</strong>：
           <br />
@@ -492,6 +550,64 @@ export function ChannelsSection() {
           <strong>QQ 里没有卡片可点，等于一律拒绝</strong>（想真的放开就选「完全访问」）；
           <br />
           · <strong>完全访问</strong>：白名单里勾了「工具」的人可以直接执行。
+        </p>
+      </section>
+
+      <section className="setting-group" data-ui-region="E 渠道工作区">
+        <h3 className="setting-group__title">渠道工作区</h3>
+        <p className="setting-group__desc">
+          QQ 私聊与群聊里，她读写文件时落在哪个目录。
+          渠道会话不能像桌面对话那样在侧栏选工作区，所以统一用这一个根目录。
+        </p>
+        <p className="hint-text" data-ui-target="渠道工作区路径">
+          <code>{channelWorkspaceDirLabel}</code>
+        </p>
+        <div className="settings-actions" data-ui-target="渠道工作区操作">
+          <button
+            type="button"
+            className="btn-ghost"
+            disabled={settings.saving || settings.loading}
+            onClick={() => void pickChannelDir()}
+          >
+            选择目录
+          </button>
+          {configuredChannelDir !== '' && (
+            <button
+              type="button"
+              className="btn-ghost"
+              disabled={settings.saving || settings.loading}
+              onClick={() => void resetChannelDir()}
+            >
+              恢复默认
+            </button>
+          )}
+        </div>
+        <p className="setting-group__desc">
+          默认是应用数据目录下的 <code>workspace</code>。
+          改成别处后，渠道里的文件操作就只在这个目录里进行
+          （权限模式为「完全访问」时不受此限制，见上面那段说明）。
+          <br />
+          它<strong>不是</strong>侧栏里的工作区：不参与桌面对话，也不会被桌面切换目录带走。
+        </p>
+      </section>
+
+      <section className="setting-group" data-ui-region="F 渠道模型">
+        <h3 className="setting-group__title">渠道模型</h3>
+        <p className="setting-group__desc">
+          QQ 私聊与群聊里她用的是哪个模型。
+          <strong>渠道会话不单独记模型</strong>：每一条消息都用<strong>默认档案的默认模型</strong>，
+          所以下面这个值会跟着「设置 → 模型配置」里的默认档案一起变。
+        </p>
+        <p className="hint-text" data-ui-target="渠道当前模型">
+          <code>{channelModelLabel}</code>
+        </p>
+        <p className="setting-group__desc">
+          想换渠道用的模型：去「模型配置」把那个档案设为<strong>默认</strong>，或者改它的默认模型。
+          <br />
+          注意这条会<strong>一起影响</strong>桌面上没手动切过模型的对话 —— 它们同样跟随默认档案。
+          想只让某一条桌面对话换模型，用输入框旁边那个模型选择器。
+          <br />
+          渠道<strong>没有</strong>自己的模型选择器；给某个群单独指定模型的能力在长期待办里（BL-11）。
         </p>
       </section>
 

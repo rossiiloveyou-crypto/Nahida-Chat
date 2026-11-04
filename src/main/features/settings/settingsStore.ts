@@ -35,6 +35,29 @@ export function defaultWorkspaceRoot(): string {
   return join(app.getPath('userData'), 'workspace')
 }
 
+/**
+ * 渠道工作区根的缺省值（P3 / M21）。
+ *
+ * 与 `defaultWorkspaceRoot()` 同一个目录，但**语义独立**：那是「桌面默认工作区」，
+ * 这是「渠道会话唯一允许落地的根」。两者今天恰好同路径，不代表明天还要一起改。
+ *
+ * 🔴 为什么额外 `mkdirSync`：`sandbox.ts` 的 resolve 不检查目录存在性，
+ *    缺目录要等首个工具调用才由 OS 报 ENOENT，报错文案对用户毫无解释力。
+ *    `recursive: true` 对已存在目录是 no-op，代价可忽略。
+ * 🔴 为什么**不**写进 `defaultSettings()`：写进去会让所有老配置在首次 save() 时
+ *    被补上一份冗余值，改数据目录后两份值会不一致（同一语义两处载体）。
+ */
+export function defaultChannelWorkspaceDir(): string {
+  const dir = defaultWorkspaceRoot()
+  try {
+    mkdirSync(dir, { recursive: true })
+  } catch {
+    // 目录建不出来（只读盘 / 权限）不在本函数里报错：
+    // 真正的失败应该在工具执行时带着「路径 + 原因」冒出来，而不是在设置读取路径上炸。
+  }
+  return dir
+}
+
 /** 默认档案 ID 固定，升级时不用猜用户改过哪个。 */
 const DEFAULT_PROFILE_ID = 'profile-default'
 
@@ -117,6 +140,24 @@ class SettingsStore {
 
   save(patch: Partial<Settings>): Settings {
     const next: Settings = { ...this.get(), ...patch }
+    // ── P2：chatTools 深合并（先读后并）──
+    // 浅合并会让一次只传 { chatTools: { groupEnabled: false } } 时，
+    // 把整个 chatTools 覆盖掉（用户之前勾的 enabled/tools 全丢）。
+    // 这里把 patch.chatTools 与已存的 chatTools 逐字段合并，缺省字段不覆盖。
+    //
+    // 🔴 prev 必须从 this.get()（覆盖前的旧值）读：next.chatTools 此刻已经是 patch 里的新值。
+    // 🔴 patch.chatTools.tools 可能是 undefined（只关总开关/群聊开关时），用 ?? {} 兜住。
+    // 🔴 缺省字段一律保持 undefined，不许填 false —— groupEnabled 的缺省语义是「开」（M02），
+    //    在这里填 false 会把默认开变成默认关，capability.ts 的 === false 判空会立刻出错。
+    // 🔴 this.get() 返回 clone，prev 不是 cache 引用，改它不会污染缓存。
+    if (patch.chatTools !== undefined) {
+      const prev = this.get().chatTools ?? {}
+      next.chatTools = {
+        ...prev,
+        ...patch.chatTools,
+        tools: { ...(prev.tools ?? {}), ...(patch.chatTools.tools ?? {}) }
+      }
+    }
     next.temperature = clamp(next.temperature, TEMPERATURE_RANGE.min, TEMPERATURE_RANGE.max)
     next.permission = normalizePermission(next.permission)
     normalizeWorkspaces(next)

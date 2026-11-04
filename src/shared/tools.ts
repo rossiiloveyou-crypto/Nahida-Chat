@@ -60,3 +60,25 @@ export type ToolAccess = 'allow' | 'ask' | 'deny'
 
 export const READ_ONLY_LABEL = '只读'
 export const WRITE_LABEL = '可写'
+
+// ── Chat 工具增强（P1）─────────────────────────────────────
+//
+// 🔴 供给 ≠ 授权（M24）：本结构只回答「这一轮给模型哪些工具」，
+//    不回答「谁允许执行」。授权仍在 main/features/channels/toolGate.ts。
+//
+// 🔴 字段全部可选 + 缺省即「关」：老配置（无此字段）行为与改动前完全一致。
+
+export interface ChatToolsSettings {
+  /** 桌面 chat 会话的工具增强总开关。缺省 false = 与改动前一致（chat 不给工具） */
+  enabled?: boolean
+  /**
+   * 逐工具放行表：toolName → 是否在 chat 模式放行。
+   * 只有 enabled === true 时才会被读取；缺省空对象。
+   */
+  tools?: Record<string, boolean>
+  /**
+   * 群聊工具增强开关（M02，默认 **true**）。
+   * 只对「渠道会话 + chatType === 'group'」生效，不影响桌面与私聊。
+   */
+  groupEnabled?: boolean
+}

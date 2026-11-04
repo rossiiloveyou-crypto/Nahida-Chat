@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
 import { DEFAULT_SESSION_TITLE, MAX_TOOL_TURNS } from '@shared/constants'
-import { isChannelSessionId } from '@shared/channels'
+import { isChannelSessionId, parseChannelKey } from '@shared/channels'
 import type {
   ChatDelta,
   ChatDone,
@@ -27,10 +27,16 @@ import { sessionPolicy } from './sessionPolicy'
 import { permissionGate } from '../tools/permission'
 import { channelToolVerdict } from '../channels/toolGate'
 import { definitionOf, executeTool, listDefinitions } from '../tools/registry'
+import { resolveToolSupply } from '../tools/capability'
 import { clockNotice } from '../tools/clock'
 import { promptStore } from '../prompt/promptStore'
 import { memoryService } from '../rag'
-import { resolveProfile, resolveWorkspace, settingsStore } from '../settings/settingsStore'
+import {
+  defaultChannelWorkspaceDir,
+  resolveProfile,
+  resolveWorkspace,
+  settingsStore
+} from '../settings/settingsStore'
 
 /**
  * 对话内核（主进程侧）。
@@ -290,8 +296,17 @@ class ChatService {
     // 会话自己指定的档案/模型优先，没指定才用默认档案。
     const settings = this.effectiveSettings(session, stored)
     const provider = createProvider(settings)
-    // chat 模式只对话，不给工具；agent 模式才开放工具与审批循环
-    const definitions = session.mode === 'agent' ? listDefinitions() : []
+    // 供给由 capability.ts 统一判定（P1）。不再用 mode === 'agent' 一刀切：
+    // chat 会话在开启工具增强后也要拿得到工具目录（P9 的授权闸门因此才可能被触发）。
+    // 🔴 这里只算「给不给」，不判「能不能执行」——授权在 runTool 的 channelToolVerdict
+    //    与 permissionGate 两层（M24：供给与授权正交）。
+    const definitions = resolveToolSupply({
+      mode: session.mode,
+      allTools: listDefinitions(),
+      chatTools: stored.chatTools,
+      isChannel: isChannelSessionId(session.id),
+      channelChatType: parseChannelKey(session.id)?.chatType
+    })
 
     // 记忆检索只在这一轮开始时做一次。
     // 绝不能放进 buildPayload：那个函数在工具循环里每轮都会调用，
@@ -311,12 +326,21 @@ class ChatService {
     // 需要更新鲜的时间时，模型调 clock.now 即可。
     const clockBlock = clockNotice()
 
+    // ── 供给闸（ERR-01）：本轮「允许被调用」的工具名集合 ────────────────
+    // 必须建在循环外：definitions 在整轮内是不变量（runStream 开头算完就不再变），
+    // 放进循环里重算会诱导后来者「顺手」重算 definitions，破坏「一轮内供给不变」的语义。
+    const allowedTools = new Set(definitions.map((tool) => tool.name))
+
+    // 被供给闸拦下的调用：**仍要**落进 message.toolCalls 并回喂理由，
+    // 但绝不能再进 runTool —— 否则白拦一次，工具照跑。
+    const blockedCalls = new Set<ToolCallRecord>()
+
     let outcome: ChatTurnOutcome
     try {
       for (let turn = 0; turn < MAX_TOOL_TURNS; turn += 1) {
         if (controller.signal.aborted) break
 
-        const payload = this.buildPayload(session, memoryBlock, clockBlock)
+        const payload = this.buildPayload(session, memoryBlock, clockBlock, definitions.length > 0)
         const calls: ToolCallRecord[] = []
 
         for await (const event of provider.stream({
@@ -331,6 +355,27 @@ class ChatService {
             const delta: ChatDelta = { sessionId: session.id, messageId: message.id, delta: event.text }
             sink.delta(delta)
           } else if (event.type === 'tool_call') {
+            // ── 供给闸（ERR-01）：本轮没交给模型的工具，一律不认。 ──
+            //
+            // 🔴 为什么必须在这里拦，而不是信任「请求里没带 tools」：
+            //    openAiProvider 在 tools 为空时**不发 tools 字段**（openAiProvider.ts:27），
+            //    请求本身是合法的、服务端不会报错；而 messages 里的历史 role:'tool'
+            //    会让模型继续吐 tool_calls（真机实测：execute_command）。
+            //    下面三道闸（未注册 / 按人授权 / 权限模式）都不回答「本轮给不给」。
+            //
+            // 🔴 被拦的调用仍要 calls.push：否则模型下一轮拿不到 role:'tool' 回执，
+            //    会以为自己的调用被吞了，在同一轮里反复重试同一个工具（卡满 MAX_TOOL_TURNS）。
+            if (!allowedTools.has(event.call.name)) {
+              const blocked = toRecord(event.call)
+              blocked.status = 'denied'
+              // 措辞面向模型可转述：这条会作为 role:'tool' 消息回喂，不许出现内部术语。
+              blocked.error =
+                '本轮没有向模型提供这个工具（工具增强已关闭或未勾选），所以这次调用没有执行。' +
+                '如果确实需要，请让用户在桌面端的设置里打开。'
+              blockedCalls.add(blocked)
+              calls.push(blocked)
+              continue
+            }
             calls.push(toRecord(event.call))
           }
         }
@@ -343,6 +388,9 @@ class ChatService {
 
         for (const record of calls) {
           if (controller.signal.aborted) break
+          // 供给闸已经拦下的调用：只留记录，不执行（ERR-01）。
+          // 判的是对象身份而不是 status/name：同一轮里名字相同的两次调用要分别处理。
+          if (blockedCalls.has(record)) continue
           await this.runTool(record, session, message, sink)
         }
         this.emitTool(sink, session, message)
@@ -475,7 +523,17 @@ class ChatService {
       const approved = await permissionGate.request(session.id, message.id, record, sink)
       if (!approved) {
         record.status = 'denied'
-        record.error = '用户拒绝或审批超时'
+        // P3 / M03：渠道场景里**没有人在场点卡**（QqSink.canApprove() 恒 false，
+        // permissionGate 当场按拒绝结算）。所以不能说「用户拒绝或审批超时」——
+        // 那会让模型对群友说「用户不让我做」，而真实原因是「这个环境不走审批」。
+        //
+        // 🔴 措辞面向模型可转述：不写 canApprove / permissionGate 这类内部术语
+        //    （这条 error 会作为 role:'tool' 的消息回喂给模型）。
+        // 🔴 canApprove 是**方法**，写成属性会永远 truthy（A-08 对照物盯着桌面那条）。
+        record.error = sink.canApprove()
+          ? '用户拒绝或审批超时'
+          : '当前环境不支持交互式审批（渠道会话没有审批卡），需要副作用操作时已被直接拒绝。' +
+            '如果用户在场，请让他在桌面端设置里把权限模式改为「完全访问」，或改用只读工具。'
         this.emitTool(sink, session, message)
         return
       }
@@ -512,12 +570,19 @@ class ChatService {
     this.emitTool(sink, session, message)
   }
 
-  private buildPayload(session: Session, memoryBlock: string, clockBlock: string): LlmMessage[] {
+  private buildPayload(
+    session: Session,
+    memoryBlock: string,
+    clockBlock: string,
+    toolsEnabled: boolean
+  ): LlmMessage[] {
     const payload: LlmMessage[] = []
 
     // 提示词按角色 + 模式现场拼：shared/base -> soul -> worldbook -> styles/<mode>
     try {
-      const system = promptStore.compose(session.characterId, session.mode)
+      // toolsEnabled 显式透传（C22）：不挂到 session 上——buildPayload 在工具循环里每轮
+      // 都调用，隐式状态会漂；挂 session 还会污染三端契约。
+      const system = promptStore.compose(session.characterId, session.mode, { toolsEnabled })
       if (system) payload.push({ role: 'system', content: system })
     } catch (error) {
       console.warn('[chat] 系统提示词组装修复失败', error)
@@ -581,6 +646,17 @@ class ChatService {
   private toolScopeOf(session: Session): ToolScope {
     const settings = settingsStore.get()
     const workspace = resolveWorkspace(settings, session.workspaceId)
+    // P3 / M21：渠道会话由 QQ 消息驱动出现，用户无法在侧栏给它选工作区，
+    // 所以它有自己的「渠道工作区根」——缺省 userData/workspace，可在渠道控制台改。
+    //
+    // 🔴 这不是放宽检查：渠道本来就该有一个确定目录，只是以前从没定义过它。
+    //    真正「没有工作区」的桌面会话仍然抛下面那个原错误（对照物 A-03 盯着它）。
+    // 🔴 顺序敏感：必须**先** `!workspace` 再判渠道身份。
+    //    无条件对渠道返回渠道根，会让「已绑定工作区的渠道会话」丢掉自己的绑定（A-05 盯着它）。
+    if (!workspace && isChannelSessionId(session.id)) {
+      const dir = settings.channelWorkspaceDir?.trim() || defaultChannelWorkspaceDir()
+      return { mode: settings.permission.mode, root: dir }
+    }
     if (!workspace) {
       throw new Error('当前没有工作区，Agent 模式无法执行工具。请先在侧栏新建一个工作区。')
     }

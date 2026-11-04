@@ -60,7 +60,8 @@ fs.writeFileSync(
     `export { QqSink } from '${p('src/main/features/qq/sink.ts')}'`,
     `export { channelToolVerdict, channelToolVerdictWith } from '${p('src/main/features/channels/toolGate.ts')}'`,
     `export { ChannelAccessStore } from '${p('src/main/features/channels/store.ts')}'`,
-    `export { settingsStore } from '${p('src/main/features/settings/settingsStore.ts')}'`
+    `export { settingsStore } from '${p('src/main/features/settings/settingsStore.ts')}'`,
+    `export { permissionGate } from '${p('src/main/features/tools/permission.ts')}'`
   ].join('\n'),
   'utf8'
 )
@@ -119,7 +120,8 @@ const {
   channelToolVerdict,
   channelToolVerdictWith,
   ChannelAccessStore,
-  settingsStore
+  settingsStore,
+  permissionGate
 } = mod
 registerBuiltinTools()
 
@@ -149,11 +151,34 @@ console.log('R3-C1/C2/C5/C13 · 结构判据')
     /export function channelToolVerdict\(\s*senderId: string,\s*sessionId: string\s*\)/.test(gateSrc)
   )
 
+  // C5（P1 改写）：P9 时期的原判据是「供给行仍是 session.mode === 'agent' ? …」，
+  // 那是为了守住「P9 只动授权、不动供给」。P1 的改动面**正是**这一行，
+  // 所以判据翻面成两条互补的：
+  //   C5a 正向：供给行必须走 capability.resolveToolSupply（唯一判定点）
+  //   C5b 负向：旧的 mode 一刀切在 src/main 全仓 0 命中（真的被替换掉，不是并存）
   const chatSrc = read('src/main/features/chat/chatService.ts')
   check(
-    "C5 listDefinitions 调用点未被修改（仍是 session.mode === 'agent' ? …）",
-    chatSrc.includes("session.mode === 'agent' ? listDefinitions() : []")
+    'C5a 供给行已改为调用 capability.resolveToolSupply（P1 唯一判定点）',
+    chatSrc.includes('const definitions = resolveToolSupply({')
   )
+  {
+    const stale = []
+    const walkTs = (dir) => {
+      for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, item.name)
+        if (item.isDirectory()) walkTs(full)
+        else if (/\.ts$/.test(item.name) && fs.readFileSync(full, 'utf8').includes('? listDefinitions() : []')) {
+          stale.push(path.relative(projectRoot, full))
+        }
+      }
+    }
+    walkTs(path.join(projectRoot, 'src', 'main'))
+    check(
+      'C5b 旧的 mode 一刀切供给行在 src/main 零命中（供给判定已收敛）',
+      stale.length === 0,
+      stale.join(',') || '0 命中'
+    )
+  }
 
   // C13：代码行里不许出现 mode（注释允许）——这是「授权与供给正交」的守卫
   const codeLines = gateSrc
@@ -294,16 +319,45 @@ settingsStore.save({ permission: { mode: 'full' } })
 }
 
 {
-  // ④ 桌面会话零影响（C12）：senderId === null → 整体跳过闸门，走 P3 的审批语义
+  // ④ 桌面会话零影响（C12）：senderId === null → 整体跳过渠道闸门，走 permissionGate 的审批语义。
+  //
+  // 🔴 **P3 翻面（J-15）**：本条原先断言「桌面拒绝文案是『用户拒绝或审批超时』」。
+  //    P3 / M03 把这句话改成了按 sink.canApprove() 分岔 —— HeadlessSink 没有审批卡，
+  //    它现在拿到的是「当前环境不支持交互式审批」，**这正是 P3 要的语义**（那句话原本会
+  //    让模型对群友说「用户不让我做」）。所以判据翻面成两条互补的，并把「桌面有卡」的旧文案
+  //    交给新的对照物 C12c 守 —— 既不放宽，也不删守卫。
   settingsStore.save({ permission: { mode: 'approve' } })
   const desktop = chatService.createSession({ mode: 'agent' })
   const sink = new HeadlessSink()
   const before = toolRuns
   const outcome = await chatService.sendAwait({ sessionId: desktop.id, content: QUESTION }, sink)
   const call = (outcome.toolCalls || [])[0]
-  check('C12 桌面（senderId=null）→ 闸门跳过，走到 permissionGate 的 ask 分支', sink.approvals.length === 1, sink.approvals.length)
-  check('C12 桌面拒绝文案是 P3 的「用户拒绝或审批超时」，不是渠道闸门的文案', Boolean(call) && /用户拒绝|审批超时/.test(String(call.error)), call ? call.error : '')
+  const headlessError = call ? String(call.error ?? '') : ''
+  check('C12a 桌面（senderId=null）→ 渠道闸门跳过，仍走到 permissionGate 的 ask 分支', sink.approvals.length === 1, sink.approvals.length)
+  check(
+    'C12b 桌面（无审批卡 sink）→ 文案是 P3 的「不支持交互式审批」，不是渠道闸门那句',
+    headlessError.includes('不支持交互式审批') && !headlessError.includes('QQ 号白名单'),
+    headlessError
+  )
   check('C12 桌面工具的 run 未被调用（无审批能力 → 当场拒绝）', toolRuns === before, toolRuns)
+
+  // C12c 对照物：桌面**有卡**、用户点「拒绝」→ 文案必须仍是逐字旧值。
+  // 没有这一条，C12b 一个「把所有文案都换成新句子」的实现也能全绿。
+  class RejectingSink extends HeadlessSink {
+    canApprove() {
+      return true
+    }
+    presentApproval(ticket) {
+      super.presentApproval(ticket)
+      setImmediate(() => permissionGate.resolve({ requestId: ticket.requestId, approved: false, remember: false }))
+    }
+  }
+  const desktopCarded = chatService.createSession({ mode: 'agent' })
+  const cardedSink = new RejectingSink()
+  const cardedOutcome = await chatService.sendAwait({ sessionId: desktopCarded.id, content: QUESTION }, cardedSink)
+  const cardedCall = (cardedOutcome.toolCalls || [])[0]
+  const cardedError = cardedCall ? String(cardedCall.error ?? '') : ''
+  check('C12c 桌面有卡 + 用户点拒绝 → 文案逐字是「用户拒绝或审批超时」', cardedError === '用户拒绝或审批超时', cardedError)
   settingsStore.save({ permission: { mode: 'full' } })
 }
 
