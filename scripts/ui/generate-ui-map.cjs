@@ -102,6 +102,15 @@ const DEFAULT_VIEWS = [
   },
   { hash: '/settings/models', name: 'settings-models' },
   { hash: '/settings/prompts', name: 'settings-prompts' },
+  // P9：世界书编写器弹层（列表默认 8 条 + 展开按钮 + 新增表单）。
+  // 点「打开世界书编辑器」后弹层自己会拉 knownDirs 并落到默认角色的 worldbook 目录。
+  { hash: '/settings/prompts', name: 'worldbook-editor', click: '[data-ui-target="世界书编辑器入口"]' },
+  // P7：故事区三视图（主界面双分区 / 抽屉展开 / 设置·故事区）
+  { hash: '/chat', name: 'chat-stories', seedStory: true },
+  { hash: '/chat', name: 'chat-story-drawer', seedStory: true, click: '[data-ui-target="故事卡片 时钟之谜"]' },
+  { hash: '/settings/stories', name: 'settings-stories', seedStory: true },
+  // P8：新建故事区表单（含「背景与剧本设定」与「开场消息」两栏）
+  { hash: '/chat', name: 'new-story-dialog', click: '[data-ui-target="新建故事"]' },
   { hash: '/settings/memory', name: 'settings-memory' },
   { hash: '/settings/zones', name: 'settings-zones' },
   { hash: '/settings/zones', name: 'settings-zones-lower', scrollY: 900 },
@@ -246,45 +255,8 @@ app.whenReady().then(async () => {
       "document.querySelector('.ui-grid')?.classList.remove('ui-grid--hidden')"
     ).catch(() => {})
 
-    // 视图级点击（P6）：用来切到 Agent 模式这类「首帧拿不到、必须交互才出现」的状态。
-    // 元素可能还没渲染（loadFile 回来时 React 只挂了一部分），所以在页内重试等它出现。
-    if (typeof view.click === 'string' && view.click) {
-      const clicked = await win.webContents.executeJavaScript(`
-        new Promise((resolve) => {
-          const sel = ${JSON.stringify(view.click)}
-          const deadline = Date.now() + 8000
-          const tick = () => {
-            const node = document.querySelector(sel)
-            if (node) { node.click(); return resolve(true) }
-            if (Date.now() > deadline) return resolve(false)
-            requestAnimationFrame(tick)
-          }
-          requestAnimationFrame(tick)
-        })
-      `)
-      if (!clicked) {
-        // 点不到就停下：静默截一张「没点成功」的图比少一张图更糟（会拿错图当证据）
-        console.error('点击目标不存在：' + view.click + '（视图 ' + view.name + '）')
-        app.exit(3)
-        return
-      }
-      // 覆盖层只在 mount / 路由变化 / resize / scroll 时重测；点击会挂载新 DOM，
-      // 派发一次 scroll 强制它重测，否则 JSON 坐标是新的、画在图上的框还是旧的（或干脆没有）。
-      await win.webContents.executeJavaScript("window.dispatchEvent(new Event('scroll'))")
-      await win.webContents.executeJavaScript(`
-        new Promise((resolve) => {
-          const start = Number(document.documentElement.dataset.uiTargets || 0)
-          const deadline = Date.now() + 5000
-          const tick = () => {
-            const now = Number(document.documentElement.dataset.uiTargets || 0)
-            if (now !== start) return resolve(now)
-            if (Date.now() > deadline) return resolve(now)
-            requestAnimationFrame(tick)
-          }
-          requestAnimationFrame(tick)
-        })
-      `)
-    }
+    // 视图级点击已移到播种之后（P7）：seedStory / seedChat 会整页重载，
+    // 必须在其之后再点，否则点击打开的抽屉会被 loadFile 冲掉（出图实测）。
 
     /**
      * 对话样本（P9）：把视图从「空态」变成「有消息的会话」。
@@ -298,6 +270,77 @@ app.whenReady().then(async () => {
      * 消息文本不要含「工作区/目录/文件/列表/ls/工具」：mockProvider 见到这些词会改走
      * 工具调用分支（弹审批卡），对话样本就拍不成两栏气泡了。
      */
+    /**
+     * P7：故事区样本。走真实 IPC：建故事区 → 造根分支消息 → 从第 1 条派生一条子分支，
+     * 这样侧栏卡片、抽屉分支树、检索命中和时间轴都有可定位对象。
+     * 播种完必须整页重载（chatStore / storyStore 都是模块级单例）。
+     */
+    if (view.seedStory) {
+      const seeded = await win.webContents.executeJavaScript(`
+        (async () => {
+          const existing = await window.nahida.story.list()
+          if (existing.length === 0) {
+            const created = await window.nahida.story.create({
+              title: '时钟之谜',
+              characterId: 'nahida',
+              synopsis: '雨夜的小镇里，钟楼停了。她和我一起去找停摆的原因。',
+              openingText: '雨点敲在钟楼的铜面上，像是有人在数数。'
+            })
+            const storyId = created.meta.storyId
+            const root = await window.nahida.story.session(storyId)
+            if (!root) return { ok: false, reason: '根分支会话不存在' }
+            const lines = [
+              '你听，钟楼好像不响了。',
+              '不是不响，是它把声音藏起来了。',
+              '那我们去塔顶看看？',
+              '等雨小一点，我先把斗篷系紧。'
+            ]
+            for (const line of lines) {
+              await window.nahida.chat.send({ sessionId: root.id, content: line })
+              const deadline = Date.now() + 15000
+              for (;;) {
+                // 🔴 必须用 story.session 轮询：chat.listSessions() 有意排除 story 会话（G1），
+                //    用它查故事会话永远为空 → 必然超时（P7 出图实测）。
+                const snap = await window.nahida.story.session(storyId)
+                const tail = snap && snap.messages[snap.messages.length - 1]
+                if (tail && tail.role === 'assistant' && tail.status === 'done' && tail.content.length > 0) break
+                if (Date.now() > deadline) return { ok: false, reason: '等待故事回复超时' }
+                await new Promise((r) => setTimeout(r, 120))
+              }
+            }
+            // 旁白视图：写一条真实 narration（不调模型），再从它派生，保证活跃分支里能看到居中旁白。
+            await window.nahida.chat.narrate(root.id, '雨声忽然停了，钟楼里传来一声很轻的叹息。')
+            const after = await window.nahida.story.session(storyId)
+            const target = after && after.messages[after.messages.length - 1]
+            if (target) {
+              await window.nahida.story.derive({
+                storyId,
+                fromSessionId: after.id,
+                fromMessageId: target.id,
+                title: '雨夜的另一种选择'
+              })
+            }
+            return { ok: true, storyId, messages: after ? after.messages.length : 0 }
+          }
+          return { ok: true, storyId: existing[0].storyId }
+        })()
+      `)
+      if (!seeded || !seeded.ok) {
+        console.error('故事播种失败：' + JSON.stringify(seeded) + '（视图 ' + view.name + '）')
+        app.exit(4)
+        return
+      }
+      await win.loadFile(indexHtml, {
+        hash: view.hash,
+        query: { grid: '1', v: String(viewIndex), seed: String(Date.now()) }
+      })
+      await win.webContents.executeJavaScript(
+        "document.querySelector('.ui-grid')?.classList.remove('ui-grid--hidden')"
+      ).catch(() => {})
+      await win.webContents.executeJavaScript("window.dispatchEvent(new Event('scroll'))")
+      console.log('  已播种故事区 ' + seeded.storyId)
+    }
+
     if (Array.isArray(view.seedChat) && view.seedChat.length > 0) {
       const seeded = await win.webContents.executeJavaScript(`
         (async () => {
@@ -340,6 +383,49 @@ app.whenReady().then(async () => {
       ).catch(() => {})
       await win.webContents.executeJavaScript("window.dispatchEvent(new Event('scroll'))")
       console.log('  已播种对话 ' + seeded.messages + ' 条消息')
+    }
+
+    // 视图级点击（P6/P7）：放在**所有播种之后**再点——seedStory / seedChat 会整页 loadFile 重载，
+    // 早于播种点击会被重载冲掉（chat-story-drawer 曾因此拍成与 chat-stories 一模一样）。
+    // 元素可能还没渲染，页内重试等它出现。
+    // 视图级点击（P6）：用来切到 Agent 模式这类「首帧拿不到、必须交互才出现」的状态。
+    // 元素可能还没渲染（loadFile 回来时 React 只挂了一部分），所以在页内重试等它出现。
+    if (typeof view.click === 'string' && view.click) {
+      const clicked = await win.webContents.executeJavaScript(`
+        new Promise((resolve) => {
+          const sel = ${JSON.stringify(view.click)}
+          const deadline = Date.now() + 8000
+          const tick = () => {
+            const node = document.querySelector(sel)
+            if (node) { node.click(); return resolve(true) }
+            if (Date.now() > deadline) return resolve(false)
+            requestAnimationFrame(tick)
+          }
+          requestAnimationFrame(tick)
+        })
+      `)
+      if (!clicked) {
+        // 点不到就停下：静默截一张「没点成功」的图比少一张图更糟（会拿错图当证据）
+        console.error('点击目标不存在：' + view.click + '（视图 ' + view.name + '）')
+        app.exit(3)
+        return
+      }
+      // 覆盖层只在 mount / 路由变化 / resize / scroll 时重测；点击会挂载新 DOM，
+      // 派发一次 scroll 强制它重测，否则 JSON 坐标是新的、画在图上的框还是旧的（或干脆没有）。
+      await win.webContents.executeJavaScript("window.dispatchEvent(new Event('scroll'))")
+      await win.webContents.executeJavaScript(`
+        new Promise((resolve) => {
+          const start = Number(document.documentElement.dataset.uiTargets || 0)
+          const deadline = Date.now() + 5000
+          const tick = () => {
+            const now = Number(document.documentElement.dataset.uiTargets || 0)
+            if (now !== start) return resolve(now)
+            if (Date.now() > deadline) return resolve(now)
+            requestAnimationFrame(tick)
+          }
+          requestAnimationFrame(tick)
+        })
+      `)
     }
 
     // 等到「当前路由的量测结果」就绪再截图：

@@ -37,6 +37,14 @@ const KNOWN_TITLES = {
   'chat-conversation': '对话中（含 AI 头像与用户头像）',
   'settings-models': '设置 · 模型配置',
   'settings-prompts': '设置 · 提示词库',
+  // P7：故事区三视图（侧栏双分区 / 分支抽屉展开 / 设置·故事区）
+  'chat-stories': '对话首页 · 故事分区（侧栏双分区）',
+  'chat-story-drawer': '故事区 · 分支抽屉（检索 / 分支树 / 时间轴）',
+  'settings-stories': '设置 · 故事区（元信息 / 用户画像）',
+  // P9：世界书编写器（弹层）。settings-prompts 里只留入口，列表与表单全在这个弹层。
+  'worldbook-editor': '设置 · 世界书编写器（条目列表 + 新增/编辑表单）',
+  // P8：新建故事区表单（背景与剧本设定 / 开场消息）
+  'new-story-dialog': '故事区 · 新建故事区（背景设定 / 开场消息）',
   'settings-memory': '设置 · 长期记忆',
   'settings-zones': '设置 · 区块',
   // P9-R3：渠道控制台从「按会话」重做成「按人」，三张图覆盖 A/B/C/D 四个区。
@@ -63,21 +71,27 @@ const KNOWN_TITLES = {
  */
 function readPreservedSections(file) {
   if (!fs.existsSync(file)) return {}
-  const text = fs.readFileSync(file, 'utf8')
+  const text = fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n')
   const kept = {}
   const wanted = ['需求 → 位置 → 代码', '变更记录', '已知约束']
   for (const name of wanted) {
-    const marker = '## ' + name + '\n'
+    const marker = '## ' + name
     const start = text.indexOf(marker)
     if (start < 0) continue
-    const rest = text.slice(start + marker.length)
+    const lineEnd = text.indexOf('\n', start)
+    const bodyStart = lineEnd < 0 ? text.length : lineEnd + 1
+    const rest = text.slice(bodyStart)
     const next = rest.search(/^## /m)
     kept[name] = (next < 0 ? rest : rest.slice(0, next)).trim()
   }
   return kept
 }
 
-const preserved = readPreservedSections(outPath)
+
+const humanPath = path.join(path.dirname(outPath), 'ui-map-human.md')
+const preserved = fs.existsSync(humanPath)
+  ? readPreservedSections(humanPath)
+  : readPreservedSections(outPath)
 const fmt = (v) => 'x' + v.left + ' y' + v.top + ' ' + v.width + 'x' + v.height
 
 let md = ''

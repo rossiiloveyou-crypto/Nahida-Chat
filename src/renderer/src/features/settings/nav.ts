@@ -6,6 +6,7 @@ import {
   IconModels,
   IconPalette,
   IconQq,
+  IconStory,
   IconText,
   IconTools,
   IconZones
@@ -14,6 +15,7 @@ import {
 export type SettingsSectionId =
   | 'models'
   | 'prompts'
+  | 'stories'
   | 'memory'
   | 'zones'
   | 'channels'
@@ -48,6 +50,15 @@ export const SETTINGS_NAV: SettingsNavItem[] = [
     label: '系统提示词',
     description: '注入链路与文件',
     icon: IconText,
+    group: '基础设置'
+  },
+  {
+    // P7：故事区（故事画像 / 剧本配置）。放在提示词之后 —— 它是「角色怎么说话」的下一步
+    // 「在这个角色下过哪段故事」，顺序上属于基础设置。
+    id: 'stories',
+    label: '故事区',
+    description: '故事画像与剧本配置',
+    icon: IconStory,
     group: '基础设置'
   },
   {

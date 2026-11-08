@@ -183,3 +183,14 @@ export function IconSave(props: IconProps) {
     </svg>
   )
 }
+
+export function IconStory(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H19v15H6.5A2.5 2.5 0 0 0 4 20.5Z" />
+      <path d="M4 5.5v15" />
+      <path d="M8 7.5h7" />
+      <path d="M8 11h5" />
+    </svg>
+  )
+}

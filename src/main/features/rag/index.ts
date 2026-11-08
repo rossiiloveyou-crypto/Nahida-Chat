@@ -26,8 +26,17 @@ import { estimateTokens } from './tokenize'
  * 记忆是增强功能，不能因为它坏了就让用户聊不了天。
  */
 class MemoryService {
-  private store = new MemoryStore()
+  /**
+   * 注入 store 是为了故事区（P4 / M11）：每个故事区一个**物理**库，
+   * 但语义与实现仍复用同一个 MemoryService（不许再写一个 StoryMemoryService，B2）。
+   * 缺省 = 主库 userData/memory.db，既有调用方零改动。
+   */
+  private readonly store: MemoryStore
   private extracting = new Set<string>()
+
+  constructor(store: MemoryStore = new MemoryStore()) {
+    this.store = store
+  }
 
   private normalize(settings: MemorySettings | undefined): MemorySettings {
     return {
@@ -124,7 +133,11 @@ class MemoryService {
   async buildContextBlock(
     query: string,
     settings: MemorySettings | undefined,
-    scopes?: MemoryScopeId[]
+    scopes?: MemoryScopeId[],
+    visible?: (entry: {
+      sourceSessionId: string | null
+      sourceMessageIndex?: number | null
+    }) => boolean
   ): Promise<string> {
     const config = this.normalize(settings)
     if (!config.enabled) return ''
@@ -138,7 +151,8 @@ class MemoryService {
       const hits = await hybridRecall(this.store, query, {
         topK: config.topK,
         minScore: config.minScore,
-        ...(scopes === undefined ? {} : { scopes })
+        ...(scopes === undefined ? {} : { scopes }),
+        ...(visible === undefined ? {} : { visible })
       })
       if (hits.length === 0) return ''
 
@@ -182,6 +196,8 @@ class MemoryService {
     signal: AbortSignal
     /** 写入哪个记忆域。缺省 zone:root（兼容 P4 调用方） */
     scope?: MemoryScopeId
+    /** 产生这条记忆时的会话消息下标（P6 / T12）；缺省 null */
+    sourceMessageIndex?: number | null
   }): Promise<void> {
     const config = this.normalize(params.settings)
     if (!config.enabled || !config.autoExtract) return
@@ -209,6 +225,7 @@ class MemoryService {
           content: fresh[i],
           sourceSessionId: params.sessionId,
           sourceMessageId: params.messageId,
+          sourceMessageIndex: params.sourceMessageIndex ?? null,
           embedding: vectors ? vectors[i] : null,
           ...(params.scope ? { scopeId: params.scope } : {})
         })
@@ -239,3 +256,6 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
 }
 
 export const memoryService = new MemoryService()
+
+/** P4：给故事区用的构造入口。主进程单例仍是上面的 memoryService，那一行一个字未改。 */
+export { MemoryService }

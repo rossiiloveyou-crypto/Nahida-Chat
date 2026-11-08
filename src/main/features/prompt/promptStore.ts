@@ -1,6 +1,8 @@
 import { app, shell } from 'electron'
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
+import { STORY_WORLDBOOK_MODE_DEFAULT } from '@shared/story'
+import type { StoryWorldbookMode } from '@shared/story'
 import type {
   ConversationMode,
   PromptCharFile,
@@ -16,12 +18,17 @@ const SOUL_FILES = ['soul.md', 'soul.txt']
 /** 模式规则：这个模式下她该做什么、边界在哪。 */
 const MODE_RULES: Record<ConversationMode, string> = {
   chat: 'modes/chat.md',
-  agent: 'modes/agent.md'
+  agent: 'modes/agent.md',
+  // P4：故事模式独占一份模式规则。文件不存在时 readIfExists 返回空串并跳过（M09）。
+  // 🔴 本 Phase **不建**这个文件 —— P5 才建。缺它不是缺陷，是「缺则跳过」。
+  story: 'modes/story.md'
 }
 /** 表达风格：这个模式下她怎么说话。 */
 const STYLE_FILES: Record<ConversationMode, string> = {
   chat: 'styles/chat.md',
-  agent: 'styles/agent.md'
+  agent: 'styles/agent.md',
+  // P4：同上，缺则跳过；由 P5 建 styles/story.md。
+  story: 'styles/story.md'
 }
 const SHARED_BASE = 'shared/base.md'
 const SHARED_TONE = 'shared/tone.md'
@@ -118,7 +125,23 @@ class PromptStore {
   compose(
     characterId: string,
     mode: ConversationMode,
-    opts?: { toolsEnabled?: boolean }
+    opts?: {
+      toolsEnabled?: boolean
+      /**
+       * 故事区的提示词补充（P5）。缺省 = 非故事会话，行为与 P4 **逐字一致**。
+       * 🔴 传**值**不传路径：装配层不读 story.json（P5 蓝图 §2.9 第 6 行）。
+       */
+      story?: {
+        /** 已解析的剧本世界书**绝对目录**；null = 没配 */
+        worldbookDir: string | null
+        /** 世界书档位 */
+        worldbookMode: StoryWorldbookMode
+        /** 已读出的故事画像正文；空串 = 没有 */
+        profile: string
+        /** P8：背景与剧本设定正文；空串 = 没填 */
+        background: string
+      }
+    }
   ): string {
     const root = this.root()
     const sections: string[] = []
@@ -127,29 +150,53 @@ class PromptStore {
     push(sections, readIfExists(join(root, SHARED_TONE)))
 
     const dir = join(root, 'characters', characterId)
-    if (existsSync(dir)) {
-      for (const soulName of SOUL_FILES) {
-        const text = readIfExists(join(dir, soulName))
-        if (text) {
-          push(sections, text)
-          break
-        }
-      }
 
-      // 台词样本：先解转义再剥注释，模板里的填写说明不会跑到模型面前。
-      // 还留着「[待补」的说明文件也没填过，同样跳过——占位符不该出现在人设里。
-      for (const file of listMarkdown(join(dir, CANON_DIR))) {
-        const body = normalizeCanon(readIfExists(file))
-        if (body && !body.includes('[待补')) push(sections, body)
+    // 🔴 这里**不套 existsSync(dir) 守卫**（P5 复核 ★.4 / J-26 的修复）。
+    //    下面每个读取都已经是 fail-safe 的：readIfExists 对不存在的文件返回空串，
+    //    listMarkdown 对不存在的目录返回空数组 —— 于是「角色目录缺失」本来就只会少掉角色那几段。
+    //    套一层守卫的唯一实际后果是：**剧本世界书跟着一起消失**。
+    //    而 M15 的语义恰恰是「用剧本世界书替换角色默认设定」——没有角色设定可替换时，
+    //    剧本设定更该照常生效，而不是两份一起失效（那等于她凭空失忆，界面还毫无提示）。
+    for (const soulName of SOUL_FILES) {
+      const text = readIfExists(join(dir, soulName))
+      if (text) {
+        push(sections, text)
+        break
       }
+    }
 
+    // 台词样本：先解转义再剥注释，模板里的填写说明不会跑到模型面前。
+    // 还留着「[待补」的说明文件也没填过，同样跳过——占位符不该出现在人设里。
+    for (const file of listMarkdown(join(dir, CANON_DIR))) {
+      const body = normalizeCanon(readIfExists(file))
+      if (body && !body.includes('[待补')) push(sections, body)
+    }
+
+    // 世界书两档（P5 / M15）：override 时角色默认 worldbook **一条都不注入**。
+    // 「真的跳过」就落在下面这个 if 上 —— 判 D11 的否定判据取的就是这一行。
+    const wbMode = opts?.story?.worldbookMode ?? STORY_WORLDBOOK_MODE_DEFAULT
+    if (wbMode !== 'override') {
       for (const file of listMarkdown(join(dir, 'worldbook'))) {
         push(sections, readIfExists(file))
       }
-
-      push(sections, readIfExists(join(dir, MODE_RULES[mode])))
-      push(sections, readIfExists(join(dir, STYLE_FILES[mode])))
     }
+    // 剧本世界书（M15 的第二档来源）：用户自己填的目录，缺则跳过（M09）。
+    for (const body of readStoryWorldbook(opts?.story?.worldbookDir ?? null, dir)) {
+      push(sections, body)
+    }
+
+    // 背景与剧本设定（P8）：设定层 —— 世界长什么样、这一幕从哪起。
+    // 🔴 与「故事画像（用户画像）」是两回事：本段排在模式规则之前（设定），
+    //    画像排在末尾（我是谁）。空串 = 没填 ⇒ 既有产物逐字不变。
+    const storyBg = (opts?.story?.background ?? "").trim()
+    if (storyBg) push(sections, "【本故事背景与剧本设定】\n" + storyBg)
+
+    push(sections, readIfExists(join(dir, MODE_RULES[mode])))
+    push(sections, readIfExists(join(dir, STYLE_FILES[mode])))
+
+    // 故事画像（P5 / M17）：**用户**的画像，不是角色的设定 —— 独立一段 system，
+    // 不计入七层（七层 = 1..7，见 P5 蓝图 §4.4 的口径）。空串 = 没有这个文件。
+    push(sections, opts?.story?.profile ?? '')
 
     // 工具规范只在「这一轮确实有工具」时注入 ——
     // 没有工具却给纪律，等于让模型去查一份空目录，还会污染闲聊语感（M01 的初衷）。
@@ -272,6 +319,53 @@ function readCharacterName(dir: string, fallback: string): string {
     }
   }
   return fallback
+}
+
+/**
+ * 读剧本世界书（P5 / T4）。返回若干段正文，顺序稳定（listMarkdown 已按文件名排序）。
+ *
+ * 🔴 越界防护：目录是用户手填的。这里挡的不是「绝对路径」而是「读到角色资产目录里」——
+ *    重叠会让同一份文件被注入两次，用户看不出来，但白吃 token。
+ * 🔴 任何异常（不存在、不是目录、读不出）→ 空数组 + 一次 warn，绝不抛（M09 的「缺则跳过」）：
+ *    用户填错一个路径不能把整轮对话弄挂。
+ */
+function readStoryWorldbook(worldbookDir: string | null, characterDir: string): string[] {
+  if (!worldbookDir) return []
+  try {
+    if (!existsSync(worldbookDir) || !statSync(worldbookDir).isDirectory()) {
+      console.warn('[prompt] 剧本世界书目录不存在：' + worldbookDir)
+      return []
+    }
+    // realpathSync 挡两种「看起来不同、其实相同」：符号链接、Windows 大小写不敏感。
+    // 🔴 characterDir 可能**根本不存在**（角色目录被改名 / 删掉）—— realpathSync 会抛 ENOENT。
+    //    这时应当跳过「重叠检测」，而不是跳过「整份剧本世界书」（P5 复核 ★.4 的第二个成因）。
+    const realWb = realpathSync(worldbookDir)
+    const realChar = safeRealpath(characterDir)
+    if (realChar && realWb.startsWith(realChar + sep)) {
+      console.warn('[prompt] 剧本世界书目录与角色目录重叠，已跳过：' + realWb)
+      return []
+    }
+    return listMarkdown(worldbookDir)
+      .map((file) => readIfExists(file))
+      .filter(Boolean)
+  } catch (error) {
+    console.warn('[prompt] 读取剧本世界书失败', error)
+    return []
+  }
+}
+
+/**
+ * realpath 的容错版：路径不存在 / 无权限时返回 null 而不是抛。
+ *
+ * 用途只有一处：重叠检测里拿角色目录的 realpath。
+ * 角色目录缺失是**合法状态**（用户改名、换角色、还没建），不该让整份剧本世界书跟着消失。
+ */
+function safeRealpath(target: string): string | null {
+  try {
+    return realpathSync(target)
+  } catch {
+    return null
+  }
 }
 
 function push(sections: string[], text: string): void {

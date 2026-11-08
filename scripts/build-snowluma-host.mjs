@@ -429,7 +429,12 @@ function main() {
 
     const env = { ...process.env };
     // pnpm 自己要用合格 node 启动；子进程一律用随包 node 的目录当 PATH 头
-    env.PATH = path.dirname(hostNode) + path.delimiter + (env.PATH || '');
+    // 🔴 Windows 上 Node 把环境变量名按原样给出（通常是大写 P 的 "Path"）。
+    //    这里只写 env.PATH 会新建一个**大写 PATH** 并把它设成 "hostNodeDir;"，
+    //    于是子进程（pnpm 的 prepare 钩子里的 "pnpm run build"）找不到 pnpm。
+    //    必须保持原键名，并向它前面插入 host node 目录。
+    const pathKey = Object.keys(env).find((key) => key.toUpperCase() === 'PATH') ?? 'PATH';
+    env[pathKey] = path.dirname(hostNode) + path.delimiter + (env[pathKey] || '');
     delete env.NODE_OPTIONS;
     // NC 是 pnpm 工程；这里必须让 pnpm 走"独立工程"语义
     delete env.npm_config_user_agent;

@@ -1,6 +1,12 @@
+import { useEffect, useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import type { ConversationMode } from '@shared/types'
 import { useChatStore } from '../features/chat/store'
+import { StoryCard } from '../features/story/StoryCard'
+import { NewStoryDialog } from '../features/story/NewStoryDialog'
+import { visibleDesktopSessions } from '../features/story/sessionFilter'
+import { useStoryStore } from '../features/story/store'
+import { usePromptLibrary } from '../features/settings/usePromptLibrary'
 import { WorkspaceSection } from '../features/workspace/WorkspaceSection'
 import { useWorkspaces } from '../features/workspace/useWorkspaces'
 
@@ -27,10 +33,20 @@ export function Sidebar() {
   const activeWorkspace =
     catalog.workspaces.find((item) => item.id === catalog.activeWorkspaceId) ?? null
 
-  /** 「最近」列表按当前活动工作区过滤：工作区之间的会话不互相串台。 */
-  const visibleSessions = activeWorkspace
-    ? sessions.filter((session) => (session.workspaceId ?? null) === activeWorkspace.id)
-    : sessions
+  /** 「最近」列表按当前活动工作区过滤，并显式排除故事会话（J-09 / A-12）。 */
+  const visibleSessions = visibleDesktopSessions(sessions, activeWorkspace?.id ?? null)
+
+  // P7：故事分区。stories 来自主进程，卡片只按 storyId 组织（不读 zones）。
+  const stories = useStoryStore((s) => s.stories)
+  const currentStoryId = useStoryStore((s) => s.currentStoryId)
+  const refreshStories = useStoryStore((s) => s.refreshStories)
+  const openStory = useStoryStore((s) => s.openStory)
+  const { library } = usePromptLibrary()
+  const [storyDialogOpen, setStoryDialogOpen] = useState(false)
+
+  useEffect(() => {
+    void refreshStories()
+  }, [refreshStories])
 
   const handleSelect = (id: string): void => {
     select(id)
@@ -87,6 +103,37 @@ export function Sidebar() {
           </div>
         ))}
       </nav>
+
+      <div className="sidebar__section-title sidebar__section-title--inset" data-ui-region="B 故事分区">
+        故事
+        <button
+          type="button"
+          className="sidebar__section-action"
+          data-ui-target="新建故事"
+          onClick={() => setStoryDialogOpen(true)}
+        >
+          + 新建故事
+        </button>
+      </div>
+      <div className="story-list" data-ui-target="故事列表">
+        {stories.length === 0 && <p className="session-list__empty">还没有故事区</p>}
+        {stories.map((story) => (
+          <StoryCard
+            key={story.storyId}
+            story={story}
+            active={story.storyId === currentStoryId}
+            characterName={
+              library?.characters.find((item) => item.id === story.characterId)?.name ?? story.characterId
+            }
+            onOpen={(storyId) => {
+              void openStory(storyId)
+              navigate('/chat')
+            }}
+          />
+        ))}
+      </div>
+
+      {storyDialogOpen && <NewStoryDialog onClose={() => setStoryDialogOpen(false)} />}
 
       {/* 纯装饰：日间浅色叶纹、夜间星尘，靠主题选择器换图（P2 §4.7） */}
       <div className="sidebar__ornament" aria-hidden="true" />

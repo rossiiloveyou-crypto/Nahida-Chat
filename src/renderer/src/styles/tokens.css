@@ -37,6 +37,9 @@
   --nc-frame-stitch: #7ba66a;
 
   --nc-user-bubble: #eaf1e0;
+  /* 故事旁白：中性舞台说明，不抢用户气泡与 AI 正文的层级 */
+  --nc-narration-surface: #f2f1e9;
+  --nc-narration-text: #6f6d61;
   --nc-danger: #a8443a;
 
   --nc-radius-sm: 8px;
@@ -103,6 +106,14 @@
   --nc-panel-veil: transparent;
   /* 输入条：日间与 --nc-surface-subtle 同值 */
   --nc-composer-surface: #fcfcf7;
+
+  /* ---- P7 新增：故事卡片 / 抽屉 / 检索命中（3 个） ---- */
+  /* 检索命中的高亮底：accent 的浅叠，与 user-bubble 区分开 */
+  --nc-story-hit: rgba(79, 121, 69, 0.1);
+  /* 抽屉与卡片的浮层底（比页面白面更实，压住背后的消息） */
+  --nc-story-surface: #fbfbf6;
+  /* 分支树的缩进引导线 */
+  --nc-story-guide: rgba(58, 74, 52, 0.14);
 }
 
 /*
@@ -119,6 +130,8 @@
   --nc-surface: #161d29;
   --nc-surface-subtle: #1b2230;
   --nc-user-bubble: #1e2a22;
+  --nc-narration-surface: #242620;
+  --nc-narration-text: #aaa89b;
 
   /* ---- 文字：正文 13.44 / 次要 9.19 / 弱化 7.37（对 canvas 实算） ---- */
   --nc-text: #d5e3cc;
@@ -185,4 +198,9 @@
   --nc-panel-veil: rgba(15, 22, 31, 0.55);
   /* 输入条：与背景图相关性 k≈-0.02（几乎无关）→ 它是实底而非半透明 */
   --nc-composer-surface: rgba(16, 23, 34, 0.82);
+
+  /* ---- P7 新增：故事卡片 / 抽屉 / 检索命中 ---- */
+  --nc-story-hit: rgba(197, 220, 155, 0.16);
+  --nc-story-surface: rgba(24, 32, 43, 0.9);
+  --nc-story-guide: rgba(143, 168, 118, 0.28);
 }

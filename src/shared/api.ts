@@ -12,6 +12,7 @@ import type {
   MemoryEntry,
   MemoryRecallHit,
   MemoryStatus,
+  Message,
   ModelDiscoveryRequest,
   ModelDiscoveryResult,
   ModelProfileCatalog,
@@ -33,6 +34,24 @@ import type { ChannelAccount, ChannelAccessConfig, ChannelGroup } from './channe
 import type { ObserveConversation, ObserveRecord, ObserveStatus } from './observe'
 import type { QqHostStatus, QqProcessSnapshot } from './qqHost'
 import type { Zone, ZoneAdoptResult, ZoneConfig, ZoneDraft, ZoneMemberDraft, ZoneStat } from './zones'
+import type {
+  DuplicateKeyword,
+  WorldbookDirInfo,
+  WorldbookEntryDraft,
+  WorldbookListing
+} from './worldbook'
+import type {
+  StoryBranch,
+  StoryBranchesFile,
+  StoryBranchNode,
+  StoryDeleteResult,
+  StoryDeriveDraft,
+  StoryDraft,
+  StoryMeta,
+  StoryMetaPatch,
+  StorySearchHit,
+  StorySummary
+} from './story'
 
 type Unsubscribe = () => void
 
@@ -110,6 +129,8 @@ export interface NahidaApi {
     updateSession: (id: string, patch: UpdateSessionInput) => Promise<Session>
     deleteSession: (id: string) => Promise<void>
     send: (input: SendInput) => Promise<SendResult>
+    /** 故事区旁白：只追加一条旁白消息并落盘，不调用模型；下次 send 时作为 system 下发 */
+    narrate: (sessionId: string, content: string) => Promise<Message>
     stop: (sessionId: string) => Promise<void>
     onDelta: (handler: (payload: ChatDelta) => void) => Unsubscribe
     onTool: (handler: (payload: ChatToolUpdate) => void) => Unsubscribe
@@ -203,6 +224,47 @@ export interface NahidaApi {
    * 采集口径（2026-11-01「P8 就是群语料」）：群聊全采（不看白名单），私聊只采放行的。
    * 旁听内容不进 memory.db，当前也不参与任何 prompt —— 它是原料，不是行为。
    */
+  /**
+   * 世界书编写器（P9 / M26）。
+   *
+   * 🔴 target 可以是**目录**或**单个任意名 .md 文件**（`list` 自动判别）。
+   * 🔴 `duplicates` 只提醒、不阻断（用户明确「不限制写入，仅作提醒」）—— 它没有写副作用。
+   * 🔴 写操作只允许 worldbook 目录内的 `.md`；`README.md` 与越界路径一律在主进程抛。
+   */
+  worldbook: {
+    /** 已知世界书目录：各角色的 worldbook + 各故事区配了的剧本世界书 */
+    knownDirs: () => Promise<WorldbookDirInfo[]>
+    /** 列条目（目录聚合 / 单文件）；只提取合规段落 */
+    list: (target: string) => Promise<WorldbookListing>
+    /** 新增条目：自动生成 32 位 id 写入目标 md */
+    add: (dir: string, file: string, draft: WorldbookEntryDraft) => Promise<WorldbookListing>
+    /**
+     * 编辑条目：只重写目标块，其余字节逐字不变。
+     * 🔴 fallbackTitle 只服务「合规但缺 id」的条目（没有句柄）—— 它保存时会补发一个新 id。
+     */
+    update: (
+      dir: string,
+      file: string,
+      id: string,
+      draft: WorldbookEntryDraft,
+      fallbackTitle?: string
+    ) => Promise<WorldbookListing>
+    /** 删除条目：整段删除，其余字节逐字不变；fallbackTitle 同上 */
+    remove: (dir: string, file: string, id: string, fallbackTitle?: string) => Promise<WorldbookListing>
+    /** 新建世界书（目录 + README.md + world.md） */
+    create: (dir: string) => Promise<WorldbookListing>
+    /** 弹系统目录选择框；取消返回空串 */
+    pickDir: () => Promise<string>
+    /** 弹系统文件选择框（.md）；取消返回空串 */
+    pickFile: () => Promise<string>
+    /** 同文件内重复触发词（仅提示） */
+    duplicates: (
+      dir: string,
+      file: string,
+      keywords: string[],
+      excludeId?: string
+    ) => Promise<DuplicateKeyword[]>
+  }
   observe: {
     status: () => Promise<ObserveStatus>
     conversations: () => Promise<ObserveConversation[]>
@@ -215,5 +277,44 @@ export interface NahidaApi {
     }) => Promise<ObserveRecord[]>
     /** 用系统文件管理器打开 observe/ 根目录，返回空串表示成功 */
     openDir: () => Promise<string>
+  }
+  /**
+   * 故事区（P4 / M12 的数据面）。
+   *
+   * 🔴 类型一律来自 `shared/story.ts` —— 两侧各写一份「差不多的接口」是本项目明令禁止的。
+   * 🔴 删除必须带 `{ confirmed: true }`：缺省一律 `{ ok:false, reason:'need_confirm' }` 且**不删**。
+   *    P7 的确认框打开前，这条参数就是唯一那道闸。
+   */
+  story: {
+    list: () => Promise<StorySummary[]>
+    create: (draft: StoryDraft) => Promise<{ meta: StoryMeta; sessionId: string }>
+    get: (storyId: string) => Promise<StoryMeta | null>
+    remove: (storyId: string, opts?: { confirmed?: boolean }) => Promise<StoryDeleteResult>
+    /** P6：这个区的分支树（P7 的抽屉直接用） */
+    branches: (storyId: string) => Promise<StoryBranchNode[]>
+    /** P6：从某条消息派生新分支 */
+    derive: (draft: StoryDeriveDraft) => Promise<{ branch: StoryBranch; sessionId: string }>
+    /** P6：切换活跃分支，返回切换后的树 */
+    switchBranch: (storyId: string, branchId: string) => Promise<StoryBranchNode[]>
+    /** P6：删分支（非活跃叶子），返回删完后的 branches.json */
+    removeBranch: (storyId: string, branchId: string) => Promise<StoryBranchesFile>
+    /** P7：取某条分支会话（带 messages）。branchId 省略 = 活跃分支 */
+    session: (storyId: string, branchId?: string) => Promise<Session | null>
+    /** P7：当前故事区全文检索（跨全部分支，命中上限 100） */
+    search: (storyId: string, query: string) => Promise<StorySearchHit[]>
+    /** P7：设置面板改 meta（白名单字段） */
+    updateMeta: (storyId: string, patch: StoryMetaPatch) => Promise<StoryMeta | null>
+    /** P7：读故事画像 profile.md（不存在 → 空串） */
+    profileGet: (storyId: string) => Promise<string>
+    /** P7：写故事画像（空串 = 删除文件） */
+    profileSave: (storyId: string, text: string) => Promise<boolean>
+    /** P7：选剧本世界书目录，返回空串 = 取消 */
+    pickWorldbookDir: () => Promise<string>
+    /** P8：列该故事区**自己库**里的长期记忆 */
+    memoryList: (storyId: string) => Promise<MemoryEntry[]>
+    /** P8：删一条故事记忆，返回删除后的完整列表 */
+    memoryDelete: (storyId: string, id: string) => Promise<MemoryEntry[]>
+    /** P8：清空该故事区的全部长期记忆，返回清空后的列表 */
+    memoryClear: (storyId: string) => Promise<MemoryEntry[]>
   }
 }

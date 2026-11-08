@@ -41,7 +41,18 @@ interface ChatStore {
    */
   resync: () => Promise<void>
   select: (id: string) => void
+  /**
+   * P7：把一条故事会话并入 sessions（同 id 替换，否则前插）并设为活动。
+   *
+   * 🔴 必须并入而不是另存：流式 reducer 靠 ownedByWindow(state.sessions, sessionId) 判归属，
+   *    故事会话不在 sessions 里，打字机增量与完成事件都会被丢掉（E9）。
+   * 🔴 init() / resync() 仍只拉 listDesktopSessions() —— 切工作区后故事会话会从 sessions 消失，
+   *    这是有意的（不长期占内存），openStory 可重新拽回。
+   */
+  adoptStorySession: (session: Session) => void
   send: (content: string) => Promise<void>
+  /** 故事区旁白：只追加消息，不触发模型 */
+  narrate: (content: string) => Promise<void>
   stop: () => Promise<void>
   respondApproval: (approved: boolean, remember: boolean) => Promise<void>
   dismissError: () => void
@@ -217,6 +228,12 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
 
   select: (id) => set({ activeId: id, error: null }),
 
+  adoptStorySession: (session) =>
+    set((state) => {
+      const rest = state.sessions.filter((item) => item.id !== session.id)
+      return { sessions: [session, ...rest], activeId: session.id, error: null, approval: null }
+    }),
+
   send: async (content) => {
     const sessionId = get().activeId
     const text = content.trim()
@@ -241,6 +258,25 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       set({ error: message, streamingId: null })
+    }
+  },
+
+  narrate: async (content) => {
+    const sessionId = get().activeId
+    const text = content.trim()
+    if (!sessionId || !text) return
+    set({ error: null })
+    try {
+      const message = await window.nahida.chat.narrate(sessionId, text)
+      set((state) => ({
+        sessions: mapSession(state.sessions, sessionId, (session) => {
+          if (session.messages.some((item) => item.id === message.id)) return session
+          return { ...session, messages: [...session.messages, message] }
+        })
+      }))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      set({ error: message })
     }
   },
 

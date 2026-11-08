@@ -42,6 +42,7 @@ export const IPC = {
   chatUpdate: 'chat:update',
   chatDelete: 'chat:delete',
   chatSend: 'chat:send',
+  chatNarrate: 'chat:narrate',
   chatStop: 'chat:stop',
 
   chatDelta: 'chat:delta',
@@ -91,7 +92,41 @@ export const IPC = {
   observeStatus: 'observe:status',
   observeConversations: 'observe:conversations',
   observeTail: 'observe:tail',
-  observeOpenDir: 'observe:open-dir'
+  observeOpenDir: 'observe:open-dir',
+
+  // 故事区（P4 / M14 允许新开通道）：建区 / 列区 / 读区 / 删区
+  storyList: 'story:list',
+  storyCreate: 'story:create',
+  storyGet: 'story:get',
+  storyDelete: 'story:delete',
+  // 故事分支（P6 / M08）：读树 / 派生 / 切换 / 删分支
+  storyBranches: 'story:branches',
+  storyDerive: 'story:derive',
+  storySwitch: 'story:switch',
+  storyBranchDelete: 'story:branch-delete',
+  // P7：会话视口 / 全文检索 / meta 与画像 / 目录选择
+  storySession: 'story:session',
+  storySearch: 'story:search',
+  storyUpdateMeta: 'story:update-meta',
+  storyProfileGet: 'story:profile-get',
+  storyProfileSave: 'story:profile-save',
+  storyPickWorldbookDir: 'story:pick-worldbook-dir',
+  // P8：故事区长期记忆（针对**该故事自己的库**，不是全局 memoryService）
+  storyMemoryList: 'story:memory-list',
+  storyMemoryDelete: 'story:memory-delete',
+  storyMemoryClear: 'story:memory-clear',
+
+  // 世界书编写器（P9 / M26）：列目录 / 列条目 / 增删改 / 新建 / 选目录 / 选文件
+  // 🔴 只写 worldbook/ 目录内的 .md（原子写 + .bak + 路径守卫），见 main/features/worldbook/editor.ts
+  worldbookKnownDirs: 'worldbook:known-dirs',
+  worldbookList: 'worldbook:list',
+  worldbookAdd: 'worldbook:add',
+  worldbookUpdate: 'worldbook:update',
+  worldbookRemove: 'worldbook:remove',
+  worldbookCreate: 'worldbook:create',
+  worldbookPickDir: 'worldbook:pick-dir',
+  worldbookPickFile: 'worldbook:pick-file',
+  worldbookDuplicates: 'worldbook:duplicates'
 } as const
 
 export type IpcChannel = (typeof IPC)[keyof typeof IPC]

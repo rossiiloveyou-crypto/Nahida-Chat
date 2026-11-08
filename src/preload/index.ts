@@ -75,6 +75,7 @@ const api: NahidaApi = {
     updateSession: (id, patch) => ipcRenderer.invoke(IPC.chatUpdate, id, patch),
     deleteSession: (id) => ipcRenderer.invoke(IPC.chatDelete, id),
     send: (input) => ipcRenderer.invoke(IPC.chatSend, input),
+    narrate: (sessionId, content) => ipcRenderer.invoke(IPC.chatNarrate, sessionId, content),
     stop: (sessionId) => ipcRenderer.invoke(IPC.chatStop, sessionId),
     onDelta: (handler) => subscribe(IPC.chatDelta, handler),
     onTool: (handler) => subscribe(IPC.chatTool, handler),
@@ -117,6 +118,44 @@ const api: NahidaApi = {
     status: () => ipcRenderer.invoke(IPC.channelsStatus)
   },
   // P8：旁听库只有这四个只读入口。**没有** clear / delete —— 见 PHASE-8 §4.6。
+  // P4：故事区。四个入口都是 invoke；删除的确认参数由调用方显式给。
+  story: {
+    list: () => ipcRenderer.invoke(IPC.storyList),
+    create: (draft) => ipcRenderer.invoke(IPC.storyCreate, draft),
+    get: (storyId) => ipcRenderer.invoke(IPC.storyGet, storyId),
+    remove: (storyId, opts) => ipcRenderer.invoke(IPC.storyDelete, storyId, opts),
+    // P6：分支树四条
+    branches: (storyId) => ipcRenderer.invoke(IPC.storyBranches, storyId),
+    derive: (draft) => ipcRenderer.invoke(IPC.storyDerive, draft),
+    switchBranch: (storyId, branchId) => ipcRenderer.invoke(IPC.storySwitch, storyId, branchId),
+    removeBranch: (storyId, branchId) => ipcRenderer.invoke(IPC.storyBranchDelete, storyId, branchId),
+    // P7：会话视口 / 检索 / meta 与画像 / 目录选择
+    session: (storyId, branchId) => ipcRenderer.invoke(IPC.storySession, storyId, branchId),
+    search: (storyId, query) => ipcRenderer.invoke(IPC.storySearch, storyId, query),
+    updateMeta: (storyId, patch) => ipcRenderer.invoke(IPC.storyUpdateMeta, storyId, patch),
+    profileGet: (storyId) => ipcRenderer.invoke(IPC.storyProfileGet, storyId),
+    profileSave: (storyId, text) => ipcRenderer.invoke(IPC.storyProfileSave, storyId, text),
+    pickWorldbookDir: () => ipcRenderer.invoke(IPC.storyPickWorldbookDir),
+    // P8：故事长期记忆（该区自己的库）
+    memoryList: (storyId) => ipcRenderer.invoke(IPC.storyMemoryList, storyId),
+    memoryDelete: (storyId, id) => ipcRenderer.invoke(IPC.storyMemoryDelete, storyId, id),
+    memoryClear: (storyId) => ipcRenderer.invoke(IPC.storyMemoryClear, storyId)
+  },
+  // P9：世界书编写器（写 worldbook/*.md；原子写 + .bak + 路径守卫都在主进程）
+  worldbook: {
+    knownDirs: () => ipcRenderer.invoke(IPC.worldbookKnownDirs),
+    list: (target) => ipcRenderer.invoke(IPC.worldbookList, target),
+    add: (dir, file, draft) => ipcRenderer.invoke(IPC.worldbookAdd, dir, file, draft),
+    update: (dir, file, id, draft, fallbackTitle) =>
+      ipcRenderer.invoke(IPC.worldbookUpdate, dir, file, id, draft, fallbackTitle),
+    remove: (dir, file, id, fallbackTitle) =>
+      ipcRenderer.invoke(IPC.worldbookRemove, dir, file, id, fallbackTitle),
+    create: (dir) => ipcRenderer.invoke(IPC.worldbookCreate, dir),
+    pickDir: () => ipcRenderer.invoke(IPC.worldbookPickDir),
+    pickFile: () => ipcRenderer.invoke(IPC.worldbookPickFile),
+    duplicates: (dir, file, keywords, excludeId) =>
+      ipcRenderer.invoke(IPC.worldbookDuplicates, dir, file, keywords, excludeId)
+  },
   observe: {
     status: () => ipcRenderer.invoke(IPC.observeStatus),
     conversations: () => ipcRenderer.invoke(IPC.observeConversations),

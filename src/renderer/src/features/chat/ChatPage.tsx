@@ -6,11 +6,14 @@ import { Composer } from './components/Composer'
 import { EmptyState } from './components/EmptyState'
 import { MessageList } from './components/MessageList'
 import { useChatStore } from './store'
+import { StoryDrawer } from '../story/StoryDrawer'
+import { useStoryStore } from '../story/store'
 import { useSettings } from '../settings/useSettings'
 import { usePromptLibrary } from '../settings/usePromptLibrary'
 import { useWorkspaces } from '../workspace/useWorkspaces'
 
-const MODE_LABEL: Record<ConversationMode, string> = { chat: 'Chat', agent: 'Agent' }
+// P4：故事模式只补字典键（角落徽章的文字）。**不是入口** —— 模式滑块仍只列 chat / agent。
+const MODE_LABEL: Record<ConversationMode, string> = { chat: 'Chat', agent: 'Agent', story: '故事' }
 
 export function ChatPage() {
   const init = useChatStore((s) => s.init)
@@ -21,6 +24,7 @@ export function ChatPage() {
   const approval = useChatStore((s) => s.approval)
   const error = useChatStore((s) => s.error)
   const send = useChatStore((s) => s.send)
+  const narrate = useChatStore((s) => s.narrate)
   const stop = useChatStore((s) => s.stop)
   const createSession = useChatStore((s) => s.createSession)
   const updateSession = useChatStore((s) => s.updateSession)
@@ -37,10 +41,20 @@ export function ChatPage() {
   const [draftModel, setDraftModel] = useState<{ profileId: string; modelId: string } | null>(null)
   // 同理，还没有会话时选的工作区也先暂存
   const [draftWorkspaceId, setDraftWorkspaceId] = useState<string | null>(null)
+  // P7：检索命中后要滚动并高亮那条消息，2 秒后自动清除（淡出）
+  const focusMessageId = useStoryStore((s) => s.focusMessageId)
+  const setFocusMessageId = useStoryStore((s) => s.setFocus)
 
   useEffect(() => {
     void init()
   }, [init])
+
+  // P7：检索命中高亮 2 秒后自动淡出（滚动由 MessageList 负责）
+  useEffect(() => {
+    if (!focusMessageId) return
+    const timer = window.setTimeout(() => setFocusMessageId(null), 2000)
+    return () => window.clearTimeout(timer)
+  }, [focusMessageId, setFocusMessageId])
 
   // 角标要跟着 composer 里刚换的模型走，所以档案列表也要一份
   useEffect(() => {
@@ -118,6 +132,12 @@ export function ChatPage() {
     await send(text)
   }
 
+  // 旁白只在故事会话出现，所以这里不做“无会话先建区”的分支
+  const handleNarrate = async (text: string): Promise<void> => {
+    if (!active?.storyId) return
+    await narrate(text)
+  }
+
   // 换模型：有会话就写进会话，没有就先记在草稿上
   const handlePickModel = (profileId: string, modelId: string): void => {
     if (!active) {
@@ -166,7 +186,10 @@ export function ChatPage() {
     <section className="chat-page">
       <header className="chat-header" data-ui-region="A 对话头部">
         <div>
-          <h2 className="chat-header__title">{active ? active.title : 'Nahida Chat'}</h2>
+          <h2 className="chat-header__title">
+            {active?.storyId && <span className="chat-header__badge">故事</span>}
+            {active ? active.title : 'Nahida Chat'}
+          </h2>
           <div className="chat-header__subtitle">
             {ready ? (messages.length > 0 ? messages.length + ' 条消息' : '准备就绪') : '正在载入…'}
             {activeWorkspace && (
@@ -198,15 +221,32 @@ export function ChatPage() {
         </div>
       )}
 
-      {messages.length === 0 ? (
-        <EmptyState
-          mode={activeMode}
-          onModeChange={(mode) => void handleModeChange(mode)}
-          disabled={streaming}
-        />
-      ) : (
-        <MessageList messages={messages} />
-      )}
+      {/**
+       * P7：故事会话的空态**绝不能**走 EmptyState ——
+       * 那会把 Chat/Agent 滑块塞进故事里，handleModeChange 还能把 story 会话改成 chat。
+       */}
+      {/* P7：消息区与抽屉并排。抽屉不能盖住输入区（否则检索时连输入框都看不见）。 */}
+      <div className="chat-body">
+        {/**
+         * P7：故事会话的空态**绝不能**走 EmptyState ——
+         * 那会把 Chat/Agent 滑块塞进故事里，handleModeChange 还能把 story 会话改成 chat。
+         */}
+        {messages.length === 0 && active?.storyId ? (
+          <div className="empty-state empty-state--story">
+            <p className="empty-state__desc">这个故事还没有消息。在下方输入框继续写下去。</p>
+          </div>
+        ) : messages.length === 0 ? (
+          <EmptyState
+            mode={activeMode}
+            onModeChange={(mode) => void handleModeChange(mode)}
+            disabled={streaming}
+          />
+        ) : (
+          <MessageList messages={messages} focusMessageId={focusMessageId} />
+        )}
+
+        {active?.storyId && <StoryDrawer storyId={active.storyId} title={active.title} />}
+      </div>
 
       {pendingApproval && (
         <div className="approval-dock">
@@ -221,6 +261,8 @@ export function ChatPage() {
         disabled={ready ? false : true}
         streaming={streaming}
         onSend={(text) => void handleSend(text)}
+        onNarrate={(text) => void handleNarrate(text)}
+        canNarrate={Boolean(active?.storyId)}
         onStop={() => void stop()}
         draftProfileId={chosenProfileId}
         draftModelId={chosenModelId}

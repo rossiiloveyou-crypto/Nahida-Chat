@@ -351,6 +351,8 @@ select {
 /* ---------- 聊天页 ---------- */
 
 .chat-page {
+  /* P7：分支抽屉是 .chat-page 内的绝对定位列，必须给它一个定位上下文 */
+  position: relative;
   flex: 1;
   min-width: 0;
   display: flex;
@@ -432,6 +434,31 @@ select {
 
 .message--user {
   flex-direction: row-reverse;
+}
+
+/* 旁白：整列居中的舞台说明，无头像、无对话气泡。 */
+.message--narration {
+  justify-content: center;
+  padding: 2px 0;
+}
+
+.narration-line {
+  max-width: min(820px, 88%);
+  margin: 0 auto;
+  padding: 8px 14px;
+  border-radius: var(--nc-radius-pill);
+  background: var(--nc-narration-surface);
+  color: var(--nc-narration-text);
+  font-size: 13px;
+  line-height: 1.65;
+  text-align: center;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.narration-line__label {
+  color: var(--nc-text-secondary);
+  font-weight: 600;
 }
 
 @keyframes msg-in {
@@ -736,10 +763,54 @@ select {
   background-image: url('../assets/nahida/divider-horizontal-dark.svg');
 }
 
-.composer__box {
-  /* 与 .message-list__inner 同宽：输入框必须和阅读列对齐，否则视觉断层 */
+/* 输入框与故事「对话/旁白」徽章同一行；徽章在左，输入框吃掉剩余宽度。 */
+.composer__row {
   max-width: min(1180px, 100%);
   margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 故事输入类型：徽章贴在输入框左侧，与输入框同一条水平中线。 */
+.composer__mode {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--nc-border);
+  border-radius: var(--nc-radius-pill);
+  background: var(--nc-surface-subtle);
+}
+
+.composer__mode-btn {
+  height: 24px;
+  padding: 0 12px;
+  border-radius: var(--nc-radius-pill);
+  color: var(--nc-text-tertiary);
+  font-size: 11.5px;
+  line-height: 1;
+}
+
+.composer__mode-btn:hover:not(:disabled) {
+  color: var(--nc-text);
+}
+
+.composer__mode-btn.is-active {
+  background: var(--nc-accent);
+  color: var(--nc-on-accent);
+}
+
+.composer__mode-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.composer__box {
+  /* 与 .message-list__inner 同宽：输入框必须和阅读列对齐，否则视觉断层。
+     放进 .composer__row 后由 flex:1 吃掉徽章之外的宽度。 */
+  flex: 1;
+  min-width: 0;
   display: flex;
   /*
    * P7：原来是 align-items: flex-end —— 34px 的发送按钮把盒子撑到 55.6px，
@@ -828,6 +899,16 @@ select {
 
 .composer__action--stop {
   background: var(--nc-text);
+}
+
+.composer__action--narration {
+  background: var(--nc-narration-text);
+}
+
+.composer__action-text {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 /* 发送图标：日 40×40 / 夜 44×44，viewBox 不同（PHASE-2 §二 E4）。
@@ -3438,4 +3519,1096 @@ input[type='range'] {
   border: 1.2px dashed var(--nc-frame-stitch);
   border-radius: inherit;
   pointer-events: none;
+}
+
+/* ═══════════ P7：故事分区 / 分支抽屉 / 检索 / 设置面板 ═══════════
+   色值一律走 tokens.css（--nc-story-*），组件里不出现字面色。 */
+
+.sidebar__section-action {
+  padding: 1px 6px;
+  border-radius: var(--nc-radius-sm);
+  font-size: 10.5px;
+  letter-spacing: 0;
+  color: var(--nc-accent-strong);
+  background: var(--nc-accent-soft);
+}
+
+.sidebar__section-action:hover {
+  background: var(--nc-accent-ring);
+}
+
+/* 「故事」段：卡片列表比会话列表矮一档，和下面装饰图抢高度时先让装饰图缩 */
+.story-list {
+  flex: 0 1 auto;
+  max-height: 34vh;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px;
+}
+
+.story-card {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: var(--nc-radius-md);
+  text-align: left;
+  color: var(--nc-text);
+  transition: background 0.15s ease;
+}
+
+.story-card:hover {
+  background: var(--nc-fill-hover);
+}
+
+.story-card.is-active .story-card__title {
+  color: var(--nc-accent-strong);
+  font-weight: 600;
+}
+
+.story-card__avatar {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border-radius: 50%;
+  object-fit: cover;
+  object-position: center 18%;
+  background: var(--nc-accent-soft);
+}
+
+.story-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.story-card__title {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.story-card__synopsis {
+  font-size: 11px;
+  color: var(--nc-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.story-card__meta {
+  font-size: 10.5px;
+  color: var(--nc-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- 新建故事区对话框 ---------- */
+
+.story-dialog__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--nc-fill-subtle-strong);
+  backdrop-filter: blur(2px);
+}
+
+.story-dialog {
+  width: min(520px, 92vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px 20px 16px;
+  border: 1px solid var(--nc-border);
+  border-radius: var(--nc-radius-lg);
+  background: var(--nc-surface);
+  box-shadow: var(--nc-shadow-lg);
+}
+
+.story-dialog__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.story-dialog__head h2 {
+  font-size: 15px;
+}
+
+.story-dialog__close,
+.story-drawer__close {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--nc-radius-sm);
+  color: var(--nc-text-tertiary);
+}
+
+.story-dialog__close:hover,
+.story-drawer__close:hover {
+  background: var(--nc-fill-subtle-strong);
+  color: var(--nc-text);
+}
+
+.story-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.story-dialog__actions button,
+.story-field__row button,
+.story-settings__editor button,
+.story-timeline__item button {
+  padding: 6px 12px;
+  border: 1px solid var(--nc-border);
+  border-radius: var(--nc-radius-sm);
+  background: var(--nc-surface);
+  color: var(--nc-text-secondary);
+  font-size: 12px;
+}
+
+.story-dialog__actions button:hover,
+.story-field__row button:hover,
+.story-settings__editor button:hover,
+.story-timeline__item button:hover {
+  border-color: var(--nc-border-strong);
+  color: var(--nc-text);
+}
+
+.story-dialog__actions .is-primary,
+.story-settings__editor .is-primary {
+  border-color: var(--nc-accent);
+  background: var(--nc-accent);
+  color: var(--nc-on-accent);
+}
+
+.story-settings__editor .is-danger {
+  border-color: var(--nc-danger-border);
+  background: var(--nc-danger-soft);
+  color: var(--nc-danger);
+}
+
+.story-dialog__error,
+.story-drawer__error,
+.story-settings__status {
+  font-size: 12px;
+  color: var(--nc-danger);
+}
+
+.story-settings__status {
+  margin: 6px 0 0;
+  color: var(--nc-accent-strong);
+}
+
+/* ---------- 表单字段（对话框与设置面板共用） ---------- */
+
+.story-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--nc-text-secondary);
+}
+
+.story-field input:not([type='radio']),
+.story-field select,
+.story-field textarea {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--nc-border);
+  border-radius: var(--nc-radius-sm);
+  background: var(--nc-surface-subtle);
+  color: var(--nc-text);
+  font: inherit;
+  font-size: 12.5px;
+  resize: vertical;
+}
+
+.story-field input:focus-visible,
+.story-field select:focus-visible,
+.story-field textarea:focus-visible,
+.story-search input:focus-visible {
+  outline: none;
+  border-color: var(--nc-accent);
+  box-shadow: 0 0 0 2px var(--nc-accent-ring);
+}
+
+.story-field__row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.story-field__row button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.story-field--radios {
+  border: 1px solid var(--nc-border);
+  border-radius: var(--nc-radius-sm);
+  padding: 7px 10px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.story-field--radios legend {
+  padding: 0 4px;
+  font-size: 11px;
+  color: var(--nc-text-tertiary);
+}
+
+.story-field--radios label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+/* ---------- 分支抽屉 ---------- */
+
+.chat-header__badge {
+  display: inline-block;
+  margin-right: 7px;
+  padding: 1px 7px;
+  border-radius: var(--nc-radius-pill);
+  background: var(--nc-accent-soft);
+  color: var(--nc-accent-strong);
+  font-size: 10.5px;
+  font-weight: 500;
+  vertical-align: 2px;
+}
+
+/* 消息区 + 抽屉并排。抽屉开合只改变右列，不影响头部与输入条的高度。 */
+.chat-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+}
+
+.chat-body > .message-list,
+.chat-body > .empty-state {
+  flex: 1;
+  min-width: 0;
+}
+
+.story-drawer__handle {
+  align-self: flex-start;
+  margin: 10px 12px 0 0;
+  padding: 5px 12px;
+  border-radius: var(--nc-radius-pill);
+  border: 1px solid var(--nc-border);
+  background: var(--nc-surface);
+  color: var(--nc-text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* 抽屉是消息区右侧的一列（并排，不覆盖输入条） */
+.story-drawer {
+  flex: 0 0 316px;
+  width: 316px;
+  max-width: 46vw;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px 14px;
+  overflow-y: auto;
+  border-left: 1px solid var(--nc-border);
+  background: var(--nc-story-surface);
+}
+
+.story-drawer__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.story-drawer__head strong {
+  font-size: 13px;
+  display: block;
+}
+
+.story-drawer__sub {
+  font-size: 11px;
+  color: var(--nc-text-tertiary);
+}
+
+.story-drawer__section {
+  margin: 2px 0 0;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  color: var(--nc-text-tertiary);
+}
+
+.story-drawer__empty {
+  font-size: 11.5px;
+  color: var(--nc-text-tertiary);
+}
+
+/* ---------- 检索 ---------- */
+
+.story-search form {
+  display: flex;
+  gap: 6px;
+}
+
+.story-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 9px;
+  border: 1px solid var(--nc-border);
+  border-radius: var(--nc-radius-sm);
+  background: var(--nc-surface);
+  color: var(--nc-text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.story-search button {
+  padding: 6px 11px;
+  border: 1px solid var(--nc-border);
+  border-radius: var(--nc-radius-sm);
+  background: var(--nc-surface);
+  color: var(--nc-text-secondary);
+  font-size: 12px;
+}
+
+.story-search__hint {
+  margin: 6px 0 0;
+  font-size: 10.5px;
+  color: var(--nc-text-tertiary);
+}
+
+.story-hit-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 0;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.story-hit {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: var(--nc-radius-sm);
+  background: var(--nc-fill-subtle);
+}
+
+.story-hit:hover {
+  background: var(--nc-story-hit);
+}
+
+.story-hit.is-current {
+  box-shadow: inset 2px 0 0 var(--nc-accent);
+}
+
+.story-hit__head {
+  font-size: 10.5px;
+  color: var(--nc-text-tertiary);
+}
+
+.story-hit__snippet {
+  font-size: 12px;
+  color: var(--nc-text-secondary);
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+/* ---------- 分支树 ---------- */
+
+.story-tree__list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 4px 0 0;
+}
+
+.story-tree__list .story-tree__list {
+  position: relative;
+  margin-left: 6px;
+  padding-left: 4px;
+  border-left: 1px solid var(--nc-story-guide);
+}
+
+.story-tree__node {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: var(--nc-radius-sm);
+}
+
+.story-tree__node:hover {
+  background: var(--nc-fill-hover);
+}
+
+.story-tree__node.is-active {
+  background: var(--nc-accent-soft);
+}
+
+.story-tree__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 4px;
+  text-align: left;
+}
+
+.story-tree__title {
+  font-size: 12.5px;
+  color: var(--nc-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.story-tree__node.is-active .story-tree__title {
+  color: var(--nc-accent-strong);
+  font-weight: 600;
+}
+
+.story-tree__meta {
+  font-size: 10.5px;
+  color: var(--nc-text-tertiary);
+}
+
+.story-tree__delete {
+  width: 22px;
+  height: 22px;
+  margin-right: 4px;
+  border-radius: var(--nc-radius-sm);
+  color: var(--nc-text-tertiary);
+  opacity: 0;
+}
+
+.story-tree__node:hover .story-tree__delete {
+  opacity: 1;
+}
+
+.story-tree__delete:hover {
+  background: var(--nc-danger-soft);
+  color: var(--nc-danger);
+}
+
+/* ---------- 消息时间轴 ---------- */
+
+.story-timeline__list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 4px 0 0;
+}
+
+.story-timeline__item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+  border-radius: var(--nc-radius-sm);
+}
+
+.story-timeline__item:hover {
+  background: var(--nc-fill-hover);
+}
+
+.story-timeline__text {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--nc-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.story-timeline__item button {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
+/* 检索命中高亮（2 秒后 ChatPage 清除 focus） */
+.message.is-focus .bubble,
+.message.is-focus .avatar,
+.message.is-focus .narration-line {
+  box-shadow: 0 0 0 2px var(--nc-accent-ring);
+}
+
+/* 空故事会话的占位（不许走 EmptyState 的模式滑块） */
+.empty-state--story {
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+}
+
+/* ---------- 设置 · 故事面板 ---------- */
+
+.story-settings {
+  display: grid;
+  grid-template-columns: 206px minmax(0, 1fr);
+  gap: 16px;
+  margin-top: 10px;
+  align-items: start;
+}
+
+.story-settings__label {
+  font-size: 11px;
+  color: var(--nc-text-tertiary);
+}
+
+.story-settings__list ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 0;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.story-settings__item {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 7px 9px;
+  border-radius: var(--nc-radius-sm);
+  text-align: left;
+}
+
+.story-settings__item:hover {
+  background: var(--nc-fill-hover);
+}
+
+.story-settings__item-title {
+  font-size: 12.5px;
+}
+
+.story-settings__item.is-active .story-settings__item-title {
+  color: var(--nc-accent-strong);
+  font-weight: 600;
+}
+
+.story-settings__item-meta {
+  font-size: 10.5px;
+  color: var(--nc-text-tertiary);
+}
+
+.story-settings__editor {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-width: 0;
+}
+
+.story-settings__editor > button {
+  align-self: flex-start;
+}
+
+.story-settings__danger {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--nc-border);
+}
+
+.story-settings__danger-hint {
+  font-size: 11px;
+  color: var(--nc-text-tertiary);
+}
+
+/* ---------- 故事长期记忆面板（P8 / D-C） ---------- */
+
+.story-memory {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: var(--nc-radius-sm);
+  background: var(--nc-fill-subtle);
+}
+
+.story-memory__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  color: var(--nc-text-tertiary);
+}
+
+.story-memory ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.story-memory__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 5px 7px;
+  border-radius: var(--nc-radius-sm);
+  background: var(--nc-fill-hover);
+}
+
+.story-memory__text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--nc-text-secondary);
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.story-memory__meta {
+  flex: none;
+  font-size: 10px;
+  color: var(--nc-text-tertiary);
+  white-space: nowrap;
+}
+
+/* ---------- 世界书编写器（P9） ---------- */
+
+/* 世界书条目搜索：标题与触发词共用一个框，结果随输入即时过滤。 */
+.wb-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 0 8px;
+  border: 1px solid var(--nc-border);
+  border-radius: var(--nc-radius-sm);
+  background: var(--nc-surface);
+}
+
+.wb-search:focus-within {
+  border-color: var(--nc-accent);
+  box-shadow: 0 0 0 2px var(--nc-accent-ring);
+}
+
+.wb-search__icon {
+  color: var(--nc-text-tertiary);
+  font-size: 15px;
+  line-height: 1;
+}
+
+.wb-search input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--nc-text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.wb-search input::placeholder {
+  color: var(--nc-text-tertiary);
+}
+
+.wb-search button {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--nc-radius-sm);
+  color: var(--nc-text-tertiary);
+  font-size: 15px;
+  line-height: 1;
+}
+
+.wb-search button:hover {
+  background: var(--nc-fill-hover);
+  color: var(--nc-text);
+}
+
+.wb-entry-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* 入口压成一行：本页要求「整页一屏内看完」（PromptsSection.tsx:10-12） */
+.setting-group--wb {
+  padding: 12px 14px;
+}
+
+/*
+ * 🔴 只在「系统提示词」这一页收紧纵向节奏：P9 加了「世界书」入口之后，
+ *    默认 26px 的组间距会把最后一块顶出 1280×860 的内容区（实测底边 870 > 860），
+ *    截图里就只剩半行 —— 用 :has 限定作用域，其它设置页的坐标一个都不动。
+ */
+.settings-page:has(.prompt-head) {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-top: 24px;
+}
+
+.settings-page:has(.prompt-head) .setting-group {
+  padding: 14px 18px 16px;
+}
+
+.settings-page:has(.prompt-head) .setting-group__desc {
+  margin-bottom: 12px;
+}
+
+.wb-entry-row__label {
+  flex: 0 0 auto;
+  font-size: 13px;
+  color: var(--nc-text);
+  white-space: nowrap;
+}
+
+.wb-entry-row__path {
+  flex: 1 1 260px;
+  min-width: 0;
+  padding: 6px 9px;
+  border: 1px solid var(--nc-border-hairline);
+  border-radius: var(--nc-radius-sm);
+  background: var(--nc-surface-subtle);
+  font-size: 11.5px;
+  color: var(--nc-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wb-entry-row__actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.wb-dialog {
+  width: min(940px, 94vw);
+  max-height: 88vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 18px 14px;
+  border: 1px solid var(--nc-border);
+  border-radius: var(--nc-radius-lg);
+  background: var(--nc-surface);
+  box-shadow: var(--nc-shadow-lg);
+}
+
+.wb-dialog__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.wb-dialog__head h2 {
+  font-size: 15px;
+}
+
+.wb-dialog__sub {
+  margin: 3px 0 0;
+  font-size: 11.5px;
+  color: var(--nc-text-tertiary);
+}
+
+.wb-dialog__sub code {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--nc-fill-subtle-strong);
+  font-size: 11px;
+}
+
+.wb-toolbar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.wb-toolbar select {
+  flex: 1 1 240px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--nc-border);
+  border-radius: var(--nc-radius-sm);
+  background: var(--nc-surface-subtle);
+  color: var(--nc-text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.wb-toolbar button,
+.wb-entry-card__actions button,
+.wb-form__actions button,
+.wb-more {
+  padding: 6px 11px;
+  border: 1px solid var(--nc-border);
+  border-radius: var(--nc-radius-sm);
+  background: var(--nc-surface);
+  color: var(--nc-text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.wb-toolbar button:hover:not(:disabled),
+.wb-entry-card__actions button:hover:not(:disabled),
+.wb-form__actions button:hover:not(:disabled),
+.wb-more:hover {
+  border-color: var(--nc-border-strong);
+  color: var(--nc-text);
+}
+
+.wb-toolbar button.is-primary,
+.wb-form__actions button.is-primary {
+  border-color: var(--nc-accent);
+  background: var(--nc-accent);
+  color: var(--nc-on-accent);
+}
+
+.wb-entry-card__actions button.is-danger {
+  border-color: var(--nc-danger-border);
+  background: var(--nc-danger-soft);
+  color: var(--nc-danger);
+}
+
+.wb-path {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-family: var(--nc-font-mono);
+  font-size: 11px;
+  color: var(--nc-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wb-path__kind {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: var(--nc-radius-pill);
+  background: var(--nc-accent-soft);
+  color: var(--nc-accent-strong);
+  font-family: var(--nc-font);
+  font-size: 10.5px;
+}
+
+.wb-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: 14px;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.wb-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow: hidden;
+  padding-right: 4px;
+}
+
+/* 🔴 只有条目区自己滚：折叠按钮必须**钉在底部**可见，
+   否则「默认 8 条 + 展开」的入口会被 8 张卡片顶出屏幕（F-06 就点不到了）。 */
+.wb-list__items {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.wb-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.wb-list__head,
+.wb-form__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--nc-text-secondary);
+}
+
+.wb-list__head span {
+  font-size: 11px;
+  color: var(--nc-text-tertiary);
+}
+
+.wb-list__items > .wb-entry-card {
+  flex: 0 0 auto;
+}
+
+.wb-list__items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wb-entry-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--nc-border-hairline);
+  border-radius: var(--nc-radius-sm);
+  background: var(--nc-surface-subtle);
+}
+
+.wb-entry-card__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.wb-entry-card__head strong {
+  font-size: 12.5px;
+  color: var(--nc-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wb-entry-card__file {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  color: var(--nc-text-tertiary);
+}
+
+.wb-badge {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: var(--nc-radius-pill);
+  background: var(--nc-warning-soft);
+  color: var(--nc-warning-strong);
+  font-size: 10px;
+}
+
+/* 缺 - id: 行：合规但要提醒（保存时会自动补 id） */
+.wb-badge--warn {
+  background: var(--nc-danger-softest);
+  color: var(--nc-danger);
+}
+
+.wb-entry-card__keywords {
+  margin: 0;
+  font-size: 11px;
+  color: var(--nc-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wb-entry-card__actions {
+  display: flex;
+  gap: 6px;
+}
+
+.wb-entry-card__actions button {
+  padding: 3px 9px;
+  font-size: 11px;
+}
+
+.wb-empty {
+  margin: 0;
+  padding: 14px 10px;
+  border: 1px dashed var(--nc-border);
+  border-radius: var(--nc-radius-sm);
+  font-size: 11.5px;
+  color: var(--nc-text-tertiary);
+  text-align: center;
+}
+
+.wb-more {
+  align-self: flex-start;
+  font-size: 11.5px;
+}
+
+.wb-form__row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: end;
+}
+
+/* 常驻：与两个数字框同一行，标签在上、勾选框在下（不再挤成一小截） */
+.wb-flag input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  margin: 0 0 7px;
+  accent-color: var(--nc-accent);
+}
+
+.wb-num {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.wb-dup {
+  margin: 0;
+  padding: 6px 9px;
+  border: 1px solid var(--nc-warning-border);
+  border-radius: var(--nc-radius-sm);
+  background: var(--nc-warning-surface);
+  color: var(--nc-warning-strong);
+  font-size: 11.5px;
+}
+
+.wb-status {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--nc-accent-strong);
+}
+
+.wb-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
 }

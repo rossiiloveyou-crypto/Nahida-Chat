@@ -20,7 +20,7 @@
     "typecheck:web": "tsc -p tsconfig.web.json --noEmit",
     "test:settings": "node scripts/test/settings-store.test.mjs",
     "test:clock": "node scripts/test/clock-tools.test.mjs",
-    "test": "pnpm run test:settings && pnpm run test:clock && pnpm run test:prompt && pnpm run test:memory && pnpm run test:permission && pnpm run test:discovery && pnpm run test:sandbox && pnpm run test:chat-guard && pnpm run test:qq-host && pnpm run test:qq-segment && pnpm run test:qq-queue && pnpm run test:qq-store && pnpm run test:qq-inbound && pnpm run test:qq-bridge && pnpm run test:qq-session-policy && pnpm run test:zones-store && pnpm run test:zones-scope && pnpm run test:channel-access && pnpm run test:channels-store && pnpm run test:channels-session && pnpm run test:channels-tool-gate && pnpm run test:channels-ui && pnpm run test:observe-store && pnpm run test:memory-scope-migration && pnpm run test:memory-scope-isolation && pnpm run test:memory-scope-counts && pnpm run test:chat-sink && pnpm run test:probe-mode-supply && pnpm run test:chat-tools-supply && pnpm run test:chat-tools-settings && pnpm run test:channel-tool-path && pnpm run test:tool-supply-gate",
+    "test": "pnpm run test:settings && pnpm run test:clock && pnpm run test:prompt && pnpm run test:memory && pnpm run test:permission && pnpm run test:discovery && pnpm run test:sandbox && pnpm run test:chat-guard && pnpm run test:qq-host && pnpm run test:qq-segment && pnpm run test:qq-queue && pnpm run test:qq-store && pnpm run test:qq-inbound && pnpm run test:qq-bridge && pnpm run test:qq-session-policy && pnpm run test:zones-store && pnpm run test:zones-scope && pnpm run test:channel-access && pnpm run test:channels-store && pnpm run test:channels-session && pnpm run test:channels-tool-gate && pnpm run test:channels-ui && pnpm run test:observe-store && pnpm run test:memory-scope-migration && pnpm run test:memory-scope-isolation && pnpm run test:memory-scope-counts && pnpm run test:chat-sink && pnpm run test:probe-mode-supply && pnpm run test:chat-tools-supply && pnpm run test:chat-tools-settings && pnpm run test:channel-tool-path && pnpm run test:tool-supply-gate && pnpm run test:story-store && pnpm run test:story-memory-isolation && pnpm run test:prompt-story && pnpm run test:story-branch && pnpm run test:story-ui && pnpm run test:story-profile-memory && pnpm run test:worldbook-editor && pnpm run test:story-narration",
     "test:memory": "node scripts/test/memory-rag.test.mjs",
     "test:permission": "node scripts/test/permission-modes.test.mjs",
     "test:discovery": "node scripts/test/model-discovery.test.mjs",
@@ -62,7 +62,15 @@
     "ui:map": "node scripts/ui/map.mjs",
     "test:prompt": "node scripts/test/prompt-library.test.mjs",
     "test:channel-tool-path": "node scripts/test/channel-tool-path.test.mjs",
-    "test:tool-supply-gate": "node scripts/test/tool-supply-gate.test.mjs"
+    "test:tool-supply-gate": "node scripts/test/tool-supply-gate.test.mjs",
+    "test:story-store": "node scripts/test/story-store.test.mjs",
+    "test:story-memory-isolation": "node scripts/test/story-memory-isolation.test.mjs",
+    "test:prompt-story": "node scripts/test/prompt-story-assembly.test.mjs",
+    "test:story-branch": "node scripts/test/story-branch.test.mjs",
+    "test:story-ui": "node scripts/test/story-ui.test.mjs",
+    "test:story-profile-memory": "node scripts/test/story-profile-memory.test.mjs",
+    "test:worldbook-editor": "node scripts/test/worldbook-editor.test.mjs",
+    "test:story-narration": "node scripts/test/story-narration.test.mjs"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

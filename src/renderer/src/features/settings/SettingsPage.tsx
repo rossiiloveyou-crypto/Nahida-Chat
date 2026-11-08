@@ -5,6 +5,7 @@ import { SettingsSidebar } from './SettingsSidebar'
 import { MemorySection } from './sections/MemorySection'
 import { ModelSection } from './sections/ModelSection'
 import { PromptsSection } from './sections/PromptsSection'
+import { StoriesSection } from './sections/StoriesSection'
 import { ToolsSection } from './sections/ToolsSection'
 import { QqSection } from './sections/QqSection'
 import { ZonesSection } from './sections/ZonesSection'
@@ -57,6 +58,7 @@ export function SettingsPage() {
           >
             {active === 'models' && <ModelSection />}
             {active === 'prompts' && <PromptsSection />}
+            {active === 'stories' && <StoriesSection />}
             {active === 'memory' && <MemorySection />}
             {active === 'zones' && <ZonesSection />}
             {active === 'channels' && <ChannelsSection />}

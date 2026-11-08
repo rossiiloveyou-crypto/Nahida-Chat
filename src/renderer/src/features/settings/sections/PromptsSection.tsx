@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ConversationMode, PromptLibrary, Settings } from '@shared/types'
+import { WorldbookEditorDialog } from '../../worldbook/WorldbookEditorDialog'
 import { useSettings } from '../useSettings'
 
 /**
@@ -37,6 +38,10 @@ export function PromptsSection() {
   const [libraryError, setLibraryError] = useState<string | null>(null)
   const [status, setStatus] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  // P9：世界书编写器弹层的开关与初始定位（目录 / 任意 .md 文件）
+  const [wbOpen, setWbOpen] = useState(false)
+  const [wbTarget, setWbTarget] = useState('')
+  const [wbStatus, setWbStatus] = useState<string | null>(null)
 
   const loadLibrary = useCallback(async (): Promise<void> => {
     try {
@@ -72,6 +77,65 @@ export function PromptsSection() {
     if (ok) setStatus('已切换默认角色，新建对话会使用它')
   }
 
+  /**
+   * 默认世界书目录 = 默认角色的 characters/<id>/worldbook。
+   * 🔴 只拼路径不判存在（渲染层没有 fs）；目录不存在时弹层自己会回落/报错。
+   */
+  const defaultWorldbookDir = (): string => {
+    const root = library?.root ?? ''
+    const id = settings?.defaultCharacterId || library?.characters[0]?.id || ''
+    if (!root || !id) return ''
+    return root + '\\characters\\' + id + '\\worldbook'
+  }
+
+  /** 打开**已存在**的世界书：先列一次，目录不在就直接报错（不静默打开一个空弹层）。 */
+  const openWorldbook = async (target?: string): Promise<void> => {
+    setWbStatus(null)
+    const chosen = target ?? defaultWorldbookDir()
+    setWbTarget(chosen)
+    setWbOpen(true)
+  }
+
+  /** 选目录 → 若里面没有 .md 就当新建；否则直接打开 */
+  const chooseWorldbookDir = async (): Promise<void> => {
+    setBusy(true)
+    setWbStatus(null)
+    try {
+      const dir = await window.nahida.worldbook.pickDir()
+      if (!dir) return
+      const listing = await window.nahida.worldbook.list(dir)
+      const empty = listing.files.length === 0 || listing.files.every((file) => file.entries.length === 0 && !file.file)
+      if (listing.kind === 'dir' && listing.files.length === 0) {
+        await window.nahida.worldbook.create(dir)
+        setWbStatus('已在该目录新建世界书（README.md + world.md）')
+      } else if (empty) {
+        setWbStatus('该目录还没有条目文件，可在编辑器里新增')
+      }
+      await openWorldbook(dir)
+    } catch (cause) {
+      setWbStatus('打开失败：' + (cause instanceof Error ? cause.message : String(cause)))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** 新建世界书：选一个空目录 → createWorldbook → 打开编辑器 */
+  const createWorldbookDir = async (): Promise<void> => {
+    setBusy(true)
+    setWbStatus(null)
+    try {
+      const dir = await window.nahida.worldbook.pickDir()
+      if (!dir) return
+      const listing = await window.nahida.worldbook.create(dir)
+      setWbStatus('已新建世界书：' + listing.target)
+      await openWorldbook(dir)
+    } catch (cause) {
+      setWbStatus('新建失败：' + (cause instanceof Error ? cause.message : String(cause)))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   /** 全局文件是否缺失：角色文件的存在性在下面的角色卡片里逐条标。 */
   const sharedMissing = (sharedId?: string): boolean => {
     if (!sharedId || !library) return false
@@ -84,10 +148,7 @@ export function PromptsSection() {
       <div className="settings-page__head prompt-head" data-ui-target="页头">
         <div className="prompt-head__text">
           <h1>提示词库</h1>
-          <p>
-            提示词是文件资产，直接改文件。每次发消息现场按顺序读，缺哪段跳过哪段。
-            Chat / Agent 在新建对话时用首页滑块选，整个会话生命周期不变。
-          </p>
+          <p>提示词是文件资产，直接改文件；每次发消息现场按顺序读，缺哪段跳过哪段。</p>
         </div>
         <div className="prompt-actions" data-ui-target="打开按钮组">
           <button className="btn-primary" disabled={busy} onClick={() => void open()}>
@@ -172,6 +233,41 @@ export function PromptsSection() {
         </div>
         {error && <p className="hint-text hint-text--error">{error}</p>}
       </section>
+
+      {/*
+        P9：世界书编写器入口。用户 2026-11-07 指定放在「设置 → 系统提示词」卡内，
+        **不新增设置分区**（不动 nav / icons / SettingsPage）。
+        🔴 列表与表单不铺在这里（本页要求一屏看完），一律进弹层 WorldbookEditorDialog。
+      */}
+      <section className="setting-group setting-group--wb" data-ui-target="世界书入口">
+        <div className="wb-entry-row">
+          <strong className="wb-entry-row__label" title="条目 = 「## 标题 + 六个 - key: value」，用编辑器就不用手写 id 了">
+            世界书
+          </strong>
+          <code className="wb-entry-row__path" title={defaultWorldbookDir()}>
+            {defaultWorldbookDir() || '（还没有角色目录）'}
+          </code>
+          <div className="wb-entry-row__actions">
+            <button
+              className="btn-primary"
+              data-ui-target="世界书编辑器入口"
+              disabled={busy}
+              onClick={() => void openWorldbook()}
+            >
+              打开世界书编辑器
+            </button>
+            <button className="btn-ghost" data-ui-target="世界书选择目录" disabled={busy} onClick={() => void chooseWorldbookDir()}>
+              选择目录
+            </button>
+            <button className="btn-ghost" data-ui-target="世界书新建" disabled={busy} onClick={() => void createWorldbookDir()}>
+              新建世界书
+            </button>
+          </div>
+        </div>
+        {wbStatus && <p className="hint-text">{wbStatus}</p>}
+      </section>
+
+      {wbOpen && <WorldbookEditorDialog initialTarget={wbTarget} onClose={() => setWbOpen(false)} />}
     </>
   )
 }

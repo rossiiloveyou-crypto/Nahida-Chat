@@ -33,6 +33,7 @@ const SCHEMA = [
     seg_text TEXT NOT NULL,
     source_session_id TEXT,
     source_message_id TEXT,
+    source_message_index INTEGER,
     weight REAL NOT NULL DEFAULT 1.0,
     embedding BLOB,
     created_at INTEGER NOT NULL,
@@ -84,6 +85,7 @@ interface MemoryRow {
   content: string
   source_session_id: string | null
   source_message_id: string | null
+  source_message_index: number | null
   weight: number
   embedding: Uint8Array | null
   created_at: number
@@ -125,6 +127,11 @@ export class MemoryStore {
       if (!hasColumn(db, 'memories', 'scope_id')) {
         db.exec("ALTER TABLE memories ADD COLUMN scope_id TEXT NOT NULL DEFAULT 'zone:root'")
         console.info('[memory] 迁移：memories 增加 scope_id，旧数据回落 zone:root')
+      }
+      // P6 / T12：分支记忆可见性的产生位置。旧数据为 NULL（对全部分支可见，fail-open）。
+      if (!hasColumn(db, 'memories', 'source_message_index')) {
+        db.exec('ALTER TABLE memories ADD COLUMN source_message_index INTEGER')
+        console.info('[memory] 迁移：memories 增加 source_message_index，旧数据为 NULL（对全部分支可见）')
       }
       for (const statement of POST_MIGRATION) db.exec(statement)
       this.db = db
@@ -274,6 +281,8 @@ export class MemoryStore {
     weight?: number
     sourceSessionId?: string | null
     sourceMessageId?: string | null
+    /** 产生这条记忆时，它在自己那条分支里的消息下标（P6 / T12）；缺省 null */
+    sourceMessageIndex?: number | null
     embedding?: Float32Array | null
     /** 所属记忆域；缺省 zone:root（兼容 P4 及以前的调用方） */
     scopeId?: MemoryScopeId
@@ -293,24 +302,40 @@ export class MemoryStore {
         // 没给 scopeId 就保留原域（手工改一条群记忆不该把它搬到 root）。
         if (embedding) {
           db.prepare(
-            'UPDATE memories SET content = ?, seg_text = ?, weight = COALESCE(?, weight), embedding = ?, scope_id = COALESCE(?, scope_id) WHERE id = ?'
-          ).run(content, toIndexText(content), input.weight ?? null, toBlob(embedding), input.scopeId ?? null, id)
+            'UPDATE memories SET content = ?, seg_text = ?, weight = COALESCE(?, weight), embedding = ?, scope_id = COALESCE(?, scope_id), source_message_index = COALESCE(?, source_message_index) WHERE id = ?'
+          ).run(
+            content,
+            toIndexText(content),
+            input.weight ?? null,
+            toBlob(embedding),
+            input.scopeId ?? null,
+            input.sourceMessageIndex ?? null,
+            id
+          )
         } else {
           db.prepare(
-            'UPDATE memories SET content = ?, seg_text = ?, weight = COALESCE(?, weight), scope_id = COALESCE(?, scope_id) WHERE id = ?'
-          ).run(content, toIndexText(content), input.weight ?? null, input.scopeId ?? null, id)
+            'UPDATE memories SET content = ?, seg_text = ?, weight = COALESCE(?, weight), scope_id = COALESCE(?, scope_id), source_message_index = COALESCE(?, source_message_index) WHERE id = ?'
+          ).run(
+            content,
+            toIndexText(content),
+            input.weight ?? null,
+            input.scopeId ?? null,
+            input.sourceMessageIndex ?? null,
+            id
+          )
         }
       } else {
         db.prepare(
           `INSERT INTO memories
-            (id, content, seg_text, source_session_id, source_message_id, weight, embedding, created_at, hit_count, scope_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`
+            (id, content, seg_text, source_session_id, source_message_id, source_message_index, weight, embedding, created_at, hit_count, scope_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`
         ).run(
           id,
           content,
           toIndexText(content),
           input.sourceSessionId ?? null,
           input.sourceMessageId ?? null,
+          input.sourceMessageIndex ?? null,
           input.weight ?? 1,
           embedding ? toBlob(embedding) : null,
           Date.now(),
@@ -437,6 +462,7 @@ function toEntry(row: MemoryRow): MemoryEntry {
     content: row.content,
     sourceSessionId: row.source_session_id,
     sourceMessageId: row.source_message_id,
+    sourceMessageIndex: row.source_message_index ?? null,
     weight: row.weight,
     createdAt: row.created_at,
     lastHitAt: row.last_hit_at,

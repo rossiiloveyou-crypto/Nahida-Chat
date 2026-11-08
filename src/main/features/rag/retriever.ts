@@ -43,6 +43,14 @@ export interface RecallOptions {
    *  - 空数组 = 不检索（fail-closed），不是"不过滤"
    */
   scopes?: MemoryScopeId[]
+  /**
+   * 分支可见性闸（P6 / T12）。省略 = 不做分支过滤（非故事区，行为与 P5 完全一致）。
+   * 返回 true 表示这条记忆**对当前分支可见**。
+   */
+  visible?: (entry: {
+    sourceSessionId: string | null
+    sourceMessageIndex?: number | null
+  }) => boolean
 }
 
 export async function recall(
@@ -56,7 +64,11 @@ export async function recall(
   // 更糟的是"退回全库"会把配置错误变成隐私泄漏。
   if (options.scopes !== undefined && options.scopes.length === 0) return []
 
-  const candidateLimit = Math.max(options.topK * CANDIDATE_MULTIPLIER, 10)
+  // 🔴 可见性过滤发生在 LIMIT **之后**（keywordSearchIn 带 candidateLimit），
+  //    可能把关键词命中滤到不足 topK。当 visible 存在时把候选池乘 3 —— 这是「过滤前置浪费」的补偿，
+  //    不是调参（§4.9.3）。
+  const baseCandidateLimit = Math.max(options.topK * CANDIDATE_MULTIPLIER, 10)
+  const candidateLimit = options.visible ? baseCandidateLimit * 3 : baseCandidateLimit
 
   // ── 路径 1：向量 ──
   const vectorScores = new Map<string, number>()
@@ -123,6 +135,16 @@ export async function recall(
 
     const entry = all.get(id)
     if (!entry) continue
+    // P6 / T12：分支可见性过滤（在排序之前；不传 visible 时零改变）
+    if (
+      options.visible &&
+      !options.visible({
+        sourceSessionId: entry.sourceSessionId,
+        sourceMessageIndex: entry.sourceMessageIndex
+      })
+    ) {
+      continue
+    }
     merged.push({
       id,
       content: entry.content,

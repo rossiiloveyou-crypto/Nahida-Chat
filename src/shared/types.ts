@@ -4,7 +4,15 @@
  */
 import type { ChatToolsSettings, ToolApprovalTicket, ToolCallRecord } from './tools'
 
-export type MessageRole = 'system' | 'user' | 'assistant'
+/**
+ * `narration` = 故事区旁白：进入对话视口，但不冒充用户发言。
+ *
+ * 🔴 它不是 `user` 的别名：渲染层要居中显示、不显示用户头像；主进程拼模型上下文时
+ *    必须转成 system（见 chatService.buildPayload）。混成 user 会让模型把旁白当成
+ *    用户说的话，下次回复时称呼/视角都会错。
+ */
+export type MessageRole = 'system' | 'user' | 'assistant' | 'narration'
+
 
 export type MessageStatus = 'streaming' | 'done' | 'error'
 
@@ -16,10 +24,18 @@ export interface Message {
   status: MessageStatus
   /** 该条助手消息发起过的工具调用（含状态与结果） */
   toolCalls?: ToolCallRecord[]
+  /**
+   * 从哪条消息抄来的（P6 派生分支时复制前缀消息用）。缺省 = 原创。
+   * 🔴 只做加法：老消息没有该字段就是「原创」，语义正确，不迁移。
+   */
+  copiedFromMessageId?: string
 }
 
-/** 会话模式：chat = 纯对话（不提供工具），agent = 可调用工具完成任务 */
-export type ConversationMode = 'chat' | 'agent'
+/**
+ * 会话模式：chat = 纯对话（工具需开 chat 增强）；agent = 可调用工具；
+ * story = 故事区（本期恒不给工具，M10）
+ */
+export type ConversationMode = 'chat' | 'agent' | 'story'
 
 export interface Session {
   id: string
@@ -37,6 +53,12 @@ export interface Session {
   modelProfileId?: string | null
   /** 本会话指定用哪个模型；null/缺省 = 用档案的 defaultModel */
   modelId?: string | null
+  /**
+   * 所属故事区（P4 / M08）。缺省 = 不属于任何故事区（普通会话 / 渠道会话）。
+   * 🔴 只做加法：老会话没有该字段就是「不属于任何故事区」，这是正确语义，不迁移（BL-10）。
+   * 🔴 分支元数据**不在这里** —— 它外置在 userData/stories/<storyId>/branches.json（P6）。
+   */
+  storyId?: string
 }
 
 export type ProviderId = 'mock' | 'openai-compatible' | 'anthropic' | 'gemini' | 'ollama'
@@ -284,6 +306,11 @@ export interface MemoryEntry {
    * 可选 + 读时回落 root —— 旧数据与旧构造点都不用改（A43：三端共用类型只做加法）。
    */
   scopeId?: string
+  /**
+   * 产生这条记忆时，它在自己那条分支里的**消息下标**（P6 / T12）。
+   * 缺省 / null = 未知来源（P6 之前的老记忆）→ 按「对全部分支可见」处理（fail-open）。
+   */
+  sourceMessageIndex?: number | null
 }
 
 /** 记忆库状态，设置页用来展示"模型装没装、库有多大" */
@@ -393,6 +420,8 @@ export interface CreateSessionInput {
   id?: string
   /** P6：指定标题。只给「渠道会话」用（标题来自白名单 label） */
   title?: string
+  /** 建到哪个故事区（P4）；缺省 = 普通会话 */
+  storyId?: string
 }
 
 export interface UpdateSessionInput {

@@ -10,7 +10,9 @@ interface EmptyStateProps {
 
 const MODE_COPY: Record<ConversationMode, { label: string; hint: string }> = {
   chat: { label: 'Chat', hint: '纯对话，不调用工具' },
-  agent: { label: 'Agent', hint: '可调用工具完成任务' }
+  agent: { label: 'Agent', hint: '可调用工具完成任务' },
+  // P4：故事模式的文案已就位，但**第 37 行的渲染清单故意不含它**（本期无入口）。
+  story: { label: '故事', hint: '独立叙事空间（本期无入口）' }
 }
 
 /**

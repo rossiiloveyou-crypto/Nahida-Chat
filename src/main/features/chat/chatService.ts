@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
 import { DEFAULT_SESSION_TITLE, MAX_TOOL_TURNS } from '@shared/constants'
@@ -31,12 +31,33 @@ import { resolveToolSupply } from '../tools/capability'
 import { clockNotice } from '../tools/clock'
 import { promptStore } from '../prompt/promptStore'
 import { memoryService } from '../rag'
+import { storyMemory } from '../story/memory'
+import { isStoryId, resolveWorldbookDir, storyDir, storyProfilePath } from '../story/paths'
+import { memoryRouteOf } from '../story/route'
+import { branchVisibility } from '../story/visibility'
+import { storyStore } from '../story/store'
+import { STORY_WORLDBOOK_MODE_DEFAULT } from '@shared/story'
+import type { StoryMeta, StoryWorldbookMode } from '@shared/story'
 import {
   defaultChannelWorkspaceDir,
   resolveProfile,
   resolveWorkspace,
   settingsStore
 } from '../settings/settingsStore'
+
+/**
+ * `promptStore.compose()` 的 story 入参形状（P5）。
+ * 🔴 与装配层同形但**不是同一个类型**：装配层不 import chatService（否则反向依赖）。
+ */
+interface StoryPrompt {
+  /** 已解析的剧本世界书绝对目录；null = 没配 */
+  worldbookDir: string | null
+  worldbookMode: StoryWorldbookMode
+  /** 已读出的故事画像正文；空串 = 没有 */
+  profile: string
+  /** P8：背景与剧本设定正文；空串 = 没填 */
+  background: string
+}
 
 /**
  * 对话内核（主进程侧）。
@@ -68,7 +89,9 @@ class ChatService {
    * 用户没有「新建 / 删除」动作，出现在侧栏只会制造困惑。主进程内仍然能拿到（listSessions）。
    */
   listDesktopSessions(): Session[] {
-    return this.listSessions().filter((item) => !isChannelSessionId(item.id))
+    // P4：故事会话同样不进「最近」列表 —— 它们由故事卡片进入（M12 / T10）。
+    // 🔴 过滤必须在**主进程**这一层做（B3：完整性单位在入口层），渲染层再过滤会让 P7 双份显示。
+    return this.listSessions().filter((item) => !isChannelSessionId(item.id) && !item.storyId)
   }
 
   createSession(input?: CreateSessionInput): Session {
@@ -76,6 +99,10 @@ class ChatService {
     const now = Date.now()
     const settings = settingsStore.get()
     const wantedId = input?.id?.trim() ?? ''
+    // P4：故事会话。storyId 形状非法一律抛（与路径穿越防线同一套形状）；合法则钉进会话。
+    const storyIdOf =
+      typeof input?.storyId === 'string' && input.storyId.trim() ? input.storyId.trim() : ''
+    if (storyIdOf && !isStoryId(storyIdOf)) throw new Error('非法的故事区 id：' + storyIdOf)
     // P6：id 只允许 ensureChannelSession 传。撞上已有会话就报错，绝不静默覆盖别人的消息。
     if (wantedId && this.sessions.some((item) => item.id === wantedId)) {
       throw new Error('会话已存在：' + wantedId)
@@ -86,7 +113,9 @@ class ChatService {
       createdAt: now,
       updatedAt: now,
       messages: [],
-      mode: normalizeMode(input?.mode),
+      // 🔴 有 storyId 却不传 mode 时**必须**是 'story'：否则故事会话会静默变成 chat ——
+      //    拿 chat 的提示词、进「最近」列表、还能被 chat 增强放行工具，而没有任何东西会报错。
+      mode: normalizeMode(input?.mode ?? (storyIdOf ? 'story' : undefined)),
       characterId: input?.characterId?.trim() || settings.defaultCharacterId,
       // 新建会话时把当前活动工作区钉下来：之后用户在侧栏切换活动工作区，
       // 这个会话的目录边界不会跟着漂移（那会造成"同一个会话文件突然跑到别处"）。
@@ -94,9 +123,106 @@ class ChatService {
       modelProfileId: input?.modelProfileId?.trim() || null,
       modelId: input?.modelId?.trim() || null
     }
+    if (storyIdOf) session.storyId = storyIdOf
     this.sessions.unshift(session)
     this.persist()
     return cloneSession(session)
+  }
+
+  /**
+   * 删故事区时清掉它的全部会话（分支）。返回删除条数（P4 §4.10）。
+   * 🔴 过滤用**全等**（item.storyId === storyId），不是前缀匹配 ——
+   *    前缀匹配会让 story_a 的删除顺手带走 story_ab（A-16 盯着它）。
+   */
+  deleteSessionsByStory(storyId: string): number {
+    this.ensureLoaded()
+    const doomed = this.sessions.filter((item) => item.storyId === storyId)
+    for (const session of doomed) this.stop(session.id)
+    this.sessions = this.sessions.filter((item) => item.storyId !== storyId)
+    if (doomed.length > 0) this.persist()
+    return doomed.length
+  }
+
+  /**
+   * 写入「AI 开场」——建故事区时由主进程调用（P4 / D12 / M14）。
+   * 🔴 只允许在会话**还没有任何消息**时调用：否则中途插一条 assistant，
+   *    会造成两条连续 assistant（模型下一轮会以为自己说了两遍）。
+   * 🔴 它不是「用户说了话的回复」，所以**不触发**记忆抽取、不写 user 消息。
+   */
+  appendOpeningMessage(sessionId: string, text: string): Message {
+    this.ensureLoaded()
+    const content = typeof text === 'string' ? text.trim() : ''
+    if (!content) throw new Error('开场文案不能为空')
+    const session = this.sessions.find((item) => item.id === sessionId)
+    if (!session) throw new Error('会话不存在')
+    if (session.messages.length > 0) throw new Error('会话已有消息，不能再写开场')
+    const message: Message = {
+      id: randomUUID(),
+      role: 'assistant',
+      content,
+      createdAt: Date.now(),
+      status: 'done',
+      toolCalls: []
+    }
+    session.messages.push(message)
+    session.updatedAt = Date.now()
+    this.persist()
+    return cloneMessage(message)
+  }
+
+  /**
+   * 故事区旁白：追加一条 narration 消息并落盘，**不调用模型**。
+   *
+   * 🔴 为什么是独立入口而不是 send({ role:'narration' })：
+   *    send() 一定会建 assistant 占位并启动流式轮次；旁白的语义恰恰是“不触发回答”。
+   *    混进 send 后，想跳过生成就得加分支，最终两条路径的落盘顺序会分叉。
+   * 🔴 只能用于 story：普通 chat 没有“下次对话再下发”的故事上下文，也没有居中旁白的展示位。
+   * 🔴 生成中拒绝：否则旁白会落在本轮 user/assistant 之间，下一轮上下文顺序不再是一条时间线。
+   */
+  narrate(sessionId: string, content: string): Message {
+    this.ensureLoaded()
+    const text = typeof content === 'string' ? content.trim() : ''
+    if (!text) throw new Error('旁白内容不能为空')
+    const session = this.sessions.find((item) => item.id === sessionId)
+    if (!session) throw new Error('会话不存在')
+    if (session.mode !== 'story' || !session.storyId) throw new Error('旁白只能用于故事区对话')
+    if (this.inflight.has(session.id)) throw new Error('当前会话仍在生成中，稍后再写旁白')
+
+    const message: Message = {
+      id: randomUUID(),
+      role: 'narration',
+      content: text,
+      createdAt: Date.now(),
+      status: 'done'
+    }
+    session.messages.push(message)
+    session.updatedAt = Date.now()
+    this.persist()
+    return cloneMessage(message)
+  }
+
+  /**
+   * 批量追加**已构造好**的消息（P6 派生分支时把源分支的前缀抄进新会话）。
+   *
+   * 🔴 与 appendOpeningMessage 的区别：那个只允许空会话 + 固定 assistant；这里允许任意条、
+   *    任意 role，因为它是「复制一段既成事实」，不是「新写一句开场」。
+   * 🔴 id 由调用方（derive）重新生成并写入，本方法只负责落进 session 并持久化。
+   */
+  appendMessages(sessionId: string, messages: Message[]): Message[] {
+    this.ensureLoaded()
+    const session = this.sessions.find((item) => item.id === sessionId)
+    if (!session) throw new Error('会话不存在')
+    if (!Array.isArray(messages) || messages.length === 0) return []
+    for (const message of messages) session.messages.push(message)
+    session.updatedAt = Date.now()
+    this.persist()
+    return messages.map(cloneMessage)
+  }
+
+  /** 某个故事区下的全部会话（P6 的分支树会用到；本 Phase 只给 P6 / P7 留口） */
+  listSessionsByStory(storyId: string): Session[] {
+    this.ensureLoaded()
+    return this.sessions.filter((item) => item.storyId === storyId).map(cloneSession)
   }
 
   /**
@@ -314,11 +440,23 @@ class ChatService {
     // 任何失败都必须降级成空串——记忆坏了不能影响聊天。
     // P5 G5：按域召回。空数组 = 不召回（fail-closed），此时连 embedding 都不算。
     // 任何失败都必须降级成空串——记忆坏了不能影响聊天。
-    const recallScopes = sessionPolicy().recallScopes(session.id)
+    // P4：记忆路由在**这里**算一次（唯一判定点 memoryRouteOf），召回与抽取共用同一个 route。
+    // 🔴 故事区走**它自己的库**，所以不能只传域 —— 库换错时域对不对已经不重要了。
+    const route = memoryRouteOf(session)
+    const recallScopes: string[] = route.storyId ? [route.scope] : sessionPolicy().recallScopes(session.id)
+    // P6 / T12：故事区按分支可见性过滤召回（分叉点之后的记忆不泄漏到之前的分支）。
+    // 非故事区不传 visible —— P5 行为逐字不变（A-20b）。
+    const visible = route.storyId ? branchVisibility(route.storyId, session.id).visible : undefined
     const memoryBlock =
       recallScopes.length === 0
         ? ''
-        : await this.recallMemory(userText, stored.memory, recallScopes).catch(() => '')
+        : await this
+            .recallMemory(userText, stored.memory, recallScopes, route.storyId, visible)
+            .catch(() => '')
+
+    // 故事设定（世界书目录 + 档位 + 画像）只在这一轮开始时取一次（C22：显式透传，
+    // 不挂 session）。理由同记忆：buildPayload 在工具循环里每轮都调用，每轮读盘 + parse 是浪费。
+    const storyPrompt = this.storyPromptOf(session)
 
     // 时间只在「这一轮开始时」采样一次。
     // 放进循环里每步重取有两个坏处：工具循环一步一调会把时间戳刷成不同值，
@@ -340,7 +478,13 @@ class ChatService {
       for (let turn = 0; turn < MAX_TOOL_TURNS; turn += 1) {
         if (controller.signal.aborted) break
 
-        const payload = this.buildPayload(session, memoryBlock, clockBlock, definitions.length > 0)
+        const payload = this.buildPayload(
+          session,
+          memoryBlock,
+          clockBlock,
+          definitions.length > 0,
+          storyPrompt
+        )
         const calls: ToolCallRecord[] = []
 
         for await (const event of provider.stream({
@@ -448,7 +592,10 @@ class ChatService {
   private scheduleExtraction(session: Session, userText: string): void {
     // P5 G5：写进这条会话自己的域（P4 是「完全隔离=什么都不记」，P5 是「记在自己的域里」）。
     // 取不到域（空串）就不写：没有归属的条目在面板里看不见，等于黑洞。
-    const scope = sessionPolicy().primaryScope(session.id)
+    // P4：与召回共用同一个判定点（B2：不许在两处各判一次）。
+    // 故事区写进**自己的库**的 story:<storyId> 域（M11 物理隔离）。
+    const route = memoryRouteOf(session)
+    const scope = route.scope
     if (!scope) return
     const stored = settingsStore.get()
     if (!stored.memory?.enabled || !stored.memory.autoExtract) return
@@ -456,10 +603,15 @@ class ChatService {
 
     const lastUser = [...session.messages].reverse().find((m) => m.role === 'user')
     if (!lastUser) return
+    // P6 / T12：记下这条用户消息在本分支里的下标 —— 分支记忆可见性靠它判断「产生在分叉点之前还是之后」。
+    const sourceMessageIndex = session.messages.indexOf(lastUser)
 
     const llmSettings = this.effectiveSettings(session, stored)
 
-    void memoryService
+    // 🔴 句柄必须在 void 之前**同步**拿到：否则异步链里它可能已被 closeStoryMemory 关掉
+    //    （删区那一步就会关），于是这一轮的记忆写进一个已经消失的库。
+    const target = route.storyId ? storyMemory(route.storyId) : memoryService
+    void target
       .extractInBackground({
         sessionId: session.id,
         messageId: lastUser.id,
@@ -468,7 +620,8 @@ class ChatService {
         provider: createProvider(llmSettings),
         llmSettings,
         signal: new AbortController().signal,
-        scope
+        scope,
+        sourceMessageIndex: sourceMessageIndex >= 0 ? sourceMessageIndex : null
       })
       .catch((error) => console.warn('[chat] 记忆抽取失败', error))
   }
@@ -574,7 +727,8 @@ class ChatService {
     session: Session,
     memoryBlock: string,
     clockBlock: string,
-    toolsEnabled: boolean
+    toolsEnabled: boolean,
+    story: StoryPrompt | null
   ): LlmMessage[] {
     const payload: LlmMessage[] = []
 
@@ -582,7 +736,11 @@ class ChatService {
     try {
       // toolsEnabled 显式透传（C22）：不挂到 session 上——buildPayload 在工具循环里每轮
       // 都调用，隐式状态会漂；挂 session 还会污染三端契约。
-      const system = promptStore.compose(session.characterId, session.mode, { toolsEnabled })
+      const system = promptStore.compose(session.characterId, session.mode, {
+        toolsEnabled,
+        // 只有故事会话才有这一段；非故事会话传 undefined，compose 的缺省行为逐字不变
+        ...(story ? { story } : {})
+      })
       if (system) payload.push({ role: 'system', content: system })
     } catch (error) {
       console.warn('[chat] 系统提示词组装修复失败', error)
@@ -599,37 +757,7 @@ class ChatService {
     // 和可撤销性完全不同——用户删掉一条记忆，不该动到人格文件。
     if (memoryBlock) payload.push({ role: 'system', content: memoryBlock })
 
-    for (const message of session.messages) {
-      if (message.role === 'system') continue
-
-      if (message.role === 'assistant' && message.toolCalls && message.toolCalls.length > 0) {
-        payload.push({
-          role: 'assistant',
-          content: message.content,
-          toolCalls: message.toolCalls.map((call) => ({
-            id: call.id,
-            name: call.name,
-            arguments: call.arguments
-          }))
-        })
-        for (const call of message.toolCalls) {
-          payload.push({
-            role: 'tool',
-            toolCallId: call.id,
-            toolName: call.name,
-            content:
-              call.status === 'ok'
-                ? (call.result ?? '')
-                : '工具未成功执行（' + call.status + '）：' + (call.error ?? '无错误信息')
-          })
-        }
-        continue
-      }
-
-      if (!message.content) continue
-      payload.push({ role: message.role, content: message.content })
-    }
-
+    payload.push(...sessionHistoryToLlm(session))
     return payload
   }
 
@@ -689,14 +817,48 @@ class ChatService {
     return ''
   }
 
+  /**
+   * 故事区的提示词取值点（P5 / T6）—— 全仓**唯一**一处把 story.json + profile.md
+   * 变成 compose() 入参的地方。
+   *
+   * 🔴 与 memoryRouteOf 的边界必须记清：记忆走 memoryRouteOf（库 + 域），
+   *    提示词走本函数（世界书 + 画像）。**不许合并**，也不许互相调用 ——
+   *    它们读同一个 story.json，但输出语义完全不同。
+   * 🔴 以 mode 为准：一个会话可能带 storyId 却被 updateSession 改成 chat，
+   *    那种状态不该再吃故事设定。
+   */
+  private storyPromptOf(session: Session): StoryPrompt | null {
+    const storyId = session.storyId ?? ''
+    if (!storyId || session.mode !== 'story') return null
+    let meta: StoryMeta | null = null
+    try {
+      meta = storyStore.get(storyId)
+    } catch (error) {
+      // 形状非法（assertStoryId 抛）= 不属于任何故事区，fail-closed
+      console.warn('[chat] 故事区元信息读取失败：' + storyId, error)
+      return null
+    }
+    if (!meta) return null
+    return {
+      worldbookDir: resolveWorldbookDir(meta),
+      worldbookMode: meta.worldbookMode ?? STORY_WORLDBOOK_MODE_DEFAULT,
+      profile: readTextIfExists(storyProfilePath(storyId)),
+      background: meta.background ?? ""
+    }
+  }
+
   private async recallMemory(
     query: string,
     config: Settings['memory'],
-    scopes: string[]
+    scopes: string[],
+    storyId?: string | null,
+    visible?: (entry: { sourceSessionId: string | null; sourceMessageIndex?: number | null }) => boolean
   ): Promise<string> {
     if (!config?.enabled) return ''
     if (!query.trim()) return ''
-    return memoryService.buildContextBlock(query, config, scopes)
+    // 🔴 scopes 必须原样透传：省成 undefined 等于「全库」，隔离当场失效（retriever 的兼容分支）。
+    if (storyId) return storyMemory(storyId).buildContextBlock(query, config, scopes, visible)
+    return memoryService.buildContextBlock(query, config, scopes, visible)
   }
 
   /**
@@ -734,7 +896,8 @@ class ChatService {
             ...session,
             mode: normalizeMode(session.mode),
             characterId: session.characterId || settings.defaultCharacterId,
-            workspaceId: session.workspaceId ?? (isChannelSessionId(session.id) ? null : fallbackWorkspaceId)
+            workspaceId: session.workspaceId ?? (isChannelSessionId(session.id) ? null : fallbackWorkspaceId),
+            storyId: keptStoryIdOf(session)
           }))
         : []
     } catch (error) {
@@ -755,8 +918,44 @@ class ChatService {
   }
 }
 
+/**
+ * 读盘时保住会话上的 storyId（P4 §4.10 e）。
+ *  - 老会话没有该字段 → 保持 `undefined`（**不要补 null**，那会变成「显式不属于」的第二种真值）
+ *  - 有 storyId 但目录已不存在 → **保留字段、只 warn**（不静默改写用户数据）
+ *  - 形状非法 → 丢弃（fail-closed，绝不把它当故事会话）
+ */
+function keptStoryIdOf(session: Session): string | undefined {
+  const storyId = typeof session.storyId === 'string' ? session.storyId.trim() : ''
+  if (!storyId || !isStoryId(storyId)) return undefined
+  try {
+    if (!existsSync(storyDir(storyId))) {
+      console.warn('[chat] 故事区目录不存在，保留会话上的 storyId 不改写：' + storyId)
+    }
+  } catch (error) {
+    console.warn('[chat] 故事区路径解析失败', error)
+  }
+  return storyId
+}
+
+/**
+ * 读一小段用户文本（P5：故事画像 profile.md）。
+ * 缺文件 / 不是文件 / 读失败 → 空串，绝不抛：少一个用户文件不能让整轮对话挂掉（M09）。
+ */
+function readTextIfExists(filePath: string): string {
+  try {
+    if (!existsSync(filePath) || !statSync(filePath).isFile()) return ''
+    return readFileSync(filePath, 'utf8').trim()
+  } catch {
+    return ''
+  }
+}
+
 function normalizeMode(value: unknown): ConversationMode {
-  return value === 'agent' ? 'agent' : 'chat'
+  // P4：不认 'story' 的话，故事会话会被**静默**归一化成 chat ——
+  // 于是它拿 chat 的提示词、进「最近」列表、还能被 chat 增强放行工具，而且没有任何东西会报错。
+  if (value === 'agent') return 'agent'
+  if (value === 'story') return 'story'
+  return 'chat'
 }
 
 function toRecord(call: { id: string; name: string; arguments: string }): ToolCallRecord {
@@ -777,6 +976,51 @@ function toRecord(call: { id: string; name: string; arguments: string }): ToolCa
 
 function cloneCalls(calls: ToolCallRecord[] | undefined): ToolCallRecord[] {
   return (calls ?? []).map((call) => ({ ...call }))
+}
+
+/**
+ * 会话历史 → 模型消息（纯函数）。
+ *
+ * 旁白在这里必须转成 system，且保留时间顺序；若当成 user 发出去，模型会把舞台说明
+ * 误认成用户台词。system 历史消息继续跳过（它们由 buildPayload 的动态段负责重拼）。
+ */
+export function sessionHistoryToLlm(session: Pick<Session, 'messages'>): LlmMessage[] {
+  const messages: LlmMessage[] = []
+  for (const message of session.messages) {
+    if (message.role === 'system') continue
+    if (message.role === 'narration') {
+      if (message.content.trim()) messages.push({ role: 'system', content: '系统旁白：' + message.content.trim() })
+      continue
+    }
+
+    if (message.role === 'assistant' && message.toolCalls && message.toolCalls.length > 0) {
+      messages.push({
+        role: 'assistant',
+        content: message.content,
+        toolCalls: message.toolCalls.map((call) => ({
+          id: call.id,
+          name: call.name,
+          arguments: call.arguments
+        }))
+      })
+      for (const call of message.toolCalls) {
+        messages.push({
+          role: 'tool',
+          toolCallId: call.id,
+          toolName: call.name,
+          content:
+            call.status === 'ok'
+              ? (call.result ?? '')
+              : '工具未成功执行（' + call.status + '）：' + (call.error ?? '无错误信息')
+        })
+      }
+      continue
+    }
+
+    if (!message.content) continue
+    messages.push({ role: message.role, content: message.content })
+  }
+  return messages
 }
 
 function cloneMessage(message: Message): Message {

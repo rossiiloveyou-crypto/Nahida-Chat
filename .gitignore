@@ -25,6 +25,7 @@ docs/preview/
 
 # 例外：坐标表 + 手写对照表属于知识资产，保留进库（决策 H-19 / 方案乙）
 !docs/ui/UI_MAP.md
+!docs/ui/ui-map-human.md
 !docs/ui/ui-map-v0.json
 !docs/ui-dark/UI_MAP.md
 !docs/ui-dark/ui-map-v0.json

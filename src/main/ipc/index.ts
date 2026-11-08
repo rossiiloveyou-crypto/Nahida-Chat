@@ -25,6 +25,8 @@ import { listDefinitions } from '../features/tools/registry'
 import { registerChannelsIpcHandlers } from './channels'
 import { registerObserveIpcHandlers } from './observe'
 import { registerQqIpcHandlers } from './qq'
+import { registerStoryIpcHandlers } from './story'
+import { registerWorldbookIpcHandlers } from './worldbook'
 import { registerZonesIpcHandlers } from './zones'
 
 /** 所有 IPC handler 在这里集中注册，渲染进程能做的事一目了然。 */
@@ -120,6 +122,9 @@ export function registerIpcHandlers(): void {
     chatService.deleteSession(id)
   })
   ipcMain.handle(IPC.chatSend, (event, input: SendInput) => chatService.send(input, event.sender))
+  ipcMain.handle(IPC.chatNarrate, (_event, sessionId: string, content: string) =>
+    chatService.narrate(sessionId, content)
+  )
   ipcMain.handle(IPC.chatStop, (_event, sessionId: string) => {
     chatService.stop(sessionId)
   })
@@ -132,4 +137,8 @@ export function registerIpcHandlers(): void {
   registerZonesIpcHandlers()
   // 旁听库（P8）：只增不清的群语料，只读转发
   registerObserveIpcHandlers()
+  // 故事区（P4）：建区 / 列区 / 读区 / 删区（删区要 confirmed）
+  registerStoryIpcHandlers()
+  // 世界书编写器（P9 / M26）：写 worldbook/*.md，原子写 + .bak + 路径守卫
+  registerWorldbookIpcHandlers()
 }
