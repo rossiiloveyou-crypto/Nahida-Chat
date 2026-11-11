@@ -83,6 +83,67 @@ export async function bundleModule(name, source, plugins = []) {
   return require(outfile)
 }
 
+
+/**
+ * 带桩的打包（P2 新增）。
+ *
+ * 🔴 两个坑必须同时记住：
+ * 1. **不要用 plugins 的 onResolve 给 './embedder' 这类相对说明符做桩**：本模块的 bundleModule
+ *    固定传了 `alias: { '@shared': ... }`，esbuild 0.28 的 alias 会抢在插件 onResolve 之前裁决，
+ *    插件返回的桩被静默忽略，真实实现照旧被 bundle 进去——桩「配了但没生效」。
+ * 2. **只留一个 onResolve 回调**：两个 filter 都命中（通配与具体的相对说明符）时，esbuild 会并发跑两个回调、
+ *    按返回顺序取第一个非 null，顺序不保证。把「桩文件判定」和「命中桩再解析」拆成两个回调，
+ *    桩会在 @shared 解析之后才裁决，于是再次失效。
+ *
+ * 2026-11-11 P2 施工实测：这两条各踩一次，症状都是「stub 顶层副作用一次没跑、
+ * 内存抽取走了真实 extract.ts（无 provider → 返回 []）」，表现为「写入 0 条」的假红。
+ *
+ * 做法：入口与 shim 都放沙箱，re-export 走正斜杠绝对路径（入口若落源码目录，相对说明符会解析到源码边上）；
+ * 桩按绝对路径反查说明符，一个回调里一次裁决。
+ *
+ * @param {string} name 沙箱名（只影响临时目录名）
+ * @param {string[]} exports re-export 语句列表，可写绝对路径
+ * @param {Record<string, string>} stubs 说明符 → 桩文件绝对路径，例如 { './extract': '/tmp/extract-stub.ts' }
+ */
+export async function bundleModuleWithStubs(name, exports, stubs = {}) {
+  const esbuild = loadEsbuild()
+  const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-qq-' + name + '-'))
+  const shim = path.join(sandbox, 'shim.ts')
+  fs.writeFileSync(shim, exports.map((line) => line.replace(/\\/g, '/')).join('\n'), 'utf8')
+  const entry = path.join(sandbox, 'entry.ts')
+  fs.writeFileSync(entry, 'export * from ' + JSON.stringify(shim.replace(/\\/g, '/')) + '\n', 'utf8')
+  const outfile = path.join(sandbox, 'bundle.cjs')
+  const stubEntries = Object.entries(stubs).map(([spec, file]) => ({
+    spec: spec.replace(/\\/g, '/'),
+    abs: path.resolve(file),
+    file
+  }))
+  /**
+   * 只按**说明符**判定（实测唯一有效的写法）。
+   * 试过两条都失败：① 先把桩文件的绝对路径声明给 esbuild、再按绝对路径反查说明符；
+   * ② 两个 onResolve 回调分工。两者都会让桩在 alias 之后才裁决，结果仍是真实实现进 bundle。
+   */
+  const pickStub = (args) => {
+    const importer = (args.importer || '').replace(/\\/g, '/')
+    for (const entry of stubEntries) {
+      if (args.path === entry.spec && importer.includes('src/main/features/rag/')) return { path: entry.file }
+    }
+    return null
+  }
+  await esbuild.build({
+    entryPoints: [entry],
+    bundle: true,
+    platform: 'node',
+    format: 'cjs',
+    outfile,
+    external: ['electron'],
+    alias: { '@shared': path.join(projectRoot, 'src/shared') },
+    plugins: [{ name: 'fixed-stubs', setup: (build) => build.onResolve({ filter: /.*/ }, pickStub) }],
+    logLevel: 'silent'
+  })
+  return require(outfile)
+}
+
 export function createChecker() {
   const results = []
   return {

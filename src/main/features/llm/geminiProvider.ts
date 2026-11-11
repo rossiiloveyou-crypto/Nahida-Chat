@@ -64,7 +64,13 @@ export const geminiProvider: LlmProvider = {
 
       for (const part of parts) {
         if (typeof part.text === 'string' && part.text) {
-          yield { type: 'text', text: part.text }
+          // Gemini 的思考片段与正文共用一个 text 字段，靠 part.thought 区分。
+          // 🔴 判据只能用 thought === true：写成 truthy 会把 thought: false 也当思考。
+          if (part.thought === true) {
+            yield { type: 'reasoning', text: part.text }
+          } else {
+            yield { type: 'text', text: part.text }
+          }
         }
         const call = part.functionCall as Record<string, unknown> | undefined
         if (call && typeof call.name === 'string') {

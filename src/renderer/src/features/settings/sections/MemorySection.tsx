@@ -1,6 +1,19 @@
 import { useCallback, useEffect, useState } from 'react'
-import { MEMORY_BUDGET_RANGE, MEMORY_TOP_K_RANGE } from '@shared/constants'
-import type { MemoryEntry, MemoryRecallHit, MemoryStatus } from '@shared/types'
+import {
+  MEMORY_BUDGET_RANGE,
+  MEMORY_TOP_K_RANGE,
+  SUMMARY_CHARS_RANGE,
+  SUMMARY_TRIGGER_RANGE,
+  SUMMARY_WINDOW_RANGE
+} from '@shared/constants'
+import type {
+  MemoryEntry,
+  MemoryRecallHit,
+  MemoryStatus,
+  SummarySettings,
+  SummaryStatus
+} from '@shared/types'
+import { useChatStore } from '../../chat/store'
 import { useSettings } from '../useSettings'
 
 /**
@@ -9,10 +22,16 @@ import { useSettings } from '../useSettings'
  * 这个页面不只是开关集合，它同时是「记忆的可审计界面」：
  * 用户必须能看到、能改、能删掉每一条记住了什么，
  * 否则记忆就是个黑箱——出了「她为什么说这个」的问题根本没法排查。
+ *
+ * 页面有两个**互不相干**的记忆层，别把它们混成一件事：
+ * - 对话摘要（第一段）：把窗口外的对话压成四段文本，**无条件**注入；
+ * - 事实记忆（其余各段）：从你的发言里抽事实，**按 query 检索**，命中才注入。
+ * 前者管「刚才聊到哪」，后者管「你是谁」。存储也是两个文件。
  */
 export function MemorySection() {
   const { settings, loading, saving, error, save } = useSettings()
   const [status, setStatus] = useState<MemoryStatus | null>(null)
+  const [summaryStatus, setSummaryStatus] = useState<SummaryStatus | null>(null)
   const [entries, setEntries] = useState<MemoryEntry[]>([])
   const [draft, setDraft] = useState('')
   const [query, setQuery] = useState('')
@@ -38,11 +57,52 @@ export function MemorySection() {
   }, [refresh])
 
   const memory = settings?.memory
+  const summaryCfg = settings?.summary
 
   const patch = async (value: Partial<NonNullable<typeof memory>>): Promise<void> => {
     if (!memory) return
     await save({ memory: { ...memory, ...value } })
     await refresh()
+  }
+
+  // ── 对话摘要 ──────────────────────────────────────────────────────
+  // 状态独立于 RAG 那份：它在 summaries.json，不是 memory.db。
+  const activeSessionId = useChatStore((s) => s.activeId)
+
+  const refreshSummary = useCallback(async (): Promise<void> => {
+    try {
+      setSummaryStatus(await window.nahida.summary.status())
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : String(cause))
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshSummary()
+  }, [refreshSummary])
+
+  const patchSummary = async (value: Partial<SummarySettings>): Promise<void> => {
+    if (!summaryCfg) return
+    await save({ summary: { ...summaryCfg, ...value } })
+  }
+
+  const forgetSummary = async (): Promise<void> => {
+    if (!activeSessionId) return
+    try {
+      setSummaryStatus(await window.nahida.summary.forget(activeSessionId))
+      setNotice('已忘掉当前会话的摘要；下一次请求会下发完整历史。')
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+
+  const clearSummaries = async (): Promise<void> => {
+    try {
+      setSummaryStatus(await window.nahida.summary.clear())
+      setNotice('已清空全部对话摘要（聊天记录与事实记忆未受影响）。')
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : String(cause))
+    }
   }
 
   const addEntry = async (): Promise<void> => {
@@ -109,11 +169,172 @@ export function MemorySection() {
     <>
       <div className="settings-page__head" data-ui-target="页头">
         <h1>长期记忆</h1>
-        <p>跨会话记住用户说过的事实。检索在本地完成，对话内容不外发做 embedding。</p>
+        <p>
+          本页两件事：<strong>对话摘要</strong>把窗口外的对话压成摘要，让长对话接得上；
+          <strong>事实记忆</strong>跨会话记住你说过的事实。检索与摘要在本地编排，
+          对话内容不外发做 embedding。
+        </p>
       </div>
 
       {error && <p className="hint-text hint-text--error">{error}</p>}
       {notice && <p className="hint-text">{notice}</p>}
+
+      <section className="setting-group">
+        <h3 className="setting-group__title">对话摘要（窗口外的对话）</h3>
+        <p className="setting-group__desc">
+          对话变长以后，早期内容会掉出上下文窗口。这里每攒够 N 条就把那一段压成四段摘要
+          （近期话题 / 你的信息 / 重要约定 / 长期经历），之后每轮把摘要注入 system，
+          历史只下发最近 W 条。于是上下文长度是常数，长对话不会失忆。
+          与下面的「事实记忆」是两套：那个按问题检索事实，这个无条件注入对话。
+        </p>
+
+        <div data-ui-target="对话摘要参数">
+          <label className="memory-check">
+            <input
+              type="checkbox"
+              checked={Boolean(summaryCfg?.enabled)}
+              disabled={saving}
+              onChange={(event) => void patchSummary({ enabled: event.target.checked })}
+            />
+            <span>启用对话摘要（关闭后不压缩、不注入，历史全量下发）</span>
+          </label>
+
+          <div className="memory-num">
+            <span className="memory-num__label">触发条数</span>
+            <input
+              className="field__control field__control--sm"
+              type="number"
+              min={SUMMARY_TRIGGER_RANGE.min}
+              max={SUMMARY_TRIGGER_RANGE.max}
+              value={summaryCfg?.triggerCount ?? 40}
+              disabled={saving || !summaryCfg?.enabled}
+              onChange={(event) => void patchSummary({ triggerCount: Number(event.target.value) })}
+            />
+            <span className="memory-num__unit">条未压缩消息压一次（越小越省上下文、越费调用）</span>
+          </div>
+
+          <div className="memory-num">
+            <span className="memory-num__label">保留窗口</span>
+            <input
+              className="field__control field__control--sm"
+              type="number"
+              min={SUMMARY_WINDOW_RANGE.min}
+              max={SUMMARY_WINDOW_RANGE.max}
+              value={summaryCfg?.windowCount ?? 12}
+              disabled={saving || !summaryCfg?.enabled}
+              onChange={(event) => void patchSummary({ windowCount: Number(event.target.value) })}
+            />
+            <span className="memory-num__unit">条最近原文保留（0 = 只靠摘要接话）</span>
+          </div>
+
+          <div className="memory-num">
+            <span className="memory-num__label">近期话题上限</span>
+            <input
+              className="field__control field__control--sm"
+              type="number"
+              min={SUMMARY_CHARS_RANGE.min}
+              max={SUMMARY_CHARS_RANGE.max}
+              value={summaryCfg?.shortTermMaxChars ?? 400}
+              disabled={saving || !summaryCfg?.enabled}
+              onChange={(event) => void patchSummary({ shortTermMaxChars: Number(event.target.value) })}
+            />
+            <span className="memory-num__unit">字符 · 0 不截断</span>
+          </div>
+
+          <div className="memory-num">
+            <span className="memory-num__label">你的信息上限</span>
+            <input
+              className="field__control field__control--sm"
+              type="number"
+              min={SUMMARY_CHARS_RANGE.min}
+              max={SUMMARY_CHARS_RANGE.max}
+              value={summaryCfg?.userInfoMaxChars ?? 600}
+              disabled={saving || !summaryCfg?.enabled}
+              onChange={(event) => void patchSummary({ userInfoMaxChars: Number(event.target.value) })}
+            />
+            <span className="memory-num__unit">字符 · 0 不截断</span>
+          </div>
+
+          <div className="memory-num">
+            <span className="memory-num__label">重要约定上限</span>
+            <input
+              className="field__control field__control--sm"
+              type="number"
+              min={SUMMARY_CHARS_RANGE.min}
+              max={SUMMARY_CHARS_RANGE.max}
+              value={summaryCfg?.promisesMaxChars ?? 400}
+              disabled={saving || !summaryCfg?.enabled}
+              onChange={(event) => void patchSummary({ promisesMaxChars: Number(event.target.value) })}
+            />
+            <span className="memory-num__unit">字符 · 0 不截断</span>
+          </div>
+
+          <div className="memory-num">
+            <span className="memory-num__label">长期经历上限</span>
+            <input
+              className="field__control field__control--sm"
+              type="number"
+              min={SUMMARY_CHARS_RANGE.min}
+              max={SUMMARY_CHARS_RANGE.max}
+              value={summaryCfg?.longTermMaxChars ?? 1200}
+              disabled={saving || !summaryCfg?.enabled}
+              onChange={(event) => void patchSummary({ longTermMaxChars: Number(event.target.value) })}
+            />
+            <span className="memory-num__unit">字符 · 0 不截断</span>
+          </div>
+        </div>
+
+        <dl className="info-grid" data-ui-target="对话摘要状态">
+          <dt>已摘要会话</dt>
+          <dd>{summaryStatus ? summaryStatus.sessionCount + ' 条' : '读取中…'}</dd>
+          <dt>已压缩消息</dt>
+          <dd>{summaryStatus ? summaryStatus.coveredMessages + ' 条' : '—'}</dd>
+          <dt>最近更新</dt>
+          <dd>
+            {summaryStatus && summaryStatus.lastUpdatedAt > 0
+              ? new Date(summaryStatus.lastUpdatedAt).toLocaleString()
+              : '还没有压缩过'}
+          </dd>
+          <dt>数据文件</dt>
+          <dd>{summaryStatus?.file ?? '—'}</dd>
+          {summaryStatus?.lastError && (
+            <>
+              <dt>最近错误</dt>
+              <dd className="hint-text hint-text--error">{summaryStatus.lastError}</dd>
+            </>
+          )}
+        </dl>
+        {!summaryCfg?.enabled && (
+          <p className="hint-text">
+            已关闭：不压缩、不注入摘要，历史全量下发 —— 与没有这个功能时的行为一致。
+          </p>
+        )}
+
+        <div className="settings-actions" data-ui-target="对话摘要操作">
+          <button type="button" className="btn-ghost" onClick={() => void refreshSummary()}>
+            刷新状态
+          </button>
+          <button
+            type="button"
+            className="btn-ghost"
+            disabled={!activeSessionId}
+            onClick={() => void forgetSummary()}
+          >
+            忘掉当前会话的摘要
+          </button>
+          <button
+            type="button"
+            className="btn-ghost"
+            disabled={!summaryStatus || summaryStatus.sessionCount === 0}
+            onClick={() => void clearSummaries()}
+          >
+            清空全部摘要
+          </button>
+        </div>
+        <p className="hint-text">
+          「忘掉」只删摘要，不动聊天记录；清空后模型会重新看到完整历史，直到再次攒够触发条数。
+        </p>
+      </section>
 
       <section className="setting-group">
         <h3 className="setting-group__title">运行状态</h3>

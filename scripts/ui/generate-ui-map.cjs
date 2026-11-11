@@ -100,6 +100,14 @@ const DEFAULT_VIEWS = [
       '那在本地优先的客户端里，你会先做哪一个'
     ]
   },
+  // 角色切换（第 8 轮）：点开输入区最左的「角色选择」。
+  // 不加这一张就只能证明"有那个按钮"，证明不了菜单里列的是**提示词库里的角色**、当前那个打了勾。
+  {
+    hash: '/chat',
+    name: 'chat-character-menu',
+    seedChat: ['用三句话说明 RAG 和微调的区别', '那在本地优先的客户端里，你会先做哪一个'],
+    click: '[data-ui-target="角色选择"]'
+  },
   { hash: '/settings/models', name: 'settings-models' },
   { hash: '/settings/prompts', name: 'settings-prompts' },
   // P9：世界书编写器弹层（列表默认 8 条 + 展开按钮 + 新增表单）。

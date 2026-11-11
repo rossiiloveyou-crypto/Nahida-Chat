@@ -1,11 +1,12 @@
+// P1 过渡：区块的记忆域语义已被「用户 × 人设」取代。
+// 本文件在 P6 会被整体删除，在此之前只保证「编译通过 + 页面能打开」。
+// 🔴 禁止在这里实现任何 scope → tenant 的转换（那会制造第二套域语义，P6 删不干净）。
 import { ipcMain } from 'electron'
 import { IPC } from '@shared/ipc'
 import type { UnzonedChannelItem } from '@shared/channels'
 import type { Zone, ZoneAdoptResult, ZoneConfig, ZoneDraft, ZoneMemberDraft, ZoneStat } from '@shared/zones'
-import { rootScope, zoneScope } from '@shared/zones'
 import { channelStore } from '../features/channels/store'
 import { zoneStore } from '../features/zones/store'
-import { memoryService } from '../features/rag'
 
 /**
  * 区块的 IPC handler（P5 §4.8，P6 G8 改候选来源）。
@@ -47,9 +48,11 @@ export function registerZonesIpcHandlers(): void {
 
   ipcMain.handle(IPC.zoneDelete, (_event, zoneId: string): Zone[] => {
     const removed = zoneStore.deleteZone(zoneId)
-    // 删区块不能让它的记忆变成孤儿：面板上再也看不见 = 用户眼里的"记忆丢了"。
-    // 搬回 root 而不是删掉（M17 的同一条原则：记忆宁可多不能少）。
-    if (removed) memoryService.reassignScope(zoneScope(zoneId), rootScope())
+    // P1 起记忆按「用户 × 人设」分区，区块不再是记忆域的宿主 ⇒ 删区块不再搬记忆。
+    // 这是**有意接受的功能退化**（RK-3），P6 会把整个区块功能连同本文件一起删除。
+    if (removed) {
+      console.warn('[zones] 区块记忆搬迁已停用（P1 起记忆按用户 × 人设分区）；本页将在 P6 删除')
+    }
     return zoneStore.listZones()
   })
 
@@ -116,10 +119,11 @@ export function registerZonesIpcHandlers(): void {
   })
 
   ipcMain.handle(IPC.zoneStats, (): ZoneStat[] => {
-    const counts = new Map(memoryService.countByScope().map((item) => [item.scopeId, item.count]))
+    // P1–P5：区块页的记忆计数恒为 0（记忆已不属于区块），P6 删除本页。
+    const counts = new Map<string, number>()
     return zoneStore.listZones().map((zone) => ({
       zoneId: zone.zoneId,
-      memoryCount: counts.get(zoneScope(zone.zoneId)) ?? 0,
+      memoryCount: counts.get(zone.zoneId) ?? 0,
       memberCount: zone.members.length
     }))
   })

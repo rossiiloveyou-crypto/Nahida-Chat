@@ -7,8 +7,12 @@ import {
   DEFAULT_APPEARANCE,
   DEFAULT_CONTEXT_WINDOW,
   DEFAULT_MEMORY_SETTINGS,
+  DEFAULT_SUMMARY_SETTINGS,
   MEMORY_BUDGET_RANGE,
   MEMORY_TOP_K_RANGE,
+  SUMMARY_CHARS_RANGE,
+  SUMMARY_TRIGGER_RANGE,
+  SUMMARY_WINDOW_RANGE,
   TEMPERATURE_RANGE,
   isProviderId,
   providerMeta
@@ -24,6 +28,7 @@ import type {
   ModelProfileDraft,
   PermissionMode,
   PermissionSettings,
+  SummarySettings,
   ProviderId,
   Settings,
   Workspace,
@@ -117,6 +122,7 @@ export function defaultSettings(): Settings {
     activeWorkspaceId: workspace.id,
     permission: { mode: 'approve' },
     memory: { ...DEFAULT_MEMORY_SETTINGS },
+    summary: { ...DEFAULT_SUMMARY_SETTINGS },
     appearance: { ...DEFAULT_APPEARANCE }
   }
 }
@@ -162,6 +168,7 @@ class SettingsStore {
     next.permission = normalizePermission(next.permission)
     normalizeWorkspaces(next)
     next.memory = normalizeMemory(next.memory)
+    next.summary = normalizeSummary(next.summary)
     next.appearance = normalizeAppearance(next.appearance)
     // 档案是唯一真源：任何整体保存都要重新归一化并把镜像字段对齐
     normalizeProfiles(next)
@@ -351,6 +358,8 @@ class SettingsStore {
           parsed as LegacyPermissionFields
         ),
         memory: normalizeMemory(parsed.memory ?? base.memory),
+        // 老配置没有这一段 → 补默认值。这是「升级即生效」的唯一入口。
+        summary: normalizeSummary(parsed.summary ?? base.summary),
         appearance: normalizeAppearance(parsed.appearance ?? base.appearance)
       }
       // 工作区清单的迁移：单工作区时代只有一个 workspaceDir，把它变成清单第一条，
@@ -736,6 +745,76 @@ function normalizeAppearance(input: AppearanceSettings | undefined): AppearanceS
   }
 }
 
+/**
+ * 对话摘要配置归一化。范式与 normalizeMemory 逐字一致：逐字段给默认值，
+ * 非法值一律落回默认——设置文件是用户可手改的，不能信任。
+ *
+ * 🔴 两个调用点缺一不可（同 normalizeAppearance 的注释）：
+ *    load() 的合并路径（老配置 undefined）与 save() 的归一化（用户写了非法值）。
+ *    只做一处，前者会让老用户升级后读到 undefined 而崩，后者会让手改的字符串永久写坏。
+ */
+function normalizeSummary(input: SummarySettings | undefined): SummarySettings {
+  const base = DEFAULT_SUMMARY_SETTINGS
+  const int = (value: unknown, min: number, max: number, fallback: number): number =>
+    clampSummaryInt(value, min, max, fallback)
+  return {
+    enabled: typeof input?.enabled === 'boolean' ? input.enabled : base.enabled,
+    triggerCount: int(
+      input?.triggerCount,
+      SUMMARY_TRIGGER_RANGE.min,
+      SUMMARY_TRIGGER_RANGE.max,
+      base.triggerCount
+    ),
+    windowCount: int(input?.windowCount, SUMMARY_WINDOW_RANGE.min, SUMMARY_WINDOW_RANGE.max, base.windowCount),
+    shortTermMaxChars: int(
+      input?.shortTermMaxChars,
+      SUMMARY_CHARS_RANGE.min,
+      SUMMARY_CHARS_RANGE.max,
+      base.shortTermMaxChars
+    ),
+    longTermMaxChars: int(
+      input?.longTermMaxChars,
+      SUMMARY_CHARS_RANGE.min,
+      SUMMARY_CHARS_RANGE.max,
+      base.longTermMaxChars
+    ),
+    userInfoMaxChars: int(
+      input?.userInfoMaxChars,
+      SUMMARY_CHARS_RANGE.min,
+      SUMMARY_CHARS_RANGE.max,
+      base.userInfoMaxChars
+    ),
+    promisesMaxChars: int(
+      input?.promisesMaxChars,
+      SUMMARY_CHARS_RANGE.min,
+      SUMMARY_CHARS_RANGE.max,
+      base.promisesMaxChars
+    )
+  }
+}
+
+/**
+ * 摘要配置专用的整数归一化，**不复用上面的 clampInt**。
+ *
+ * 🔴 差别只有一个但会出事：`Number(null) === 0`、`Number('') === 0`。
+ *    这两个值在摘要里都是**合法值**（0 = 不截断 / 不保留），
+ *    于是「字段没填」会被当成「用户想填 0」，语义正好反了——
+ *    实测：手改成 `{"userInfoMaxChars": null}` 后，画像上限静默变成「不截断」。
+ *    所以这里只认「数字」与「非空数字串」，其余（null / '' / 布尔 / 对象）一律落回默认。
+ *
+ * 没有改共享的 clampInt：它还被 normalizeMemory 用着，改它等于顺手动到 RAG 的归一化。
+ */
+function clampSummaryInt(value: unknown, min: number, max: number, fallback: number): number {
+  const numeric =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim().length > 0
+        ? Number(value)
+        : Number.NaN
+  if (!Number.isFinite(numeric)) return fallback
+  return Math.min(max, Math.max(min, Math.round(numeric)))
+}
+
 function clamp(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min
   return Math.min(max, Math.max(min, value))
@@ -760,6 +839,7 @@ function clone(value: Settings): Settings {
     workspaces: value.workspaces.map((workspace) => ({ ...workspace })),
     permission: { ...value.permission },
     memory: { ...value.memory },
+    summary: { ...value.summary },
     appearance: { ...value.appearance }
   }
 }

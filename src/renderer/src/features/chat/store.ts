@@ -3,6 +3,7 @@ import type {
   ChatDelta,
   ChatDone,
   ChatFailure,
+  ChatReasoning,
   ConversationMode,
   CreateSessionInput,
   Message,
@@ -56,6 +57,13 @@ interface ChatStore {
   stop: () => Promise<void>
   respondApproval: (approved: boolean, remember: boolean) => Promise<void>
   dismissError: () => void
+  /**
+   * 把一次失败写进顶部错误条。
+   *
+   * 存在的理由：模型/工作区/角色这类**选择器**点一下就写一次，失败时「什么都不发生」
+   * 是最糟的反馈（用户会以为是自己没点中）。顶部错误条已经在那儿了，让它有个写入口。
+   */
+  fail: (message: string) => void
 }
 
 let bootstrap: Promise<void> | null = null
@@ -70,6 +78,14 @@ function mapMessage(session: Session, messageId: string, update: (message: Messa
     ...session,
     messages: session.messages.map((message) => (message.id === messageId ? update(message) : message))
   }
+}
+
+/** 思考增量：拼到 reasoning 上，**不碰 content**。正文与思考是两条独立的水流。 */
+function appendReasoning(session: Session, payload: ChatReasoning): Session {
+  return mapMessage(session, payload.messageId, (message) => ({
+    ...message,
+    reasoning: (message.reasoning ?? '') + payload.delta
+  }))
 }
 
 function appendDelta(session: Session, payload: ChatDelta): Session {
@@ -107,6 +123,24 @@ export function reduceDelta(state: ChatBroadcastState, payload: ChatDelta): Part
   }
 }
 
+/**
+ * 思考广播。与 reduceDelta 一样要设 streamingId ——
+ * 很多时候第一片事件就是思考（DeepSeek 先想几十秒才出正文），
+ * 不设的话输入框在这一整段时间里不会变成「停止生成」。
+ */
+export function reduceReasoning(
+  state: ChatBroadcastState,
+  payload: ChatReasoning
+): Partial<ChatBroadcastState> {
+  if (!ownedByWindow(state.sessions, payload.sessionId)) return state
+  return {
+    streamingId: payload.sessionId,
+    sessions: mapSession(state.sessions, payload.sessionId, (session) =>
+      appendReasoning(session, payload)
+    )
+  }
+}
+
 export function reduceDone(state: ChatBroadcastState, payload: ChatDone): Partial<ChatBroadcastState> {
   if (!ownedByWindow(state.sessions, payload.sessionId)) return state
   return {
@@ -116,7 +150,15 @@ export function reduceDone(state: ChatBroadcastState, payload: ChatDone): Partia
       ...session,
       messages: session.messages.map((message) =>
         message.id === payload.messageId
-          ? { ...message, content: payload.content, status: 'done' as const, toolCalls: payload.toolCalls }
+          ? {
+              ...message,
+              content: payload.content,
+              status: 'done' as const,
+              toolCalls: payload.toolCalls,
+              // done 里的思考是主进程侧的权威全文，覆盖增量拼出来的那份，
+              // 避免丢片（与 content 的处理同理）。
+              ...(payload.reasoning !== undefined ? { reasoning: payload.reasoning } : {})
+            }
           : message
       )
     }))
@@ -163,6 +205,10 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
 
           window.nahida.chat.onDelta((payload) => {
             set((state) => reduceDelta(state, payload))
+          })
+
+          window.nahida.chat.onReasoning((payload) => {
+            set((state) => reduceReasoning(state, payload))
           })
 
           window.nahida.chat.onTool((payload) => {
@@ -294,7 +340,9 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     await window.nahida.tools.respond({ requestId: ticket.requestId, approved, remember })
   },
 
-  dismissError: () => set({ error: null })
+  dismissError: () => set({ error: null }),
+
+  fail: (message) => set({ error: message })
 }))
 
 export type { ToolCallRecord }

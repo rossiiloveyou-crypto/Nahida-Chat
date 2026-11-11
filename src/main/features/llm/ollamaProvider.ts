@@ -43,6 +43,10 @@ export const ollamaProvider: LlmProvider = {
       const json = parseJson(line)
       const message = json.message as Record<string, unknown> | undefined
       if (message) {
+        // Ollama 0.6+ 对 thinking 模型单独给一个 thinking 字段（content 里没有思考）
+        if (typeof message.thinking === 'string' && message.thinking) {
+          yield { type: 'reasoning', text: message.thinking }
+        }
         if (typeof message.content === 'string' && message.content) {
           yield { type: 'text', text: message.content }
         }

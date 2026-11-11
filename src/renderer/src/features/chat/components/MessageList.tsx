@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import type { Message } from '@shared/types'
 import { brandFor } from '../../../assets/nahida'
 import { useTheme } from '../../settings/useTheme'
+import { ReasoningBlock } from './ReasoningBlock'
 import { ToolCalls } from './ToolCalls'
 
 interface MessageListProps {
@@ -81,6 +82,10 @@ export function MessageList({ messages, focusMessageId }: MessageListProps) {
                 )}
               </div>
               <div className="message__column">
+                {/* 思考过程在气泡**之前**：读的时候要「先想再答」，位置与语义一致 */}
+                {!isUser && message.reasoning && (
+                  <ReasoningBlock message={message} uiLabel={`思考 ${nth}`} />
+                )}
                 <div
                   className={message.status === 'error' ? 'bubble bubble--error' : 'bubble'}
                   data-ui-target={isUser ? `用户气泡 ${nth}` : `AI 气泡 ${nth}`}

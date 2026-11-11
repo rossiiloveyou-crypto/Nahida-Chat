@@ -72,6 +72,10 @@ export const anthropicProvider: LlmProvider = {
         if (!delta) continue
         if (delta.type === 'text_delta' && typeof delta.text === 'string') {
           yield { type: 'text', text: delta.text }
+        } else if (delta.type === 'thinking_delta' && typeof delta.thinking === 'string') {
+          // 扩展思考（extended thinking）：content_block 是 thinking，增量走 thinking_delta。
+          // 还有 signature_delta（完整性签名），前端不需要，直接忽略。
+          yield { type: 'reasoning', text: delta.thinking }
         } else if (delta.type === 'input_json_delta') {
           const current = pending.get(index)
           if (current && typeof delta.partial_json === 'string') current.json += delta.partial_json

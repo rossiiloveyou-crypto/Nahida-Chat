@@ -140,24 +140,33 @@
         },
         {
           "index": 10,
-          "label": "模型选择",
+          "label": "角色选择",
           "tag": "button",
           "top": 775,
           "left": 278,
-          "width": 97,
+          "width": 95,
           "height": 28
         },
         {
           "index": 11,
-          "label": "工作区选择",
+          "label": "模型选择",
           "tag": "button",
           "top": 775,
-          "left": 722,
-          "width": 112,
+          "left": 573,
+          "width": 97,
           "height": 28
         },
         {
           "index": 12,
+          "label": "工作区选择",
+          "tag": "button",
+          "top": 775,
+          "left": 869,
+          "width": 112,
+          "height": 28
+        },
+        {
+          "index": 13,
           "label": "权限模式",
           "tag": "button",
           "top": 775,
@@ -166,7 +175,7 @@
           "height": 28
         }
       ],
-      "pngSha256": "2204374de31d85e635e68fc57749c4bddc09501a48ceeaa8da82d301d323ac54"
+      "pngSha256": "cce548bf2ffadd62ab60b3ce43b5e690b7c034e634ff905d333b4d086e4c1c8c"
     },
     "chat-agent": {
       "viewport": {
@@ -326,24 +335,33 @@
         },
         {
           "index": 12,
-          "label": "模型选择",
+          "label": "角色选择",
           "tag": "button",
           "top": 775,
           "left": 278,
-          "width": 97,
+          "width": 95,
           "height": 28
         },
         {
           "index": 13,
-          "label": "工作区选择",
+          "label": "模型选择",
           "tag": "button",
           "top": 775,
-          "left": 722,
-          "width": 112,
+          "left": 573,
+          "width": 97,
           "height": 28
         },
         {
           "index": 14,
+          "label": "工作区选择",
+          "tag": "button",
+          "top": 775,
+          "left": 869,
+          "width": 112,
+          "height": 28
+        },
+        {
+          "index": 15,
           "label": "权限模式",
           "tag": "button",
           "top": 775,
@@ -352,7 +370,7 @@
           "height": 28
         }
       ],
-      "pngSha256": "a024827f2546d6bcfd5310c61477815e01a94480369d6a50aae509c53abd88f6"
+      "pngSha256": "6d212814ebaae5781047712033348a740deaae045bd248f83365abb6ff11b337"
     },
     "chat-agent-gated": {
       "viewport": {
@@ -512,24 +530,33 @@
         },
         {
           "index": 12,
-          "label": "模型选择",
+          "label": "角色选择",
           "tag": "button",
           "top": 775,
           "left": 278,
-          "width": 97,
+          "width": 95,
           "height": 28
         },
         {
           "index": 13,
-          "label": "工作区选择",
+          "label": "模型选择",
           "tag": "button",
           "top": 775,
-          "left": 722,
-          "width": 112,
+          "left": 573,
+          "width": 97,
           "height": 28
         },
         {
           "index": 14,
+          "label": "工作区选择",
+          "tag": "button",
+          "top": 775,
+          "left": 869,
+          "width": 112,
+          "height": 28
+        },
+        {
+          "index": 15,
           "label": "权限模式",
           "tag": "button",
           "top": 775,
@@ -538,7 +565,7 @@
           "height": 28
         }
       ],
-      "pngSha256": "1ac437518bc1701caead78078b0308020b12bac0b99cfa7341931bcc7fd045f8"
+      "pngSha256": "950af2a7f73f726cbd84bfb7655f1a4974626fe9d56e6b115ebef4e59dbd096d"
     },
     "chat-conversation": {
       "viewport": {
@@ -641,7 +668,7 @@
           "index": 7,
           "label": "用户头像 1",
           "tag": "div",
-          "top": 17,
+          "top": -45,
           "left": 1168,
           "width": 64,
           "height": 64
@@ -650,7 +677,7 @@
           "index": 8,
           "label": "用户气泡 1",
           "tag": "div",
-          "top": 17,
+          "top": -45,
           "left": 898,
           "width": 254,
           "height": 51
@@ -659,49 +686,67 @@
           "index": 9,
           "label": "AI 头像 2",
           "tag": "div",
-          "top": 99,
+          "top": 37,
           "left": 278,
           "width": 64,
           "height": 64
         },
         {
           "index": 10,
+          "label": "思考 2",
+          "tag": "button",
+          "top": 40,
+          "left": 358,
+          "width": 145,
+          "height": 20
+        },
+        {
+          "index": 11,
           "label": "AI 气泡 2",
           "tag": "div",
-          "top": 99,
+          "top": 68,
           "left": 358,
           "width": 558,
           "height": 240
         },
         {
-          "index": 11,
+          "index": 12,
           "label": "用户头像 3",
           "tag": "div",
-          "top": 357,
+          "top": 326,
           "left": 1168,
           "width": 64,
           "height": 64
         },
         {
-          "index": 12,
+          "index": 13,
           "label": "用户气泡 3",
           "tag": "div",
-          "top": 357,
+          "top": 326,
           "left": 833,
           "width": 319,
           "height": 51
         },
         {
-          "index": 13,
+          "index": 14,
           "label": "AI 头像 4",
           "tag": "div",
-          "top": 439,
+          "top": 408,
           "left": 278,
           "width": 64,
           "height": 64
         },
         {
-          "index": 14,
+          "index": 15,
+          "label": "思考 4",
+          "tag": "button",
+          "top": 411,
+          "left": 358,
+          "width": 145,
+          "height": 20
+        },
+        {
+          "index": 16,
           "label": "AI 气泡 4",
           "tag": "div",
           "top": 439,
@@ -710,7 +755,7 @@
           "height": 240
         },
         {
-          "index": 15,
+          "index": 17,
           "label": "输入框",
           "tag": "div",
           "top": 711,
@@ -719,25 +764,34 @@
           "height": 56
         },
         {
-          "index": 16,
-          "label": "模型选择",
+          "index": 18,
+          "label": "角色选择",
           "tag": "button",
           "top": 775,
           "left": 278,
+          "width": 95,
+          "height": 28
+        },
+        {
+          "index": 19,
+          "label": "模型选择",
+          "tag": "button",
+          "top": 775,
+          "left": 557,
           "width": 97,
           "height": 28
         },
         {
-          "index": 17,
+          "index": 20,
           "label": "工作区选择",
           "tag": "button",
           "top": 775,
-          "left": 698,
+          "left": 838,
           "width": 159,
           "height": 28
         },
         {
-          "index": 18,
+          "index": 21,
           "label": "权限模式",
           "tag": "button",
           "top": 775,
@@ -746,7 +800,242 @@
           "height": 28
         }
       ],
-      "pngSha256": "e129de8fe674111649daa3bf84e5f7ef051a8118b3e891b8daf88deb3d9c49d2"
+      "pngSha256": "a1cc169f4e642b5fb6843d3fa9182a54d7240692a3046ec21cbdff7fdae9a79d"
+    },
+    "chat-character-menu": {
+      "viewport": {
+        "width": 1281,
+        "height": 861
+      },
+      "regions": [
+        {
+          "label": "A 会话侧栏",
+          "top": 10,
+          "left": 10,
+          "width": 236,
+          "height": 842
+        },
+        {
+          "label": "B 故事分区",
+          "top": 575,
+          "left": 20,
+          "width": 216,
+          "height": 35
+        },
+        {
+          "label": "A 对话头部",
+          "top": 16,
+          "left": 252,
+          "width": 1016,
+          "height": 72
+        },
+        {
+          "label": "C 输入区",
+          "top": 697,
+          "left": 252,
+          "width": 1016,
+          "height": 148
+        },
+        {
+          "label": "C1 输入区工具条",
+          "top": 775,
+          "left": 278,
+          "width": 964,
+          "height": 28
+        }
+      ],
+      "targets": [
+        {
+          "index": 1,
+          "label": "新建对话",
+          "tag": "button",
+          "top": 80,
+          "left": 20,
+          "width": 216,
+          "height": 38
+        },
+        {
+          "index": 2,
+          "label": "会话列表",
+          "tag": "nav",
+          "top": 180,
+          "left": 20,
+          "width": 216,
+          "height": 382
+        },
+        {
+          "index": 3,
+          "label": "新建故事",
+          "tag": "button",
+          "top": 591,
+          "left": 161,
+          "width": 65,
+          "height": 19
+        },
+        {
+          "index": 4,
+          "label": "故事列表",
+          "tag": "div",
+          "top": 624,
+          "left": 20,
+          "width": 216,
+          "height": 35
+        },
+        {
+          "index": 5,
+          "label": "设置入口",
+          "tag": "div",
+          "top": 796,
+          "left": 20,
+          "width": 216,
+          "height": 48
+        },
+        {
+          "index": 6,
+          "label": "模式与模型角标",
+          "tag": "div",
+          "top": 39,
+          "left": 1056,
+          "width": 186,
+          "height": 26
+        },
+        {
+          "index": 7,
+          "label": "用户头像 1",
+          "tag": "div",
+          "top": -45,
+          "left": 1168,
+          "width": 64,
+          "height": 64
+        },
+        {
+          "index": 8,
+          "label": "用户气泡 1",
+          "tag": "div",
+          "top": -45,
+          "left": 898,
+          "width": 254,
+          "height": 51
+        },
+        {
+          "index": 9,
+          "label": "AI 头像 2",
+          "tag": "div",
+          "top": 37,
+          "left": 278,
+          "width": 64,
+          "height": 64
+        },
+        {
+          "index": 10,
+          "label": "思考 2",
+          "tag": "button",
+          "top": 40,
+          "left": 358,
+          "width": 145,
+          "height": 20
+        },
+        {
+          "index": 11,
+          "label": "AI 气泡 2",
+          "tag": "div",
+          "top": 68,
+          "left": 358,
+          "width": 558,
+          "height": 240
+        },
+        {
+          "index": 12,
+          "label": "用户头像 3",
+          "tag": "div",
+          "top": 326,
+          "left": 1168,
+          "width": 64,
+          "height": 64
+        },
+        {
+          "index": 13,
+          "label": "用户气泡 3",
+          "tag": "div",
+          "top": 326,
+          "left": 833,
+          "width": 319,
+          "height": 51
+        },
+        {
+          "index": 14,
+          "label": "AI 头像 4",
+          "tag": "div",
+          "top": 408,
+          "left": 278,
+          "width": 64,
+          "height": 64
+        },
+        {
+          "index": 15,
+          "label": "思考 4",
+          "tag": "button",
+          "top": 411,
+          "left": 358,
+          "width": 145,
+          "height": 20
+        },
+        {
+          "index": 16,
+          "label": "AI 气泡 4",
+          "tag": "div",
+          "top": 439,
+          "left": 358,
+          "width": 558,
+          "height": 240
+        },
+        {
+          "index": 17,
+          "label": "输入框",
+          "tag": "div",
+          "top": 711,
+          "left": 278,
+          "width": 964,
+          "height": 56
+        },
+        {
+          "index": 18,
+          "label": "角色选择",
+          "tag": "button",
+          "top": 775,
+          "left": 278,
+          "width": 95,
+          "height": 28
+        },
+        {
+          "index": 19,
+          "label": "模型选择",
+          "tag": "button",
+          "top": 775,
+          "left": 573,
+          "width": 97,
+          "height": 28
+        },
+        {
+          "index": 20,
+          "label": "工作区选择",
+          "tag": "button",
+          "top": 775,
+          "left": 869,
+          "width": 112,
+          "height": 28
+        },
+        {
+          "index": 21,
+          "label": "权限模式",
+          "tag": "button",
+          "top": 775,
+          "left": 1181,
+          "width": 61,
+          "height": 28
+        }
+      ],
+      "pngSha256": "c65eced5aaf334fabbd30d68b1d3293cdfef036cb49fe59e1442e88c822de495"
     },
     "settings-models": {
       "viewport": {
@@ -908,13 +1197,13 @@
           "top": 595,
           "left": 414,
           "width": 682,
-          "height": 140
+          "height": 292
         },
         {
           "index": 7,
           "label": "世界书入口",
           "tag": "section",
-          "top": 778,
+          "top": 930,
           "left": 395,
           "width": 720,
           "height": 68
@@ -923,7 +1212,7 @@
           "index": 8,
           "label": "世界书编辑器入口",
           "tag": "button",
-          "top": 792,
+          "top": 945,
           "left": 756,
           "width": 144,
           "height": 36
@@ -932,7 +1221,7 @@
           "index": 9,
           "label": "世界书选择目录",
           "tag": "button",
-          "top": 792,
+          "top": 945,
           "left": 906,
           "width": 86,
           "height": 36
@@ -941,13 +1230,13 @@
           "index": 10,
           "label": "世界书新建",
           "tag": "button",
-          "top": 792,
+          "top": 945,
           "left": 997,
           "width": 99,
           "height": 36
         }
       ],
-      "pngSha256": "6d9167c4df8b21388bb53552ec06cb4b62325b537c2e48f676dba988f070b96f"
+      "pngSha256": "0c4410c5dbfc615fab28366d8340a03095251a0ca4e50b69b5e2c6a97682d4c8"
     },
     "worldbook-editor": {
       "viewport": {
@@ -1030,13 +1319,13 @@
           "top": 595,
           "left": 414,
           "width": 682,
-          "height": 140
+          "height": 292
         },
         {
           "index": 7,
           "label": "世界书入口",
           "tag": "section",
-          "top": 778,
+          "top": 930,
           "left": 395,
           "width": 720,
           "height": 68
@@ -1045,7 +1334,7 @@
           "index": 8,
           "label": "世界书编辑器入口",
           "tag": "button",
-          "top": 792,
+          "top": 945,
           "left": 756,
           "width": 144,
           "height": 36
@@ -1054,7 +1343,7 @@
           "index": 9,
           "label": "世界书选择目录",
           "tag": "button",
-          "top": 792,
+          "top": 945,
           "left": 906,
           "width": 86,
           "height": 36
@@ -1063,7 +1352,7 @@
           "index": 10,
           "label": "世界书新建",
           "tag": "button",
-          "top": 792,
+          "top": 945,
           "left": 997,
           "width": 99,
           "height": 36
@@ -1222,7 +1511,7 @@
           "height": 33
         }
       ],
-      "pngSha256": "a887bd38ca2a4dd5a2fad645c8a47d72b39ea7cd09bb7ed89620b2a5495d9452"
+      "pngSha256": "a0bbac265085c7cdad0612d424cd7334f9ed6547f953e19f61549c4ed5ccfd70"
     },
     "chat-stories": {
       "viewport": {
@@ -1334,7 +1623,7 @@
           "index": 8,
           "label": "用户头像 1",
           "tag": "div",
-          "top": 17,
+          "top": -45,
           "left": 1168,
           "width": 64,
           "height": 64
@@ -1343,7 +1632,7 @@
           "index": 9,
           "label": "用户气泡 1",
           "tag": "div",
-          "top": 17,
+          "top": -45,
           "left": 898,
           "width": 254,
           "height": 51
@@ -1352,49 +1641,67 @@
           "index": 10,
           "label": "AI 头像 2",
           "tag": "div",
-          "top": 99,
+          "top": 37,
           "left": 278,
           "width": 64,
           "height": 64
         },
         {
           "index": 11,
+          "label": "思考 2",
+          "tag": "button",
+          "top": 40,
+          "left": 358,
+          "width": 145,
+          "height": 20
+        },
+        {
+          "index": 12,
           "label": "AI 气泡 2",
           "tag": "div",
-          "top": 99,
+          "top": 68,
           "left": 358,
           "width": 558,
           "height": 240
         },
         {
-          "index": 12,
+          "index": 13,
           "label": "用户头像 3",
           "tag": "div",
-          "top": 357,
+          "top": 326,
           "left": 1168,
           "width": 64,
           "height": 64
         },
         {
-          "index": 13,
+          "index": 14,
           "label": "用户气泡 3",
           "tag": "div",
-          "top": 357,
+          "top": 326,
           "left": 833,
           "width": 319,
           "height": 51
         },
         {
-          "index": 14,
+          "index": 15,
           "label": "AI 头像 4",
           "tag": "div",
-          "top": 439,
+          "top": 408,
           "left": 278,
           "width": 64,
           "height": 64
         },
         {
-          "index": 15,
+          "index": 16,
+          "label": "思考 4",
+          "tag": "button",
+          "top": 411,
+          "left": 358,
+          "width": 145,
+          "height": 20
+        },
+        {
+          "index": 17,
           "label": "AI 气泡 4",
           "tag": "div",
           "top": 439,
@@ -1403,7 +1710,7 @@
           "height": 240
         },
         {
-          "index": 16,
+          "index": 18,
           "label": "输入框",
           "tag": "div",
           "top": 711,
@@ -1412,25 +1719,34 @@
           "height": 56
         },
         {
-          "index": 17,
-          "label": "模型选择",
+          "index": 19,
+          "label": "角色选择",
           "tag": "button",
           "top": 775,
           "left": 278,
+          "width": 95,
+          "height": 28
+        },
+        {
+          "index": 20,
+          "label": "模型选择",
+          "tag": "button",
+          "top": 775,
+          "left": 557,
           "width": 97,
           "height": 28
         },
         {
-          "index": 18,
+          "index": 21,
           "label": "工作区选择",
           "tag": "button",
           "top": 775,
-          "left": 698,
+          "left": 838,
           "width": 159,
           "height": 28
         },
         {
-          "index": 19,
+          "index": 22,
           "label": "权限模式",
           "tag": "button",
           "top": 775,
@@ -1439,7 +1755,7 @@
           "height": 28
         }
       ],
-      "pngSha256": "ee9711962657d487efa2e5e32445227c5f010ce0a99c2b350074dfbf22a0a6b3"
+      "pngSha256": "d82382bfd8101e8a629bfbf3ec1c9265bbf18039c130c728a911e8c6379b4f49"
     },
     "chat-story-drawer": {
       "viewport": {
@@ -1892,24 +2208,33 @@
         },
         {
           "index": 43,
-          "label": "模型选择",
+          "label": "角色选择",
           "tag": "button",
           "top": 775,
           "left": 278,
-          "width": 97,
+          "width": 95,
           "height": 28
         },
         {
           "index": 44,
-          "label": "工作区选择",
+          "label": "模型选择",
           "tag": "button",
           "top": 775,
-          "left": 722,
-          "width": 112,
+          "left": 557,
+          "width": 97,
           "height": 28
         },
         {
           "index": 45,
+          "label": "工作区选择",
+          "tag": "button",
+          "top": 775,
+          "left": 838,
+          "width": 159,
+          "height": 28
+        },
+        {
+          "index": 46,
           "label": "权限模式",
           "tag": "button",
           "top": 775,
@@ -1918,7 +2243,7 @@
           "height": 28
         }
       ],
-      "pngSha256": "81c4b1b2684812d381a3cc14e906d25627724e1193ad671f147b7a3e1b9482cf"
+      "pngSha256": "0be963cfa82681b149ee8162e1defb96117d8ff14d698ca5d44faf27b2b1aa1c"
     },
     "settings-stories": {
       "viewport": {
@@ -2267,7 +2592,7 @@
           "index": 14,
           "label": "用户头像 1",
           "tag": "div",
-          "top": 17,
+          "top": -45,
           "left": 1168,
           "width": 64,
           "height": 64
@@ -2276,7 +2601,7 @@
           "index": 15,
           "label": "用户气泡 1",
           "tag": "div",
-          "top": 17,
+          "top": -45,
           "left": 898,
           "width": 254,
           "height": 51
@@ -2285,49 +2610,67 @@
           "index": 16,
           "label": "AI 头像 2",
           "tag": "div",
-          "top": 99,
+          "top": 37,
           "left": 278,
           "width": 64,
           "height": 64
         },
         {
           "index": 17,
+          "label": "思考 2",
+          "tag": "button",
+          "top": 40,
+          "left": 358,
+          "width": 145,
+          "height": 20
+        },
+        {
+          "index": 18,
           "label": "AI 气泡 2",
           "tag": "div",
-          "top": 99,
+          "top": 68,
           "left": 358,
           "width": 558,
           "height": 240
         },
         {
-          "index": 18,
+          "index": 19,
           "label": "用户头像 3",
           "tag": "div",
-          "top": 357,
+          "top": 326,
           "left": 1168,
           "width": 64,
           "height": 64
         },
         {
-          "index": 19,
+          "index": 20,
           "label": "用户气泡 3",
           "tag": "div",
-          "top": 357,
+          "top": 326,
           "left": 833,
           "width": 319,
           "height": 51
         },
         {
-          "index": 20,
+          "index": 21,
           "label": "AI 头像 4",
           "tag": "div",
-          "top": 439,
+          "top": 408,
           "left": 278,
           "width": 64,
           "height": 64
         },
         {
-          "index": 21,
+          "index": 22,
+          "label": "思考 4",
+          "tag": "button",
+          "top": 411,
+          "left": 358,
+          "width": 145,
+          "height": 20
+        },
+        {
+          "index": 23,
           "label": "AI 气泡 4",
           "tag": "div",
           "top": 439,
@@ -2336,7 +2679,7 @@
           "height": 240
         },
         {
-          "index": 22,
+          "index": 24,
           "label": "输入框",
           "tag": "div",
           "top": 711,
@@ -2345,25 +2688,34 @@
           "height": 56
         },
         {
-          "index": 23,
-          "label": "模型选择",
+          "index": 25,
+          "label": "角色选择",
           "tag": "button",
           "top": 775,
           "left": 278,
+          "width": 95,
+          "height": 28
+        },
+        {
+          "index": 26,
+          "label": "模型选择",
+          "tag": "button",
+          "top": 775,
+          "left": 557,
           "width": 97,
           "height": 28
         },
         {
-          "index": 24,
+          "index": 27,
           "label": "工作区选择",
           "tag": "button",
           "top": 775,
-          "left": 698,
+          "left": 838,
           "width": 159,
           "height": 28
         },
         {
-          "index": 25,
+          "index": 28,
           "label": "权限模式",
           "tag": "button",
           "top": 775,
@@ -2372,7 +2724,7 @@
           "height": 28
         }
       ],
-      "pngSha256": "5875881ec3c0b02cc271549d52378f151474788264fa3e1384160abc51efda7f"
+      "pngSha256": "9afca1cbd32e12dfd815729230ac09ec1f98bb0a676ac8bdcf5548cf05898f65"
     },
     "settings-memory": {
       "viewport": {
@@ -2421,46 +2773,73 @@
           "top": 46,
           "left": 395,
           "width": 720,
-          "height": 57
+          "height": 78
         },
         {
           "index": 4,
-          "label": "记忆状态",
+          "label": "对话摘要参数",
+          "tag": "div",
+          "top": 268,
+          "left": 416,
+          "width": 678,
+          "height": 261
+        },
+        {
+          "index": 5,
+          "label": "对话摘要状态",
           "tag": "dl",
-          "top": 208,
+          "top": 542,
           "left": 416,
           "width": 678,
           "height": 105
         },
         {
-          "index": 5,
-          "label": "检索参数",
-          "tag": "div",
-          "top": 570,
-          "left": 416,
-          "width": 678,
-          "height": 172
-        },
-        {
           "index": 6,
-          "label": "试召回输入",
+          "label": "对话摘要操作",
           "tag": "div",
-          "top": 877,
+          "top": 659,
           "left": 416,
           "width": 678,
           "height": 36
         },
         {
           "index": 7,
+          "label": "记忆状态",
+          "tag": "dl",
+          "top": 864,
+          "left": 416,
+          "width": 678,
+          "height": 105
+        },
+        {
+          "index": 8,
+          "label": "检索参数",
+          "tag": "div",
+          "top": 1226,
+          "left": 416,
+          "width": 678,
+          "height": 172
+        },
+        {
+          "index": 9,
+          "label": "试召回输入",
+          "tag": "div",
+          "top": 1533,
+          "left": 416,
+          "width": 678,
+          "height": 36
+        },
+        {
+          "index": 10,
           "label": "添加记忆",
           "tag": "div",
-          "top": 1049,
+          "top": 1705,
           "left": 416,
           "width": 678,
           "height": 36
         }
       ],
-      "pngSha256": "02d838df563f99acf284d220497fe76e23c60850b9f31880af24ad865be65947"
+      "pngSha256": "fbe2a920d75acc60547b6e716ae0f506fbf903ae862039b701adbdc7f571801f"
     },
     "settings-zones": {
       "viewport": {
@@ -2585,7 +2964,7 @@
           "height": 52
         }
       ],
-      "pngSha256": "96501df5346c017524f36a96dcb8a317274f8ecc9bb2839a2f70cfda31508d80"
+      "pngSha256": "d4dfa82cefb7a5678ca9ac8bf1ba1eb25795d3804e83075de8345971115cdf54"
     },
     "settings-zones-lower": {
       "viewport": {
@@ -3439,7 +3818,7 @@
           "height": 36
         }
       ],
-      "pngSha256": "42116d433e6ddaa178d3cc61ee28d21be08ac3a09da3053241d2c0b0ef5d8492"
+      "pngSha256": "e9ddd16fc0a704a00bb98cef5f2a393e16e293e9f983c819943ccf765e60e695"
     },
     "settings-qq": {
       "viewport": {
@@ -3582,7 +3961,7 @@
           "height": 43
         }
       ],
-      "pngSha256": "658d9dd9d23f751c8b51a93d852640f4bddc888658c311a3c28a2a801c4975a9"
+      "pngSha256": "a6c970e4ee645ac8e4d227f080a779848ad4dd343b28c03e362d04a76b03b831"
     },
     "settings-qq-lower": {
       "viewport": {
@@ -3725,7 +4104,7 @@
           "height": 43
         }
       ],
-      "pngSha256": "63ada94a6599e30814958d499b3e722ec506bd1a7502509a54e9a34b40f38287"
+      "pngSha256": "e89b0650a1c595872b96c6d873a3d6f18ef814e93c1047dc9447fa0cf746f1eb"
     },
     "settings-qq-events": {
       "viewport": {
@@ -3868,7 +4247,7 @@
           "height": 43
         }
       ],
-      "pngSha256": "29f55431e5865848ff3d4681fea8aaea393c5a0167f03fc70c6cad267fdc3e69"
+      "pngSha256": "edb2dad1a22203ab8aa73361e9448d01d5481d31eb61acd87ab1132a1881093d"
     },
     "settings-tools": {
       "viewport": {
@@ -3990,7 +4369,7 @@
           "height": 36
         }
       ],
-      "pngSha256": "8bae608cf6b950eeb9a627f7d90687b18124a2c393332b3979a8f5cfa93abd90"
+      "pngSha256": "2590766132e3a7a1c737d9b35ad80b489a6ed3d54207d2cd85998735c1edc0d7"
     },
     "settings-appearance": {
       "viewport": {
@@ -4164,7 +4543,7 @@
           "height": 190
         }
       ],
-      "pngSha256": "4a4fbb07953a6af4e87a06f3aba137cca1d14708ab57da9cb325a3d711867a12"
+      "pngSha256": "f7877e8fc8556af74d74596989873745564a59e62c6fbdfa44d4c31bae1b01b8"
     }
   },
   "observedTheme": {

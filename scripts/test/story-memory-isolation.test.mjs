@@ -67,6 +67,13 @@ const SETTINGS = { enabled: true, autoExtract: true, topK: 5, budgetTokens: 1200
  * 测试如果自己直接拿 storyId 去取库，就绕开了生产路径 —— 那样 M1 突变（路由恒返回 null）
  * 只会让测试崩溃，而不会让「故事记忆跑进主库」这条判据变红（J-05 的现场）。
  */
+/*
+ * P2：门面 buildContextBlock 的第三参改成 PersonaIdentity[]（不再收旧 scope 字符串）。
+ * 故事区的**物理隔离**仍由「一故事一库」保证（下面 A-06 照旧断言），
+ * 库内数据行由 TENANT 决定 —— P2 的固定租户是 root/default，P3 才换成真实发送者。
+ */
+const TENANT = { userId: 'root', personaId: 'default' }
+
 const libOf = (route) => (route.storyId ? storyMemory(route.storyId) : memoryService)
 const store = new StoryStore()
 const storyA = store.create({ title: '故事A', characterId: 'nahida' }, { characterId: 'nahida' })
@@ -99,7 +106,7 @@ await libOf(routeA).extractInBackground({
   provider: null,
   llmSettings: null,
   signal: new AbortController().signal,
-  scope: routeA.scope
+  tenant: TENANT
 })
 
 // 🔴 关键词命中的是**子串**：事实文本必须真的含查询词，否则「不命中」是数据造出来的假象。
@@ -112,7 +119,7 @@ await libOf(routeB).extractInBackground({
   provider: null,
   llmSettings: null,
   signal: new AbortController().signal,
-  scope: routeB.scope
+  tenant: TENANT
 })
 
 globalThis.__facts = ['我住在上海']
@@ -124,14 +131,14 @@ await libOf(routePlain).extractInBackground({
   provider: null,
   llmSettings: null,
   signal: new AbortController().signal,
-  scope: routePlain.scope
+  tenant: TENANT
 })
 
 /* ── 读回 ─────────────────────────────────────────────────────────── */
 
-const blockA = (q) => libOf(routeA).buildContextBlock(q, SETTINGS, [routeA.scope])
-const blockB = (q) => libOf(routeB).buildContextBlock(q, SETTINGS, [routeB.scope])
-const blockPlain = (q) => libOf(routePlain).buildContextBlock(q, SETTINGS, [routePlain.scope])
+const blockA = (q) => libOf(routeA).buildContextBlock(q, SETTINGS, [TENANT])
+const blockB = (q) => libOf(routeB).buildContextBlock(q, SETTINGS, [TENANT])
+const blockPlain = (q) => libOf(routePlain).buildContextBlock(q, SETTINGS, [TENANT])
 
 console.log('A-08 正向对照物：故事 A 自己命中')
 const own = await blockA('黑猫')
@@ -155,17 +162,32 @@ check('A-11 故事 A 读不到 B 的「大雪」', !aFromB.includes('大雪'), a
 const bOwn = await blockB('大雪')
 check('A-11 对照物：B 自己的「大雪」仍能命中', bOwn.includes('大雪'), bOwn.replace(/\n/g, ' | ') || '(空)')
 
-console.log('A-12 落盘的 scope_id 是真值（读盘，不读内存）')
+console.log('A-12 落盘的租户字段是真值（读盘，不读内存）')
 closeAllStoryMemory()
 const diskA = new MemoryStore(storyDbPath(storyA.storyId))
 const rowsA = diskA.list()
 check('A-12 故事 A 的库里有 1 条', rowsA.length === 1, rowsA.length)
-check('A-12 scope_id === story:<storyId>', rowsA[0] && rowsA[0].scopeId === storyScope(storyA.storyId), rowsA[0] && rowsA[0].scopeId)
+/*
+ * P1 判据集变更（T1）：`MemoryEntry` 已无 `scopeId`，分区键是 (userId, personaId)。
+ * 故事区的**物理隔离**由「一个故事一个 memory.db」保证（下面 A-06 那条仍在断言），
+ * 逻辑租户在 P2 一律是 root/default（chatService.memoryTenantOf 的兜底值），P3 才换成真实发送者。
+ * 这里断言的仍是「落盘值是真值、不是内存态」这一件事。
+ */
+check(
+  'A-12 落盘租户 = root/default（P2 的固定租户；P3 才换真实发送者）',
+  rowsA[0] && rowsA[0].userId === 'root' && rowsA[0].personaId === 'default',
+  rowsA[0] && rowsA[0].userId + '/' + rowsA[0].personaId
+)
+check('A-12 条目上**没有**遗留的 scopeId 字段', rowsA[0] && !('scopeId' in rowsA[0]))
 diskA.close()
 const diskMain = new MemoryStore(path.join(userData, 'memory.db'))
 const rowsMain = diskMain.list()
 check('A-12 主库里只有普通会话那 1 条', rowsMain.length === 1, rowsMain.map((item) => item.content).join(','))
-check('A-12 主库条目的域是 zone:root', rowsMain[0] && rowsMain[0].scopeId === 'zone:root', rowsMain[0] && rowsMain[0].scopeId)
+check(
+  'A-12 主库条目的租户也是 root/default',
+  rowsMain[0] && rowsMain[0].userId === 'root' && rowsMain[0].personaId === 'default',
+  rowsMain[0] && rowsMain[0].userId + '/' + rowsMain[0].personaId
+)
 diskMain.close()
 
 check('A-06 故事区库与主库不是同一个文件', storyDbPath(storyA.storyId) !== path.join(userData, 'memory.db'))

@@ -20,6 +20,7 @@ import { ensureWorkspace } from '../features/workspace'
 import { testModelConnection } from '../features/settings/modelTest'
 import { discoverModels } from '../features/settings/modelDiscovery'
 import { memoryService } from '../features/rag'
+import { summaryService } from '../features/summary/service'
 import { permissionGate } from '../features/tools/permission'
 import { listDefinitions } from '../features/tools/registry'
 import { registerChannelsIpcHandlers } from './channels'
@@ -70,6 +71,15 @@ export function registerIpcHandlers(): void {
     const { shell } = await import('electron')
     return shell.openPath(dir)
   })
+
+  // 对话摘要：把窗口外的对话压成四段文本（与上面的 memory:* 是两套东西）。
+  // forget 只删一条会话的摘要，clear 删全部摘要；两者都不动 sessions.json 与 memory.db。
+  ipcMain.handle(IPC.summaryStatus, () => summaryService.status())
+  ipcMain.handle(IPC.summaryForget, (_event, sessionId: string) => {
+    summaryService.forget(String(sessionId ?? ''))
+    return summaryService.status()
+  })
+  ipcMain.handle(IPC.summaryClear, () => summaryService.clear())
 
   ipcMain.handle(IPC.toolList, () => listDefinitions())
   ipcMain.handle(IPC.toolRespond, (_event, reply: ToolApprovalReply) => {

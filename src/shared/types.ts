@@ -25,6 +25,16 @@ export interface Message {
   /** 该条助手消息发起过的工具调用（含状态与结果） */
   toolCalls?: ToolCallRecord[]
   /**
+   * 模型思考过程（DeepSeek 的 reasoning_content / Anthropic 的 thinking / Gemini 的 thought）。
+   *
+   * 🔴 **只做展示，绝不回灌**。三个理由：
+   * 1. DeepSeek 官方明确要求下一轮不要把 reasoning_content 传回去（会 400）；
+   * 2. 思考过程常常几万字，回灌等于每轮翻倍烧 token；
+   * 3. 它是模型的自言自语，不是对用户说的话，混进 history 会带偏下一轮语气。
+   *    实现落点：`sessionHistoryToLlm` 只取 role/content，天然不带它。
+   */
+  reasoning?: string
+  /**
    * 从哪条消息抄来的（P6 派生分支时复制前缀消息用）。缺省 = 原创。
    * 🔴 只做加法：老消息没有该字段就是「原创」，语义正确，不迁移。
    */
@@ -201,6 +211,11 @@ export interface Settings {
   permission: PermissionSettings
   /** 长期记忆检索（RAG）配置 */
   memory: MemorySettings
+  /**
+   * 对话摘要配置（窗口外对话的滚动压缩）。
+   * 老配置没有这一段时由 normalizeSummary 补齐默认值，升级无损。
+   */
+  summary: SummarySettings
   /** 主题偏好。缺省（老配置）时按 DEFAULT_APPEARANCE 补齐，见 normalizeAppearance */
   appearance: AppearanceSettings
   /**
@@ -288,6 +303,44 @@ export interface MemorySettings {
   minScore: number
 }
 
+/**
+ * 对话摘要（会话滚动摘要）的配置。
+ *
+ * 🔴 与 MemorySettings 是**两套东西**，别合并：
+ * - MemorySettings 管 RAG：从用户消息抽事实、按 query 检索、命中才注入；
+ * - SummarySettings 管对话层：把窗口外的对话压成四段文本、**无条件**注入。
+ *
+ * 存储也不同：RAG 在 userData/memory.db（按 user × persona 分区），
+ * 摘要在 userData/summaries.json（按 sessionId 一份）。
+ */
+export interface SummarySettings {
+  /** 总开关。关掉 = 不压缩、不注入、历史全量下发（与加这个功能之前逐字一致） */
+  enabled: boolean
+  /** 未覆盖区间内「可读消息」达到多少条触发一次压缩 */
+  triggerCount: number
+  /** 压缩边界往回保留多少条原始消息（承接语气的重叠窗口） */
+  windowCount: number
+  /** 四段各自的字符上限，0 = 不截断 */
+  shortTermMaxChars: number
+  longTermMaxChars: number
+  userInfoMaxChars: number
+  promisesMaxChars: number
+}
+
+/** 摘要库的整体状态（设置页展示用，不含任何会话正文） */
+export interface SummaryStatus {
+  /** 已经有摘要的会话数 */
+  sessionCount: number
+  /** 被摘要覆盖的消息总数 */
+  coveredMessages: number
+  /** 最近一次成功压缩的时间戳；0 = 还没有过 */
+  lastUpdatedAt: number
+  /** 最近一次失败原因（跨会话取最新一条）；没有失败为 null */
+  lastError: string | null
+  /** summaries.json 的绝对路径，界面展示「数据在哪」 */
+  file: string
+}
+
 /** 一条长期记忆。sourceMessageId 用于在界面上溯源到原始对话。 */
 export interface MemoryEntry {
   id: string
@@ -301,11 +354,10 @@ export interface MemoryEntry {
   createdAt: number
   lastHitAt: number | null
   hitCount: number
-  /**
-   * 所属记忆域（P5）：zone:root / zone:<zoneId> / solo:<externalKey>。
-   * 可选 + 读时回落 root —— 旧数据与旧构造点都不用改（A43：三端共用类型只做加法）。
-   */
-  scopeId?: string
+  /** 这条记忆属于哪个用户（QQ 号；桌面为 'root'） */
+  userId: string
+  /** 这条记忆属于该用户的哪个人设 */
+  personaId: string
   /**
    * 产生这条记忆时，它在自己那条分支里的**消息下标**（P6 / T12）。
    * 缺省 / null = 未知来源（P6 之前的老记忆）→ 按「对全部分支可见」处理（fail-open）。
@@ -327,6 +379,8 @@ export interface MemoryStatus {
   dbPath: string
   /** 最近一次错误，正常时为 null */
   lastError: string | null
+  /** 是否已建立人设表（库是新的） */
+  personasReady: boolean
 }
 
 /** 新建 / 编辑一条记忆 */
@@ -334,6 +388,41 @@ export interface MemoryDraft {
   id?: string
   content: string
   weight?: number
+  /** 写入哪个用户；缺省由 MemoryService 填 root（桌面端虚拟用户） */
+  userId?: string
+  /** 写入哪个人设；缺省由 MemoryService 填 default */
+  personaId?: string
+}
+
+/** 一个用户的人设汇总（设置页「按人聚合」用） */
+export interface PersonaSummary {
+  userId: string
+  displayName: string
+  personaCount: number
+  activePersonaId: string
+  memoryCount: number
+  lastActiveAt: number | null
+}
+
+/** 用户详情页用：一个人设及其记忆条数 */
+export interface PersonaDetail {
+  personaId: string
+  isActive: boolean
+  memoryCount: number
+  createdAt: number
+}
+
+/** 人设历史一条（近期聊天展示用） */
+export interface PersonaHistoryEntry {
+  id: string
+  userId: string
+  personaId: string
+  role: 'user' | 'assistant'
+  content: string
+  sessionId: string
+  chatType: 'desktop' | 'private' | 'group'
+  chatId: string | null
+  createdAt: number
 }
 
 /** 召回结果（调试用：让用户看到"她为什么记得"） */
@@ -447,6 +536,21 @@ export interface ChatDone {
   messageId: string
   content: string
   toolCalls: ToolCallRecord[]
+  /** 本轮思考全文；模型没吐思考时为 undefined（不要写成空串） */
+  reasoning?: string
+}
+
+/**
+ * 主进程 → 渲染进程的「思考增量」。
+ *
+ * 为什么单独一个频道而不是复用 ChatDelta：渲染层对两者的处理完全不同 ——
+ * delta 往气泡正文里拼，reasoning 往可折叠块里拼，而且在正文开始时要把块自动收起。
+ * 塞进 ChatDelta 就得加一个 kind 字段，等于把一个频道当成两个用。
+ */
+export interface ChatReasoning {
+  sessionId: string
+  messageId: string
+  delta: string
 }
 
 export interface ChatFailure {

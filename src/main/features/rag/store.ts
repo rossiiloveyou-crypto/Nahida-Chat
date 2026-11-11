@@ -4,9 +4,9 @@ import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { app } from 'electron'
 import { MEMORY_MAX_CHARS } from '@shared/constants'
-import type { MemoryEntry } from '@shared/types'
-import type { MemoryScopeId } from '@shared/zones'
-import { rootScope } from '@shared/zones'
+import { DEFAULT_PERSONA_ID } from '@shared/persona'
+import type { UserPersonaRow } from '@shared/persona'
+import type { MemoryEntry, PersonaHistoryEntry } from '@shared/types'
 import { fromBlob, toBlob } from './vector'
 import { toIndexText } from './tokenize'
 
@@ -18,17 +18,34 @@ import { toIndexText } from './tokenize'
  * 每轮对话都 O(n) 写放大——这正是 ADR-0001 换掉 sessions.json 的理由。
  *
  * 为什么用 node:sqlite 而不是 better-sqlite3：内置、零原生模块、免 rebuild。
+ *
+ * ── P1（数据模型重建）────────────────────────────────────────────────
+ * 分区键从「域（scope_id）」换成两级租户「用户 × 人设」（user_id, persona_id）。
+ * - 一个库文件承载**全部**用户：不按用户拆文件（M20）。所有查询强制带租户条件。
+ * - 旧库**不迁移**：检测到 scope_id 列就整表重建（用户已批准丢弃旧数据，M6）。
+ *   不可逆点靠 task-Memory/backup-<ts>/ 的物理备份兜底。
+ * - `embedding BLOB` 必须保留（M2 / J-02）：向量检索是本任务的前提，不是可选项。
  */
 
 /**
  * 建表语句。FTS5 用外部内容表，正文只存一份，避免两份数据不同步。
  *
- * P5：memories 直接带 scope_id（全新库一次到位）。**scope 索引不在 SCHEMA 里** ——
- * 旧库的 CREATE 是 IF NOT EXISTS 不会补列，索引必须先等迁移把列加上（见 open()）。
+ * 🔴 `content_rowid` 必须指向整数 rowid，不能指向 TEXT 主键，
+ *    否则 INSERT 时报 `datatype mismatch`（本项目已经踩过一次）。
  */
 const SCHEMA = [
+  `CREATE TABLE IF NOT EXISTS user_personas (
+    user_id TEXT NOT NULL,
+    persona_id TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, persona_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_user_personas_user ON user_personas(user_id, is_active)`,
   `CREATE TABLE IF NOT EXISTS memories (
     id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    persona_id TEXT NOT NULL,
     content TEXT NOT NULL,
     seg_text TEXT NOT NULL,
     source_session_id TEXT,
@@ -38,10 +55,9 @@ const SCHEMA = [
     embedding BLOB,
     created_at INTEGER NOT NULL,
     last_hit_at INTEGER,
-    hit_count INTEGER NOT NULL DEFAULT 0,
-    scope_id TEXT NOT NULL DEFAULT 'zone:root'
+    hit_count INTEGER NOT NULL DEFAULT 0
   )`,
-  `CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_memories_tenant ON memories(user_id, persona_id, created_at DESC)`,
   `CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
     seg_text,
     content='memories',
@@ -57,11 +73,21 @@ const SCHEMA = [
   `CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
     INSERT INTO memories_fts(memories_fts, rowid, seg_text) VALUES ('delete', old.rowid, old.seg_text);
     INSERT INTO memories_fts(rowid, seg_text) VALUES (new.rowid, new.seg_text);
-  END`
+  END`,
+  `CREATE TABLE IF NOT EXISTS persona_chat_history (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    persona_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    chat_type TEXT NOT NULL,
+    chat_id TEXT,
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_persona_history
+     ON persona_chat_history(user_id, persona_id, created_at DESC)`
 ]
-
-/** 迁移之后才能建的索引（依赖 scope_id 列） */
-const POST_MIGRATION = [`CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope_id)`]
 
 /**
  * 判列是否存在（J-20）。
@@ -75,6 +101,43 @@ function hasColumn(db: DatabaseSync, table: string, column: string): boolean {
   return rows.some((row) => row.name === column)
 }
 
+/**
+ * 旧结构 → 整表重建（P1，不可逆）。
+ *
+ * 为什么不是迁移：`CREATE TABLE IF NOT EXISTS` 对已存在的旧表**什么都不做**，
+ * 所以不显式删表就永远留着一个旧表，新代码往里插入就报
+ * `NOT NULL constraint failed: memories.user_id`。用户已批准直接丢弃旧数据（M6）。
+ *
+ * 🔴 判定必须比「有 scope_id」宽：本机实测存在**更老的库**（`memory.db.p5-backup`），
+ *    它既没有 scope_id 也没有 user_id/persona_id。只认 scope_id 会让这种库
+ *    绕过闸门，然后在第一条查询上 `no such column: user_id` 整个失能。
+ *    判定口径改为「memories 存在，且缺少任一新结构列」。
+ *
+ * 🔴 顺序不可交换：先删虚拟表与触发器，再删主表。
+ *    残留的 FTS 外部内容表指向一个不存在的表，会让下次建的触发器在
+ *    INSERT 时报 `datatype mismatch`。
+ */
+function resetLegacySchema(db: DatabaseSync): void {
+  const tables = db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'memories'")
+    .all() as unknown as Array<{ name: string }>
+  // 全新库：主表都不存在，交给 SCHEMA 建，不做任何破坏性动作。
+  if (tables.length === 0) return
+
+  const columns = (db.prepare('PRAGMA table_info(memories)').all() as unknown as Array<{ name: string }>).map(
+    (row) => row.name
+  )
+  const isCurrent = columns.includes('user_id') && columns.includes('persona_id') && columns.includes('embedding')
+  if (isCurrent) return
+
+  console.info('[memory] 检测到旧 zone 结构，已按用户决定重建（旧记忆丢弃）')
+  db.exec('DROP TRIGGER IF EXISTS memories_ai')
+  db.exec('DROP TRIGGER IF EXISTS memories_ad')
+  db.exec('DROP TRIGGER IF EXISTS memories_au')
+  db.exec('DROP TABLE IF EXISTS memories_fts')
+  db.exec('DROP TABLE IF EXISTS memories')
+}
+
 /** 带向量的完整行，只在检索路径内部用 */
 export interface StoredMemory extends MemoryEntry {
   embedding: Float32Array | null
@@ -82,6 +145,8 @@ export interface StoredMemory extends MemoryEntry {
 
 interface MemoryRow {
   id: string
+  user_id: string
+  persona_id: string
   content: string
   source_session_id: string | null
   source_message_id: string | null
@@ -91,7 +156,39 @@ interface MemoryRow {
   created_at: number
   last_hit_at: number | null
   hit_count: number
-  scope_id: string | null
+}
+
+interface PersonaRow {
+  user_id: string
+  persona_id: string
+  is_active: number
+  created_at: number
+}
+
+interface HistoryRow {
+  id: string
+  user_id: string
+  persona_id: string
+  role: string
+  content: string
+  session_id: string
+  chat_type: string
+  chat_id: string | null
+  created_at: number
+}
+
+/** 把租户列表编成 `(a AND b) OR (c AND d)`；调用方必须先处理空数组（空 IN 是语法错误） */
+function tenantClause(tenants: Array<{ userId: string; personaId: string }>, prefix = ''): {
+  sql: string
+  params: string[]
+} {
+  const parts: string[] = []
+  const params: string[] = []
+  for (const tenant of tenants) {
+    parts.push('(' + prefix + 'user_id = ? AND ' + prefix + 'persona_id = ?)')
+    params.push(tenant.userId, tenant.personaId)
+  }
+  return { sql: '(' + parts.join(' OR ') + ')', params }
 }
 
 export class MemoryStore {
@@ -119,21 +216,12 @@ export class MemoryStore {
       const file = this.dbFile
       if (!existsSync(dirname(file))) mkdirSync(dirname(file), { recursive: true })
       const db = new DatabaseSync(file)
+      // 🔴 WAL 必须在任何 DDL 之前设置：resetLegacySchema 要删表。
       db.exec('PRAGMA journal_mode = WAL')
       db.exec('PRAGMA synchronous = NORMAL')
+      // 旧结构闸门必须在 SCHEMA 之前：CREATE TABLE IF NOT EXISTS 不会重建旧表。
+      resetLegacySchema(db)
       for (const statement of SCHEMA) db.exec(statement)
-      // 迁移必须在 SCHEMA 之后：全新库的 CREATE 已经带了 scope_id，这里会判为已存在；
-      // 旧库的 CREATE IF NOT EXISTS 不会补列，这里才执行 ALTER。
-      if (!hasColumn(db, 'memories', 'scope_id')) {
-        db.exec("ALTER TABLE memories ADD COLUMN scope_id TEXT NOT NULL DEFAULT 'zone:root'")
-        console.info('[memory] 迁移：memories 增加 scope_id，旧数据回落 zone:root')
-      }
-      // P6 / T12：分支记忆可见性的产生位置。旧数据为 NULL（对全部分支可见，fail-open）。
-      if (!hasColumn(db, 'memories', 'source_message_index')) {
-        db.exec('ALTER TABLE memories ADD COLUMN source_message_index INTEGER')
-        console.info('[memory] 迁移：memories 增加 source_message_index，旧数据为 NULL（对全部分支可见）')
-      }
-      for (const statement of POST_MIGRATION) db.exec(statement)
       this.db = db
       return db
     } catch (error) {
@@ -166,7 +254,7 @@ export class MemoryStore {
     }
   }
 
-  /** 按创建时间倒序列出全部记忆（设置页用） */
+  /** 按创建时间倒序列出**全部**记忆（跨租户；设置页总览用） */
   list(): MemoryEntry[] {
     const db = this.open()
     if (!db) return []
@@ -181,111 +269,157 @@ export class MemoryStore {
     }
   }
 
-  /** 按域列出（设置页按域筛选 / 面板统计） */
-  listByScope(scope: MemoryScopeId): MemoryEntry[] {
+  /** 单人单设的全部记忆，按创建时间倒序 */
+  listByTenant(userId: string, personaId: string): MemoryEntry[] {
     const db = this.open()
     if (!db) return []
     try {
       const rows = db
-        .prepare('SELECT * FROM memories WHERE scope_id = ? ORDER BY created_at DESC')
-        .all(scope) as unknown as MemoryRow[]
+        .prepare('SELECT * FROM memories WHERE user_id = ? AND persona_id = ? ORDER BY created_at DESC')
+        .all(userId, personaId) as unknown as MemoryRow[]
       return rows.map(toEntry)
     } catch (error) {
-      console.warn('[memory] 按域读取失败', error)
+      console.warn('[memory] 按租户读取失败', error)
       return []
     }
   }
 
-  /** 各域条数：面板上「这个区块有多少条记忆」 */
-  countByScope(): Array<{ scopeId: MemoryScopeId; count: number }> {
+  /** 按人聚合条数（设置页「按人」列表） */
+  countByUser(): Array<{ userId: string; count: number }> {
     const db = this.open()
     if (!db) return []
     try {
       const rows = db
-        .prepare('SELECT scope_id AS scope, COUNT(*) AS total FROM memories GROUP BY scope_id')
-        .all() as unknown as Array<{ scope: string | null; total: number }>
-      return rows.map((row) => ({ scopeId: row.scope ?? rootScope(), count: row.total }))
+        .prepare('SELECT user_id AS uid, COUNT(*) AS total FROM memories GROUP BY user_id ORDER BY uid')
+        .all() as unknown as Array<{ uid: string; total: number }>
+      return rows.map((row) => ({ userId: row.uid, count: row.total }))
     } catch (error) {
-      console.warn('[memory] 按域统计失败', error)
+      console.warn('[memory] 按人统计失败', error)
       return []
     }
   }
 
-  /** 带向量的行，限定在一个或多个域内。空数组 = 不检索（不是"不过滤"）。 */
-  allWithEmbeddingIn(scopes: MemoryScopeId[]): StoredMemory[] {
-    if (scopes.length === 0) return []
+  /** 一个人下面各人设的条数（用户详情页） */
+  countByPersona(userId: string): Array<{ personaId: string; count: number }> {
     const db = this.open()
     if (!db) return []
     try {
-      // 🔴 空 IN 子句是 SQL 语法错误，所以上面必须先 return（本 Phase 新坑 3）
-      const placeholders = scopes.map(() => '?').join(',')
       const rows = db
-        .prepare('SELECT * FROM memories WHERE embedding IS NOT NULL AND scope_id IN (' + placeholders + ')')
-        .all(...scopes) as unknown as MemoryRow[]
+        .prepare(
+          'SELECT persona_id AS pid, COUNT(*) AS total FROM memories WHERE user_id = ? GROUP BY persona_id ORDER BY pid'
+        )
+        .all(userId) as unknown as Array<{ pid: string; total: number }>
+      return rows.map((row) => ({ personaId: row.pid, count: row.total }))
+    } catch (error) {
+      console.warn('[memory] 按人设统计失败', error)
+      return []
+    }
+  }
+
+  /**
+   * 带向量的行，限定在一组租户内。空数组 = 空结果（fail-closed），不是"不过滤"。
+   * 这条 fail-closed 是隐私边界：把配置错误变成"退回全库"等于跨用户泄漏。
+   */
+  allWithEmbeddingInTenants(tenants: Array<{ userId: string; personaId: string }>): StoredMemory[] {
+    if (tenants.length === 0) return []
+    const db = this.open()
+    if (!db) return []
+    try {
+      const clause = tenantClause(tenants)
+      const rows = db
+        .prepare('SELECT * FROM memories WHERE embedding IS NOT NULL AND ' + clause.sql)
+        .all(...clause.params) as unknown as MemoryRow[]
       return rows.map((row) => ({ ...toEntry(row), embedding: row.embedding ? fromBlob(row.embedding) : null }))
     } catch (error) {
-      console.warn('[memory] 按域读取向量失败', error)
+      console.warn('[memory] 按租户读取向量失败', error)
       return []
     }
   }
 
-  /** FTS5 关键词检索，限定在域内。空 scopes = 空结果。 */
-  keywordSearchIn(
+  /** FTS5 关键词检索，限定在租户内。空 tenants = 空结果。 */
+  keywordSearchInTenants(
     matchQuery: string,
-    limit: number,
-    scopes: MemoryScopeId[]
+    tenants: Array<{ userId: string; personaId: string }>,
+    limit: number
   ): Array<{ id: string; score: number }> {
-    if (!matchQuery || scopes.length === 0) return []
+    if (!matchQuery || tenants.length === 0) return []
     const db = this.open()
     if (!db) return []
     try {
-      const placeholders = scopes.map(() => '?').join(',')
+      const clause = tenantClause(tenants, 'm.')
       const rows = db
         .prepare(
           `SELECT m.id AS id, bm25(memories_fts) AS rank
            FROM memories_fts
            JOIN memories m ON m.rowid = memories_fts.rowid
-           WHERE memories_fts MATCH ? AND m.scope_id IN (` +
-            placeholders +
-            `)
+           WHERE memories_fts MATCH ? AND ` +
+            clause.sql +
+            `
            ORDER BY rank
            LIMIT ?`
         )
-        .all(matchQuery, ...scopes, limit) as unknown as Array<{ id: string; rank: number }>
+        .all(matchQuery, ...clause.params, limit) as unknown as Array<{ id: string; rank: number }>
       return rows.map((row) => ({ id: row.id, score: -row.rank }))
     } catch (error) {
-      console.warn('[memory] 按域关键词检索失败', error)
+      console.warn('[memory] 按租户关键词检索失败', error)
       return []
     }
   }
 
-  /** 把一个域的全部记忆搬到另一个域（删区块时用）。返回搬迁条数。 */
-  reassignScope(from: MemoryScopeId, to: MemoryScopeId): number {
+  /** 取带向量的全部行（跨租户）。**只服务"未指定租户"的兼容路径**，生产必须传租户。 */
+  allWithEmbedding(): StoredMemory[] {
     const db = this.open()
-    if (!db) return 0
+    if (!db) return []
     try {
-      const result = db.prepare('UPDATE memories SET scope_id = ? WHERE scope_id = ?').run(to, from) as unknown as {
-        changes?: number
-      }
-      return Number(result.changes ?? 0)
-    } catch (error) {
-      console.warn('[memory] 域搬迁失败', error)
-      return 0
+      const rows = db
+        .prepare('SELECT * FROM memories WHERE embedding IS NOT NULL')
+        .all() as unknown as MemoryRow[]
+      return rows.map((row) => ({ ...toEntry(row), embedding: row.embedding ? fromBlob(row.embedding) : null }))
+    } catch {
+      return []
     }
   }
 
-  /** 新增或更新一条记忆；embedding 由调用方算好传入 */
+  /**
+   * FTS5 关键词检索（跨租户），返回 [id, 原始 bm25 分数]。
+   * bm25() 越小越相关（SQLite 返回负值），这里取负转成越大越好。
+   * 同上：只服务"未指定租户"的兼容路径。
+   */
+  keywordSearch(matchQuery: string, limit: number): Array<{ id: string; score: number }> {
+    if (!matchQuery) return []
+    const db = this.open()
+    if (!db) return []
+    try {
+      const rows = db
+        .prepare(
+          `SELECT m.id AS id, bm25(memories_fts) AS rank
+           FROM memories_fts
+           JOIN memories m ON m.rowid = memories_fts.rowid
+           WHERE memories_fts MATCH ?
+           ORDER BY rank
+           LIMIT ?`
+        )
+        .all(matchQuery, limit) as unknown as Array<{ id: string; rank: number }>
+      return rows.map((row) => ({ id: row.id, score: -row.rank }))
+    } catch (error) {
+      // FTS 查询语法错误（极端输入）不该影响向量检索，静默降级
+      console.warn('[memory] 关键词检索失败', error)
+      return []
+    }
+  }
+
+  /** 新增或更新一条记忆；embedding 由调用方算好传入。租户必填（忘了赋值 = 跨用户串数据） */
   upsert(input: {
     id?: string
     content: string
+    userId: string
+    personaId: string
     weight?: number
     sourceSessionId?: string | null
     sourceMessageId?: string | null
     /** 产生这条记忆时，它在自己那条分支里的消息下标（P6 / T12）；缺省 null */
     sourceMessageIndex?: number | null
     embedding?: Float32Array | null
-    /** 所属记忆域；缺省 zone:root（兼容 P4 及以前的调用方） */
-    scopeId?: MemoryScopeId
   }): MemoryEntry | null {
     const db = this.open()
     if (!db) return null
@@ -298,28 +432,29 @@ export class MemoryStore {
       const embedding = input.embedding ?? null
 
       if (existing) {
-        // 更新：没给新 embedding 就保留旧的，避免"改个错别字就丢向量"；
-        // 没给 scopeId 就保留原域（手工改一条群记忆不该把它搬到 root）。
+        // 更新：没给新 embedding 就保留旧的，避免"改个错别字就丢向量"。
         if (embedding) {
           db.prepare(
-            'UPDATE memories SET content = ?, seg_text = ?, weight = COALESCE(?, weight), embedding = ?, scope_id = COALESCE(?, scope_id), source_message_index = COALESCE(?, source_message_index) WHERE id = ?'
+            'UPDATE memories SET content = ?, seg_text = ?, weight = COALESCE(?, weight), embedding = ?, user_id = ?, persona_id = ?, source_message_index = COALESCE(?, source_message_index) WHERE id = ?'
           ).run(
             content,
             toIndexText(content),
             input.weight ?? null,
             toBlob(embedding),
-            input.scopeId ?? null,
+            input.userId,
+            input.personaId,
             input.sourceMessageIndex ?? null,
             id
           )
         } else {
           db.prepare(
-            'UPDATE memories SET content = ?, seg_text = ?, weight = COALESCE(?, weight), scope_id = COALESCE(?, scope_id), source_message_index = COALESCE(?, source_message_index) WHERE id = ?'
+            'UPDATE memories SET content = ?, seg_text = ?, weight = COALESCE(?, weight), user_id = ?, persona_id = ?, source_message_index = COALESCE(?, source_message_index) WHERE id = ?'
           ).run(
             content,
             toIndexText(content),
             input.weight ?? null,
-            input.scopeId ?? null,
+            input.userId,
+            input.personaId,
             input.sourceMessageIndex ?? null,
             id
           )
@@ -327,10 +462,12 @@ export class MemoryStore {
       } else {
         db.prepare(
           `INSERT INTO memories
-            (id, content, seg_text, source_session_id, source_message_id, source_message_index, weight, embedding, created_at, hit_count, scope_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`
+            (id, user_id, persona_id, content, seg_text, source_session_id, source_message_id, source_message_index, weight, embedding, created_at, hit_count)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`
         ).run(
           id,
+          input.userId,
+          input.personaId,
           content,
           toIndexText(content),
           input.sourceSessionId ?? null,
@@ -338,8 +475,7 @@ export class MemoryStore {
           input.sourceMessageIndex ?? null,
           input.weight ?? 1,
           embedding ? toBlob(embedding) : null,
-          Date.now(),
-          input.scopeId ?? rootScope()
+          Date.now()
         )
       }
 
@@ -378,7 +514,8 @@ export class MemoryStore {
     }
   }
 
-  clear(): void {
+  /** 清空本库的全部记忆（含所有租户）；人设注册表保留。故事库 / 主库都可用。 */
+  clearAll(): void {
     const db = this.open()
     if (!db) return
     try {
@@ -388,43 +525,213 @@ export class MemoryStore {
     }
   }
 
-  /** 取带向量的全部行，用于暴力余弦扫描 */
-  allWithEmbedding(): StoredMemory[] {
+  /**
+   * 整人注销：该用户的**全部人设 + 全部历史 + 全部记忆**（M9）。
+   * 🔴 必须在单个事务内完成，顺序：历史 → 记忆 → 人设表。
+   *    中途失败回滚并返回全 0，绝不留下"人设没了但记忆还在"的孤儿。
+   */
+  deleteByUser(userId: string): { histories: number; memories: number; personas: number } {
     const db = this.open()
-    if (!db) return []
+    if (!db) return { histories: 0, memories: 0, personas: 0 }
+    let histories = 0
+    let memories = 0
+    let personas = 0
     try {
-      const rows = db
-        .prepare('SELECT * FROM memories WHERE embedding IS NOT NULL')
-        .all() as unknown as MemoryRow[]
-      return rows.map((row) => ({ ...toEntry(row), embedding: row.embedding ? fromBlob(row.embedding) : null }))
-    } catch {
-      return []
+      db.exec('BEGIN')
+      histories = Number(
+        (db.prepare('DELETE FROM persona_chat_history WHERE user_id = ?').run(userId) as unknown as {
+          changes?: number
+        }).changes ?? 0
+      )
+      memories = Number(
+        (db.prepare('DELETE FROM memories WHERE user_id = ?').run(userId) as unknown as {
+          changes?: number
+        }).changes ?? 0
+      )
+      personas = Number(
+        (db.prepare('DELETE FROM user_personas WHERE user_id = ?').run(userId) as unknown as {
+          changes?: number
+        }).changes ?? 0
+      )
+      db.exec('COMMIT')
+      return { histories, memories, personas }
+    } catch (error) {
+      try {
+        db.exec('ROLLBACK')
+      } catch {
+        // 回滚失败时事务已被 SQLite 自动终止，无需处理
+      }
+      console.warn('[memory] 整人注销失败，已回滚', error)
+      return { histories: 0, memories: 0, personas: 0 }
+    }
+  }
+
+  /** 删掉一个人设的全部记忆 + 历史 + 注册表行。返回删掉的记忆条数。 */
+  deleteByPersona(userId: string, personaId: string): number {
+    const db = this.open()
+    if (!db) return 0
+    try {
+      db.exec('BEGIN')
+      db.prepare('DELETE FROM persona_chat_history WHERE user_id = ? AND persona_id = ?').run(userId, personaId)
+      const removed = Number(
+        (db.prepare('DELETE FROM memories WHERE user_id = ? AND persona_id = ?').run(userId, personaId) as unknown as {
+          changes?: number
+        }).changes ?? 0
+      )
+      db.prepare('DELETE FROM user_personas WHERE user_id = ? AND persona_id = ?').run(userId, personaId)
+      db.exec('COMMIT')
+      return removed
+    } catch (error) {
+      try {
+        db.exec('ROLLBACK')
+      } catch {
+        // 同上
+      }
+      console.warn('[memory] 人设删除失败，已回滚', error)
+      return 0
     }
   }
 
   /**
-   * FTS5 关键词检索，返回 [id, 原始 bm25 分数]。
-   * bm25() 越小越相关（SQLite 返回负值），这里取负转成越大越好。
+   * 注册人设。`activate = true` 时先清零该用户全部 is_active，再置 1 ——
+   * 🔴 两条语句必须在**同一事务**内，否则崩溃会留下 0 个或 2 个激活人设。
    */
-  keywordSearch(matchQuery: string, limit: number): Array<{ id: string; score: number }> {
-    if (!matchQuery) return []
+  upsertPersona(userId: string, personaId: string, activate?: boolean): void {
+    const db = this.open()
+    if (!db) return
+    try {
+      db.exec('BEGIN')
+      if (activate) {
+        db.prepare('UPDATE user_personas SET is_active = 0 WHERE user_id = ? AND is_active = 1').run(userId)
+        db.prepare(
+          `INSERT INTO user_personas(user_id, persona_id, is_active, created_at)
+           VALUES (?, ?, 1, ?)
+           ON CONFLICT(user_id, persona_id) DO UPDATE SET is_active = 1`
+        ).run(userId, personaId, Date.now())
+      } else {
+        db.prepare(
+          `INSERT INTO user_personas(user_id, persona_id, is_active, created_at)
+           VALUES (?, ?, 0, ?)
+           ON CONFLICT(user_id, persona_id) DO NOTHING`
+        ).run(userId, personaId, Date.now())
+      }
+      db.exec('COMMIT')
+    } catch (error) {
+      try {
+        db.exec('ROLLBACK')
+      } catch {
+        // 同上
+      }
+      console.warn('[memory] 人设注册失败', error)
+    }
+  }
+
+  /** 该用户的全部人设，按创建时间升序 */
+  listPersonas(userId: string): UserPersonaRow[] {
     const db = this.open()
     if (!db) return []
     try {
       const rows = db
         .prepare(
-          `SELECT m.id AS id, bm25(memories_fts) AS rank
-           FROM memories_fts
-           JOIN memories m ON m.rowid = memories_fts.rowid
-           WHERE memories_fts MATCH ?
-           ORDER BY rank
+          'SELECT user_id, persona_id, is_active, created_at FROM user_personas WHERE user_id = ? ORDER BY created_at ASC, persona_id ASC'
+        )
+        .all(userId) as unknown as PersonaRow[]
+      return rows.map((row) => ({
+        userId: row.user_id,
+        personaId: row.persona_id,
+        isActive: row.is_active === 1,
+        createdAt: row.created_at
+      }))
+    } catch (error) {
+      console.warn('[memory] 人设列表失败', error)
+      return []
+    }
+  }
+
+  /** 当前激活人设；无记录返回 null（**调用方负责自动注册 default**） */
+  activePersona(userId: string): string | null {
+    const db = this.open()
+    if (!db) return null
+    try {
+      const row = db
+        .prepare('SELECT persona_id FROM user_personas WHERE user_id = ? AND is_active = 1 LIMIT 1')
+        .get(userId) as unknown as { persona_id: string } | undefined
+      return row ? row.persona_id : null
+    } catch (error) {
+      console.warn('[memory] 激活人设读取失败', error)
+      return null
+    }
+  }
+
+  /**
+   * 删除人设。**拒绝删 default，也拒绝删当前激活的那个** ——
+   * 删掉激活人设会让该用户下一次消息无处可写。
+   */
+  deletePersona(userId: string, personaId: string): boolean {
+    if (personaId === DEFAULT_PERSONA_ID) return false
+    if (this.activePersona(userId) === personaId) return false
+    const db = this.open()
+    if (!db) return false
+    try {
+      db.prepare('DELETE FROM user_personas WHERE user_id = ? AND persona_id = ?').run(userId, personaId)
+      return true
+    } catch (error) {
+      console.warn('[memory] 人设删除失败', error)
+      return false
+    }
+  }
+
+  /** 写一条「该用户在该人设下」的往来 */
+  appendHistory(entry: PersonaHistoryEntry): void {
+    const db = this.open()
+    if (!db) return
+    try {
+      db.prepare(
+        `INSERT OR REPLACE INTO persona_chat_history
+          (id, user_id, persona_id, role, content, session_id, chat_type, chat_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        entry.id,
+        entry.userId,
+        entry.personaId,
+        entry.role,
+        entry.content,
+        entry.sessionId,
+        entry.chatType,
+        entry.chatId ?? null,
+        entry.createdAt
+      )
+    } catch (error) {
+      console.warn('[memory] 人设历史写入失败', error)
+    }
+  }
+
+  /** 该用户该人设的近期聊天，按时间倒序 */
+  recentHistory(userId: string, personaId: string, limit: number): PersonaHistoryEntry[] {
+    const db = this.open()
+    if (!db) return []
+    try {
+      const rows = db
+        .prepare(
+          `SELECT * FROM persona_chat_history
+           WHERE user_id = ? AND persona_id = ?
+           ORDER BY created_at DESC
            LIMIT ?`
         )
-        .all(matchQuery, limit) as unknown as Array<{ id: string; rank: number }>
-      return rows.map((row) => ({ id: row.id, score: -row.rank }))
+        .all(userId, personaId, limit) as unknown as HistoryRow[]
+      return rows.map((row) => ({
+        id: row.id,
+        userId: row.user_id,
+        personaId: row.persona_id,
+        role: row.role === 'assistant' ? 'assistant' : 'user',
+        content: row.content,
+        sessionId: row.session_id,
+        chatType: row.chat_type === 'private' || row.chat_type === 'group' ? row.chat_type : 'desktop',
+        chatId: row.chat_id,
+        createdAt: row.created_at
+      }))
     } catch (error) {
-      // FTS 查询语法错误（极端输入）不该影响向量检索，静默降级
-      console.warn('[memory] 关键词检索失败', error)
+      console.warn('[memory] 人设历史读取失败', error)
       return []
     }
   }
@@ -458,7 +765,8 @@ export class MemoryStore {
 function toEntry(row: MemoryRow): MemoryEntry {
   return {
     id: row.id,
-    scopeId: row.scope_id ?? rootScope(),
+    userId: row.user_id,
+    personaId: row.persona_id,
     content: row.content,
     sourceSessionId: row.source_session_id,
     sourceMessageId: row.source_message_id,

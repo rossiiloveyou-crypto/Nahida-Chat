@@ -224,6 +224,20 @@ class PromptStore {
     return shell.openPath(dir)
   }
 
+  /**
+   * 这个 id 是不是提示词库里**真实存在**的角色目录 —— 切换角色时的校验入口。
+   *
+   * 🔴 用 readdir 出来的 id 做全等比较，**不拼路径**：这个 id 来自渲染层，
+   *    join(root, 'characters', '../../..') 之类的输入会读到 Prompt/ 外面去。
+   * 🔴 判据是「目录在」而不是「complete」：缺 soul.md 的角色仍然可以被选中
+   *    （compose 对缺文件本来就是跳过），设置页那条「缺少人格核心」才是它的出口。
+   */
+  hasCharacter(characterId: string): boolean {
+    const id = typeof characterId === 'string' ? characterId.trim() : ''
+    if (!id) return false
+    return this.library().characters.some((item) => item.id === id)
+  }
+
   /** 默认角色：第一个带 soul.md 的目录，找不到就 nahida。 */
   defaultCharacterId(): string {
     const library = this.library()

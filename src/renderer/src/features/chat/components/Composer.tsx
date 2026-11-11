@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
 import { INPUT_LENGTH_WARN } from '@shared/constants'
+import type { PromptCharacter } from '@shared/types'
 import { brandFor } from '../../../assets/nahida'
 import { useTheme } from '../../settings/useTheme'
 import { ComposerBar } from './ComposerBar'
@@ -21,6 +22,12 @@ interface ComposerProps {
   /** 当前生效的工作区；同理由 ChatPage 解析后传进来 */
   workspaceId: string | null
   onPickWorkspace: (workspaceId: string) => void
+  /** 角色：会话的 > 草稿的 > 设置里的新对话默认。名字给占位符，id 给选择器判选中 */
+  characterId: string | null
+  characterName: string
+  characters: PromptCharacter[]
+  onPickCharacter: (characterId: string) => void
+  characterLocked: boolean
   /**
    * P6 G3：Agent 模式且零工作区 —— 整块输入区变成"点击即建区"的引导态。
    * 判据由 ChatPage 算，这里只负责呈现。
@@ -48,6 +55,11 @@ export function Composer({
   onPickModel,
   workspaceId,
   onPickWorkspace,
+  characterId,
+  characterName,
+  characters,
+  onPickCharacter,
+  characterLocked,
   needsWorkspace,
   onCreateWorkspace
 }: ComposerProps) {
@@ -135,7 +147,7 @@ export function Composer({
               ? '先创建一个工作区，Agent 才能开始干活'
               : submittingNarration
                 ? '写一段旁白，发送后不会触发模型…（Enter 发送 / Shift + Enter 换行）'
-                : '给纳西妲发消息…（Enter 发送 / Shift + Enter 换行）'
+                : '给' + characterName + '发消息…（Enter 发送 / Shift + Enter 换行）'
           }
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={handleKeyDown}
@@ -170,6 +182,11 @@ export function Composer({
         onPickModel={onPickModel}
         workspaceId={workspaceId}
         onPickWorkspace={onPickWorkspace}
+        characterId={characterId}
+        characterName={characterName}
+        characters={characters}
+        onPickCharacter={onPickCharacter}
+        characterLocked={characterLocked}
       />
       <div className="composer__hint">
         <span>

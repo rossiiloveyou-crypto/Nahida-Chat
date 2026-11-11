@@ -30,7 +30,8 @@ export function ChatPage() {
   const updateSession = useChatStore((s) => s.updateSession)
   const respondApproval = useChatStore((s) => s.respondApproval)
   const dismissError = useChatStore((s) => s.dismissError)
-  const { settings } = useSettings()
+  const fail = useChatStore((s) => s.fail)
+  const { settings, save: saveSettings } = useSettings()
   const { library } = usePromptLibrary()
   const { catalog: workspaceCatalog, pickDirectory, save: saveWorkspace } = useWorkspaces()
   // P6 §4.6：模式真源在 store，侧栏也要读它（它决定工作区段显不显示）
@@ -41,6 +42,8 @@ export function ChatPage() {
   const [draftModel, setDraftModel] = useState<{ profileId: string; modelId: string } | null>(null)
   // 同理，还没有会话时选的工作区也先暂存
   const [draftWorkspaceId, setDraftWorkspaceId] = useState<string | null>(null)
+  // 还没有会话时选的角色也先暂存：第一条消息建会话时一起带进去
+  const [draftCharacterId, setDraftCharacterId] = useState<string | null>(null)
   // P7：检索命中后要滚动并高亮那条消息，2 秒后自动清除（淡出）
   const focusMessageId = useStoryStore((s) => s.focusMessageId)
   const setFocusMessageId = useStoryStore((s) => s.setFocus)
@@ -113,9 +116,24 @@ export function ChatPage() {
    * 清单为空时它才是 null；用清单长度更直接，也覆盖「会话绑的 workspaceId 已失效」。
    */
   const needsWorkspace = activeMode === 'agent' && workspaceCatalog.workspaces.length === 0
-  const characterName =
-    library?.characters.find((item) => item.id === (active?.characterId ?? settings?.defaultCharacterId))?.name ??
-    '纳西妲'
+  /**
+   * 角色解析顺序：会话自己的 > 首页草稿 > 设置里的「新对话默认」。
+   *
+   * 🔴 会话上写着就用会话的。切换角色是**写进会话**的，不能被设置里的默认值盖掉 ——
+   *    否则切完看上去像没生效（下次渲染又读回默认角色）。
+   */
+  const characters = library?.characters ?? []
+  const characterId = active?.characterId ?? draftCharacterId ?? settings?.defaultCharacterId ?? ''
+  /**
+   * 故事会话的角色归**故事区**（story.json 里那份 meta，故事卡片与设置页都读它）。
+   * 在会话上私改会让卡片标签、其它分支跟它三者各说各话，所以故事里只展示不给改。
+   */
+  const characterLocked = Boolean(active?.storyId)
+  /**
+   * 角色显示名。兜底用 id 而不是写死「纳西妲」：角色是用户自建目录，
+   * Prompt 里没有她时显示 id 至少能让人看出「会话指向哪个目录」。
+   */
+  const characterName = characters.find((item) => item.id === characterId)?.name ?? (characterId || '未选角色')
 
   // 没有会话时发第一条消息：先按首页选中的模式建会话，再发
   const handleSend = async (text: string): Promise<void> => {
@@ -124,7 +142,10 @@ export function ChatPage() {
         mode: draftMode,
         workspaceId: workspaceId,
         modelProfileId: draftModel?.profileId ?? null,
-        modelId: draftModel?.modelId ?? null
+        modelId: draftModel?.modelId ?? null,
+        // 首页选的角色一路带到新会话：不传的话主进程会用 defaultCharacterId，
+        // 用户刚在草稿态点过的角色就会被悄悄丢掉
+        ...(characterId ? { characterId } : {})
       })
       await useChatStore.getState().send(text)
       return
@@ -152,6 +173,33 @@ export function ChatPage() {
     setDraftWorkspaceId(nextId)
     if (!active) return
     void updateSession({ workspaceId: nextId })
+  }
+
+  /**
+   * 切换这个对话由哪个角色扮演 —— 对话页**唯一**的角色入口。
+   *
+   * 三件事同时发生，缺一件都会让「切了好像没切」：
+   *  1. 无会话时记草稿：下一条消息建会话时带进 characterId；
+   *  2. 有会话时写进会话（主进程会校验目录真实存在，拼错不静默丢人格）；
+   *  3. 写成「新对话默认角色」：只有这样一个入口才说得通 ——
+   *     新建对话跟随最后一次选择，而不是把角色重置回设置里那个默认值。
+   *     这正是本次要改掉的老行为（以前只能靠新建对话换角色，换回来还得再新建一次）。
+   *
+   * 顺序刻意是「先会话、后默认」：会话没换成（比如正在生成）就别动默认值，
+   * 否则会话一套、默认一套，下次新建对话突然又换了人。
+   */
+  const handlePickCharacter = async (nextId: string): Promise<void> => {
+    if (!nextId || nextId === characterId) return
+    if (active) {
+      try {
+        await updateSession({ characterId: nextId })
+      } catch (cause) {
+        fail(cause instanceof Error ? cause.message : String(cause))
+        return
+      }
+    }
+    setDraftCharacterId(nextId)
+    void saveSettings({ defaultCharacterId: nextId })
   }
 
   /**
@@ -267,6 +315,11 @@ export function ChatPage() {
         draftProfileId={chosenProfileId}
         draftModelId={chosenModelId}
         onPickModel={handlePickModel}
+        characterId={characterId || null}
+        characterName={characterName}
+        characters={characters}
+        onPickCharacter={(nextId) => void handlePickCharacter(nextId)}
+        characterLocked={characterLocked}
         workspaceId={workspaceId}
         onPickWorkspace={handlePickWorkspace}
         needsWorkspace={needsWorkspace}

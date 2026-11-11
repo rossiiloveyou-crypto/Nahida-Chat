@@ -1,5 +1,5 @@
 import { IPC } from '@shared/ipc'
-import type { ChatDelta, ChatDone, ChatFailure, ChatToolUpdate } from '@shared/types'
+import type { ChatDelta, ChatDone, ChatFailure, ChatReasoning, ChatToolUpdate } from '@shared/types'
 import type { ToolApprovalTicket, ToolCallRecord } from '@shared/tools'
 
 /**
@@ -58,6 +58,14 @@ export interface ChatSink {
    */
   canApprove(): boolean
   delta(d: ChatDelta): void
+  /**
+   * 思考增量。与 delta 分开呈现：渲染层要把它折进一个可收起的块，
+   * 而且正文一开始就得把块自动收起（DeepSeek 网页的行为）。
+   *
+   * 🔴 无窗口的 sink（QQ / 无头）**不把它发给任何人** —— 群友不该看到模型的
+   *    自言自语，而且思考文本里可能带着用户的原始输入。
+   */
+  reasoning(r: ChatReasoning): void
   done(d: ChatDone): void
   fail(f: ChatFailure): void
   tool(t: ChatToolUpdate): void
@@ -87,6 +95,10 @@ export class WebContentsSink implements ChatSink {
 
   delta(d: ChatDelta): void {
     this.post(IPC.chatDelta, d)
+  }
+
+  reasoning(r: ChatReasoning): void {
+    this.post(IPC.chatReasoning, r)
   }
 
   done(d: ChatDone): void {
@@ -124,6 +136,10 @@ export class HeadlessSink implements ChatSink {
 
   /** 累积的正文（delta 逐片追加） */
   content = ''
+  /**
+   * 累积的思考文本。**只留档，不外发**：
+   * QQ 侧不能用它组织回复，这里存着是为了让测试与排障能看到"到底有没有思考"。 */
+  reasoningContent = ''
   /** 收到的审批票据（按到达顺序留档，便于断言「确实走到了审批」） */
   readonly approvals: ToolApprovalTicket[] = []
   /** 收到 done 的次数（正常一轮 = 1） */
@@ -144,6 +160,10 @@ export class HeadlessSink implements ChatSink {
 
   delta(d: ChatDelta): void {
     this.content += d.delta
+  }
+
+  reasoning(r: ChatReasoning): void {
+    this.reasoningContent += r.delta
   }
 
   done(d: ChatDone): void {
@@ -191,6 +211,7 @@ export class NullSink implements ChatSink {
     return false
   }
   delta(): void {}
+  reasoning(): void {}
   done(): void {}
   fail(): void {}
   tool(): void {}

@@ -2,12 +2,13 @@
  * 记忆域（P5 G5 → P6 改写：会话身份改由外部键承担，不再注入绑定表）。
  *
  * 旧断言（P4）：绑定到 QQ 的会话「完全隔离」，recall 0 次、extract 0 次。
- * 新断言（P5）：QQ 会话**记在自己的域里**，recall 1 次（scopes=[自己的域]）、
- *               extract 1 次（scope=自己的域）。
- * P6 改写：会话 id 就是外部键（qq:<uin>:<type>:<id>），域由 zones/scope 的解析式判定给出，
- *           不再是「往测试里塞一张 sessionId → 域 的假表」。
+ * 新断言（P5）：QQ 会话**记在自己的域里**，recall 1 次、extract 1 次。
+ * P6 改写：会话 id 就是外部键（qq:<uin>:<type>:<id>），域由 zones/scope 的解析式判定给出。
+ * P2 改写：记忆门面的入参从「旧 scope 字符串数组」换成 PersonaIdentity[]，
+ *          抽取入参从 scope 换成 tenant。route.scope 只剩「有没有可写域」的哨兵语义，
+ *          所以召回 / 抽取都断言同一个固定租户 root/default（P3 才换真实发送者）。
  *
- * 保留 P4 的对照物：桌面会话仍然走 zone:root（拒绝「全都不召回」的坏实现）。
+ * 保留 P4 的对照物：桌面会话仍然要召回 / 抽取各 1 次（拒绝「全都不召回」的坏实现）。
  *
  * 跑法：node scripts/test/qq-session-policy.test.mjs
  */
@@ -28,20 +29,23 @@ fs.writeFileSync(
 )
 
 // 用 stub 顶替 rag 模块：真去加载 embedding 模型会拖几分钟，而且与本判据无关。
-// 记录的是「调用了几次 + 传了哪些域」。
+// 记录的是「调用了几次 + 传了哪些租户」。
+
+/** P2：记忆门面吃的固定租户（chatService.memoryTenantOf 的兜底值） */
+const TENANT = { userId: 'root', personaId: 'default' }
 globalThis.__memProbe = {
   recall: 0,
   extract: 0,
-  scopes: [],
-  extractScopes: [],
-  async buildContextBlock(_query, _settings, scopes) {
+  tenants: [],
+  extractTenants: [],
+  async buildContextBlock(_query, _settings, tenants) {
     globalThis.__memProbe.recall += 1
-    globalThis.__memProbe.scopes.push(scopes)
+    globalThis.__memProbe.tenants.push(tenants)
     return 'MEMORY-BLOCK'
   },
   async extractInBackground(params) {
     globalThis.__memProbe.extract += 1
-    globalThis.__memProbe.extractScopes.push(params.scope)
+    globalThis.__memProbe.extractTenants.push(params.tenant)
     return null
   }
 }
@@ -123,9 +127,9 @@ check(
   globalThis.__memProbe.recall - before.recall
 )
 check(
-  '召回时传的 scopes 就是它自己的域',
-  JSON.stringify(globalThis.__memProbe.scopes.at(-1)) === JSON.stringify([SOLO]),
-  JSON.stringify(globalThis.__memProbe.scopes.at(-1))
+  '召回时传的是固定租户 [root/default]（不再传旧 scope 字符串）',
+  JSON.stringify(globalThis.__memProbe.tenants.at(-1)) === JSON.stringify([TENANT]),
+  JSON.stringify(globalThis.__memProbe.tenants.at(-1))
 )
 
 let boundExtract = 0
@@ -135,9 +139,9 @@ for (let i = 0; i < 60 && boundExtract === 0; i += 1) {
 }
 check('extractInBackground 调用 1 次（P4 是 0 次）', boundExtract === 1, boundExtract)
 check(
-  '抽取写入的 scope 就是它自己的域',
-  globalThis.__memProbe.extractScopes.at(-1) === SOLO,
-  String(globalThis.__memProbe.extractScopes.at(-1))
+  '抽取写入的 tenant 是固定租户 root/default',
+  JSON.stringify(globalThis.__memProbe.extractTenants.at(-1)) === JSON.stringify(TENANT),
+  JSON.stringify(globalThis.__memProbe.extractTenants.at(-1))
 )
 
 console.log('桌面会话：必须仍然走 root（对照物）')
@@ -149,9 +153,9 @@ const normalOutcome = await chatService.sendAwait(
 check('桌面会话正常完成', normalOutcome.status === 'done', normalOutcome.status)
 check('召回 1 次', globalThis.__memProbe.recall - beforeNormal.recall === 1, globalThis.__memProbe.recall - beforeNormal.recall)
 check(
-  'scopes = [zone:root]',
-  JSON.stringify(globalThis.__memProbe.scopes.at(-1)) === JSON.stringify(['zone:root']),
-  JSON.stringify(globalThis.__memProbe.scopes.at(-1))
+  '桌面会话的召回租户也是 [root/default]',
+  JSON.stringify(globalThis.__memProbe.tenants.at(-1)) === JSON.stringify([TENANT]),
+  JSON.stringify(globalThis.__memProbe.tenants.at(-1))
 )
 let normalExtract = 0
 for (let i = 0; i < 60 && normalExtract === 0; i += 1) {
@@ -159,12 +163,16 @@ for (let i = 0; i < 60 && normalExtract === 0; i += 1) {
   normalExtract = globalThis.__memProbe.extract - beforeNormal.extract
 }
 check('抽取 1 次（对照物）', normalExtract === 1, normalExtract)
-check('抽取 scope = zone:root', globalThis.__memProbe.extractScopes.at(-1) === 'zone:root', String(globalThis.__memProbe.extractScopes.at(-1)))
+check(
+  '桌面会话的抽取租户 = root/default',
+  JSON.stringify(globalThis.__memProbe.extractTenants.at(-1)) === JSON.stringify(TENANT),
+  JSON.stringify(globalThis.__memProbe.extractTenants.at(-1))
+)
 
-console.log('scopes = [] 的会话：fail-closed')
+console.log('没有可写域的会话（route.scope 为空串）：fail-closed')
 const beforeMuted = { recall: globalThis.__memProbe.recall, extract: globalThis.__memProbe.extract }
 const mutedOutcome = await chatService.sendAwait(
-  { sessionId: mutedSession.id, content: '这条不该进任何域' },
+  { sessionId: mutedSession.id, content: '这条不该进任何租户' },
   new HeadlessSink()
 )
 check('对话本身仍然跑完', mutedOutcome.status === 'done', mutedOutcome.status)

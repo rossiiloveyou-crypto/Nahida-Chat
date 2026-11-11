@@ -333,11 +333,16 @@ const cD = deriveBranch({
   title: 'C'
 })
 
-const scopeD = storyScope(storyD.storyId)
 const mstore = new MemoryStore(storyDbPath(storyD.storyId))
 const svc = new MemoryService(mstore)
+/*
+ * P1：`MemoryEntry` 的构造点换成租户字段（必填）。故事区的物理隔离由「一故事一库」保证。
+ * P2：逻辑租户 root/default 是 chatService.memoryTenantOf() 的兜底值，
+ *     门面 buildContextBlock 的第三个参数现在直接吃 PersonaIdentity[]（不再收旧 scope 字符串）。
+ */
+const TENANT_D = { userId: 'root', personaId: 'default' }
 const putFact = (content, sourceSessionId, sourceMessageIndex) =>
-  mstore.upsert({ content, scopeId: scopeD, sourceSessionId, sourceMessageIndex, weight: 1 })
+  mstore.upsert({ content, ...TENANT_D, sourceSessionId, sourceMessageIndex, weight: 1 })
 
 putFact('她怕水', rootD.id, 2) // 分叉点(4)之前 → B 可见
 putFact('镇上有个钟楼', rootD.id, 12) // 分叉点(4)之后 → B 不可见
@@ -347,7 +352,7 @@ putFact('手工添加的记忆', null, null) // A-19b：sourceSessionId null →
 putFact('老故事记忆', rootD.id, null) // A-18b：有来源没下标 → 全可见
 
 const block = (branchId, query, visible) =>
-  svc.buildContextBlock(query, SETTINGS, [scopeD], visible)
+  svc.buildContextBlock(query, SETTINGS, [TENANT_D], visible)
 
 const visB = branchVisibility(storyD.storyId, bD.sessionId).visible
 const visC = branchVisibility(storyD.storyId, cD.sessionId).visible

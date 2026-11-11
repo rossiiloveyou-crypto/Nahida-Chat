@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { providerMeta } from '@shared/constants'
-import type { ModelProfileCatalog, PermissionMode } from '@shared/types'
+import type { ModelProfileCatalog, PermissionMode, PromptCharacter } from '@shared/types'
 import { useSettings } from '../../settings/useSettings'
 import { useWorkspaces } from '../../workspace/useWorkspaces'
 
@@ -14,6 +14,15 @@ interface ComposerBarProps {
   /** 当前生效的工作区 id（会话的 > 草稿的 > 活动工作区），由 ChatPage 解析 */
   workspaceId: string | null
   onPickWorkspace: (workspaceId: string) => void
+  /** 这个对话由哪个角色扮演（会话的 > 草稿的 > 设置里的新对话默认），由 ChatPage 解析 */
+  characterId: string | null
+  /** 角色显示名。解析放在 ChatPage 一处：输入框占位符也要用同一个名字 */
+  characterName: string
+  /** 提示词库里的角色清单；空 = Prompt 目录缺失或没有角色 */
+  characters: PromptCharacter[]
+  onPickCharacter: (characterId: string) => void
+  /** 故事会话的角色归所属故事区管：这里只展示当前是谁，不给改（见 ChatPage 的说明） */
+  characterLocked: boolean
 }
 
 const PERMISSION_LABEL: Record<PermissionMode, string> = {
@@ -38,12 +47,13 @@ function Caret() {
 }
 
 /**
- * 输入框下方的三个选择器：模型 / 工作区 / 权限。
+ * 输入框下方的四个选择器：角色 / 模型 / 工作区 / 权限。
  *
  * 放在这里而不是只放在设置页，是因为它们都是「这一句话要用的东西」：
- * 用户不该为了换个模型、换个目录或临时放宽权限而离开对话。
+ * 用户不该为了换个角色、换个模型、换个目录或临时放宽权限而离开对话。
  *
  * 数据来源是分开的：
+ * - 角色写进会话（同时写成「新对话默认」，见 ChatPage.handlePickCharacter）
  * - 模型写进会话（每个会话可以不一样）
  * - 工作区写进会话（每个会话绑定一个目录，见 Session.workspaceId）
  * - 权限写进设置（全局一份，和设置页共享）
@@ -55,12 +65,17 @@ export function ComposerBar({
   draftModelId,
   onPickModel,
   workspaceId,
-  onPickWorkspace
+  onPickWorkspace,
+  characterId,
+  characterName,
+  characters,
+  onPickCharacter,
+  characterLocked
 }: ComposerBarProps) {
   const { settings, save } = useSettings()
   const { catalog: workspaceCatalog, save: saveWorkspace } = useWorkspaces()
   const [catalog, setCatalog] = useState<ModelProfileCatalog>({ profiles: [], defaultProfileId: null })
-  const [openMenu, setOpenMenu] = useState<'model' | 'workspace' | 'permission' | null>(null)
+  const [openMenu, setOpenMenu] = useState<'character' | 'model' | 'workspace' | 'permission' | null>(null)
   const barRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -97,6 +112,16 @@ export function ComposerBar({
   const model =
     draftModelId && profile?.models.includes(draftModelId) ? draftModelId : profile?.defaultModel ?? ''
   const mode: PermissionMode = settings?.permission.mode ?? 'approve'
+  /**
+   * 头像用名字首字，不引外部图片：多角色是用户自己建的目录，
+   * 程序无从预知资产，字形至少永远有得显示。
+   */
+  const characterInitial = characterName.slice(0, 1)
+  const characterTitle = characterLocked
+    ? '故事会话的角色由所属故事区决定，改到「设置 → 故事区」'
+    : characters.length === 0
+      ? '提示词库里没有角色（Prompt/characters/ 为空）'
+      : '切换这个对话由哪个角色扮演'
   const workspace =
     workspaceCatalog.workspaces.find((item) => item.id === workspaceId) ??
     workspaceCatalog.workspaces.find((item) => item.id === workspaceCatalog.activeWorkspaceId) ??
@@ -109,6 +134,63 @@ export function ComposerBar({
 
   return (
     <div className="composer-bar" ref={barRef} data-ui-region="C1 输入区工具条">
+      <div className="composer-bar__group">
+        <button
+          type="button"
+          className={openMenu === 'character' ? 'composer-pick is-open' : 'composer-pick'}
+          onClick={() => setOpenMenu(openMenu === 'character' ? null : 'character')}
+          disabled={locked || characterLocked || characters.length === 0}
+          title={characterTitle}
+          data-ui-target="角色选择"
+        >
+          <span className="composer-pick__avatar" aria-hidden="true">{characterInitial}</span>
+          <span className="composer-pick__text">{characterName}</span>
+          <Caret />
+        </button>
+
+        {openMenu === 'character' && (
+          <div className="composer-menu" role="listbox" aria-label="角色列表">
+            <div className="composer-menu__heading">
+              角色
+              <span>{characters.length} 个</span>
+            </div>
+            {characters.map((item) => {
+              const selected = item.id === characterId
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  /**
+                   * 缺 soul.md 的角色 compose() 会跳过人格段 —— 选中它等于「谁都不扮演」。
+                   * 所以列出来但点不动：藏起来的话，用户只会觉得清单少了一个，查不出原因。
+                   */
+                  disabled={!item.complete}
+                  title={item.complete ? item.id : '缺少 soul.md，暂时不可用'}
+                  className={['composer-menu__item', 'composer-menu__item--stack', selected ? 'is-active' : '']
+                    .filter(Boolean)
+                    .join(' ')}
+                  onClick={() => {
+                    setOpenMenu(null)
+                    onPickCharacter(item.id)
+                  }}
+                >
+                  <span className="composer-menu__row">
+                    <strong>{item.name}</strong>
+                    {selected && <span className="composer-menu__check">✓</span>}
+                  </span>
+                  <span className="composer-menu__hint">
+                    {item.complete ? item.id : item.id + ' · 缺少 soul.md'}
+                  </span>
+                </button>
+              )
+            })}
+            <p className="composer-menu__note">切换后，新建对话也跟随这个角色</p>
+          </div>
+        )}
+      </div>
+
       <div className="composer-bar__group">
         <button
           type="button"

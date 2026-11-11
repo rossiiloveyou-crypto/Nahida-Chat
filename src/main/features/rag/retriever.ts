@@ -2,8 +2,8 @@ import {
   MEMORY_KEYWORD_WEIGHT,
   MEMORY_VECTOR_WEIGHT
 } from '@shared/constants'
+import type { PersonaIdentity } from '@shared/persona'
 import type { MemoryRecallHit } from '@shared/types'
-import type { MemoryScopeId } from '@shared/zones'
 import { embedder } from './embedder'
 import type { MemoryStore } from './store'
 import { cosine } from './vector'
@@ -38,11 +38,11 @@ export interface RecallOptions {
   topK: number
   minScore: number
   /**
-   * 只在这些域内检索。
+   * 只在这些「用户 × 人设」租户内检索。
    *  - 省略（undefined）= 全库，**仅为兼容既有测试**；生产调用必须显式传
    *  - 空数组 = 不检索（fail-closed），不是"不过滤"
    */
-  scopes?: MemoryScopeId[]
+  tenants?: PersonaIdentity[]
   /**
    * 分支可见性闸（P6 / T12）。省略 = 不做分支过滤（非故事区，行为与 P5 完全一致）。
    * 返回 true 表示这条记忆**对当前分支可见**。
@@ -60,11 +60,11 @@ export async function recall(
 ): Promise<MemoryRecallHit[]> {
   const text = query.trim()
   if (!text) return []
-  // 🔴 空 scopes 必须在这里拦住：往下走会生成 IN ()（语法错误），
-  // 更糟的是"退回全库"会把配置错误变成隐私泄漏。
-  if (options.scopes !== undefined && options.scopes.length === 0) return []
+  // 🔴 空 tenants 必须在这里拦住：往下走会生成空的条件组（语法错误），
+  // 更糟的是"退回全库"会把配置错误变成跨用户泄漏。
+  if (options.tenants !== undefined && options.tenants.length === 0) return []
 
-  // 🔴 可见性过滤发生在 LIMIT **之后**（keywordSearchIn 带 candidateLimit），
+  // 🔴 可见性过滤发生在 LIMIT **之后**（keywordSearchInTenants 带 candidateLimit），
   //    可能把关键词命中滤到不足 topK。当 visible 存在时把候选池乘 3 —— 这是「过滤前置浪费」的补偿，
   //    不是调参（§4.9.3）。
   const baseCandidateLimit = Math.max(options.topK * CANDIDATE_MULTIPLIER, 10)
@@ -73,7 +73,9 @@ export async function recall(
   // ── 路径 1：向量 ──
   const vectorScores = new Map<string, number>()
   const stored =
-    options.scopes === undefined ? store.allWithEmbedding() : store.allWithEmbeddingIn(options.scopes)
+    options.tenants === undefined
+      ? store.allWithEmbedding()
+      : store.allWithEmbeddingInTenants(options.tenants)
   if (stored.length > 0) {
     const queryVector = await embedder.embedOne(text)
     if (queryVector) {
@@ -86,11 +88,11 @@ export async function recall(
 
   // ── 路径 2：关键词 ──
   const keywordScores = new Map<string, number>()
-  // 两路必须传同一个 scopes，否则向量按域、关键词全库 —— 等于没隔离
+  // 两路必须传同一个 tenants，否则向量按租户、关键词全库 —— 等于没隔离
   const keywordHits =
-    options.scopes === undefined
+    options.tenants === undefined
       ? store.keywordSearch(toMatchQuery(text), candidateLimit)
-      : store.keywordSearchIn(toMatchQuery(text), candidateLimit, options.scopes)
+      : store.keywordSearchInTenants(toMatchQuery(text), options.tenants, candidateLimit)
   for (const hit of keywordHits) {
     keywordScores.set(hit.id, hit.score)
   }

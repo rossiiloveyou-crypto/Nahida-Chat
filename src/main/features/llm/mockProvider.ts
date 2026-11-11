@@ -32,6 +32,15 @@ export const mockProvider: LlmProvider = {
       return
     }
 
+    // 演示模式也吐一段「思考」，否则离线状态下思考块永远看不到，
+    // 而这个功能恰恰是首装就能验的第一印象。内容明确写成「这是演示」，
+    // 不冒充真实模型的推理。
+    for (const chunk of split(buildReasoning(input), 6)) {
+      await sleep(18, request.signal)
+      if (request.signal.aborted) return
+      yield { type: 'reasoning', text: chunk }
+    }
+
     for (const chunk of split(buildReply(input), 5)) {
       await sleep(24, request.signal)
       if (request.signal.aborted) return
@@ -39,6 +48,17 @@ export const mockProvider: LlmProvider = {
     }
     yield { type: 'finish', reason: 'stop' }
   }
+}
+
+/** 演示用思考文本：明说是演示，不伪装成真实推理 */
+function buildReasoning(input: string): string {
+  const head = input.trim().slice(0, 20) || '（空输入）'
+  return [
+    '（演示模式的思考过程，不是真实模型的推理）',
+    '先确认这条链路：用户说了「' + head + '」，',
+    '接下来要做的不是调用远程模型，而是本地回显一段说明，',
+    '同时验证「思考增量 -> 折叠块 -> 正文开始后自动收起」这条渲染链路。'
+  ].join('')
 }
 
 function buildToolSummary(result: string): string {

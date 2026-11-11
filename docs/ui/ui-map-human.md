@@ -13,6 +13,15 @@
 | 按触发词搜索（大小写无关） | 同上；输入后条目列表即时过滤 | `features/worldbook/filter.ts`（`filterWorldbookEntries`） |
 | 无命中 / 清空搜索 | 同上；无命中显示空态，框右侧「×」清空 | `WorldbookEditorDialog.tsx` |
 
+### 对话摘要参数（2026-11-12）
+
+| 需求 | 图上位置 | 代码 |
+| --- | --- | --- |
+| 长期记忆页顶部新增「对话摘要（窗口外的对话）」分区 | `settings-memory` → 元素 **4「对话摘要参数」**（`C8–R16`） | `features/settings/sections/MemorySection.tsx` |
+| 总开关 / 触发条数 / 保留窗口 / 四段字符上限 | 同上；6 个数字框 + 1 个开关 | `MemorySection.tsx`、`shared/constants.ts`（`SUMMARY_*_RANGE`） |
+| 摘要概况：已摘要会话 / 已压缩消息 / 最近更新 / 数据文件 / 最近错误 | 元素 **5「对话摘要状态」**（`C17–R21`） | `main/features/summary/service.ts`（`status()`）→ `summary:status` |
+| 「刷新状态 / 忘掉当前会话的摘要 / 清空全部摘要」 | 元素 **6「对话摘要操作」**（`C21–R22`） | `summary:forget` / `summary:clear` |
+
 ### 故事旁白（2026-11-08）
 
 | 需求 | 图上位置 | 代码 |
@@ -22,7 +31,53 @@
 | 旁白居中显示为「旁白：xxxxx」 | `chat-story-drawer` → `F11–L12`，元素 **26「旁白 10」** | `features/chat/components/MessageList.tsx`（`message--narration`）、`styles/global.css` |
 | 旁白持久化，下一次对话作为系统消息下发 | 无独立控件；发送一次普通对话后生效 | `shared/types.ts`（`MessageRole`）、`main/features/chat/chatService.ts`（`narrate` / `sessionHistoryToLlm`）、`shared/ipc.ts` / `preload/index.ts` |
 
+### 角色切换（2026-11-12）
+
+| 需求 | 图上位置 | 代码 |
+| --- | --- | --- |
+| 对话页输入区工具条最左新增「角色选择」 | `chat-conversation` → 元素 **18「角色选择」**（`C21–E21`，95×28）；首页态是 `chat-empty` 元素 **10** | `features/chat/components/ComposerBar.tsx` |
+| 点开列出提示词库里的全部角色，每个带 id；缺 `soul.md` 的置灰不可选 | 同上；菜单底部注明「切换后，新建对话也跟随这个角色」 | `ComposerBar.tsx`、`main/features/prompt/promptStore.ts`（`library()`） |
+| 菜单内容来自提示词库、当前角色打勾（可核对的证据） | 新视图 **`chat-character-menu`**（展开态截图，第 5 张） | 同上 |
+| 切换**当前对话**的角色，历史消息一个字不动 | 同上；写 `Session.characterId`，下一步请求就换人格 | `main/features/chat/chatService.ts`（`updateSession` + `promptStore.hasCharacter` 校验） |
+| 切换后新建对话跟随（不再靠「新建对话」换角色） | 无独立控件 | `ChatPage.tsx`（`handlePickCharacter` → `settings.save({ defaultCharacterId })`） |
+| 故事会话的角色归所属故事区，此处只读（悬停有说明） | `chat-story-drawer` 元素 **43「角色选择」**（置灰）；要改去 设置 → 故事区 | `ChatPage.tsx`（`characterLocked`） |
+
 ## 变更记录
+
+### 修订 25（2026-11-12）· 对话页角色切换
+
+- **输入区工具条从 3 个选择器变 4 个**：最左新增「角色选择」（名字首字头像 + 角色名 + 箭头）。
+  打开的是提示词库清单，不是设置页；缺 `soul.md` 的角色列出来但置灰，避免「清单里莫名少一个」。
+- **元素编号变化（只影响带输入区的视图）**：
+  `chat-conversation` 模型选择 16→**19**、工作区 17→**20**、权限 18→**21**，角色选择占用 **18**；
+  `chat-stories` 19–22、`new-story-dialog` 25–28、`chat-story-drawer` 43–46 同构后移；
+  `chat-empty` 10–13、`chat-agent` / `chat-agent-gated` 12–15。`settings-*` 不受影响。
+- **行为**：切换同时写「会话」和「新对话默认」两处 —— 否则新建对话又换回默认角色，
+  等于把「靠新建对话换角色」换个方式留着。故事会话例外（角色属故事区，见上表）。
+- **静默降级被堵住**：主进程 `updateSession` 现在校验提示词库里真有这个目录，
+  拼错/角色被删会直接报错，而不是让 `compose()` 悄悄跳过人格那几段。
+- **新增一张视图** `chat-character-menu`（对话中 + 菜单展开，24 张图）：否则只能证明"有那个按钮"，
+  证明不了菜单里列的是**提示词库里的角色**、当前那个打了勾。
+- **测试**：`scripts/test/character-switch.test.mjs`（25 项）已接入 `pnpm test` 链尾。
+
+### 修订 24（2026-11-12）· 思考过程折叠块
+
+- **AI 气泡上方新增「思考」折叠块**（`chat-conversation` 元素 **10「思考 2」**、**15「思考 4」**，145×20px）：
+  折叠态显示「思考 + 已思考 · N 字 + ▸」，点开在气泡前展示全文（左侧强调线 + 浅底，最高 260px 滚动）。
+- **元素编号变化**：`chat-conversation` 元素 10 之后整体 +1（原「AI 气泡 2」10→**11**、「用户头像 3」11→**12**……）。
+  同样被带动的是 `chat-stories`（思考 **11 / 16**）与 `new-story-dialog`（思考 **17 / 22**）——
+  这两个视图背后渲染的是同一条会话，所以跟着一起变。`chat-empty` / `settings-*` 无思考块，未受影响。
+- **行为**：思考中自动展开（末尾闪烁光标）；正文一开始出现就自动收起；用户手动点过之后不再自动收。
+- **判据集变更（T1）**：`chat-sink.test.mjs` 的「通道名只有 chatDelta/chatDone」扩成三通道，
+  ChatDone 增加可选 `reasoning` 字段，并新增三条断言（思考走独立通道 / 不混进正文 / done 带全文）。
+
+### 修订 23（2026-11-12）· 长期记忆页新增「对话摘要」分区
+
+- **长期记忆页顶部新增「对话摘要（窗口外的对话）」**（`settings-memory` 元素 **4/5/6**）：总开关、触发条数、保留窗口、四段字符上限，加摘要概况与三个动作按钮。
+- **元素编号整体后移 3 位**：原「记忆状态」4→**7**、「检索参数」8→**8**（追加在状态之后，实际为 8）、「试召回输入」9→**9**、「添加记忆」10→**10**；报位置请按新图。
+- **页头文案改写**：明确本页有两层记忆（对话摘要 / 事实记忆），避免把两者当成同一件事。
+- **行为**：配置改完**立即生效**（每次调用现读 settings），不需要重启；演示模式（mock）下不压缩。
+- **测试**：`scripts/test/summary-store.test.mjs`（42 项）已接入 `pnpm test` 链尾。
 
 ### 修订 22（2026-11-08）· 世界书搜索 + 故事旁白
 
@@ -37,4 +92,7 @@
 - 坐标只对 **1280x860** 有效；窗口更窄时响应式布局会变化，须重新出图。PNG 实际像素可能是 CSS 尺寸的 1.3 倍左右（Electron 的设备像素比），**报位置与 JSON 仍按 1280×860 的网格坐标**。
 - **世界书搜索框在条目区顶部**：搜索是即时过滤，不会再请求磁盘；切换世界书 / 刷新列表后查询词会保留到当前弹层关闭，清空按钮在框右侧。
 - **故事旁白的「对话 / 旁白」徽章只出现在故事会话**：普通 Chat / Agent 页面不显示；旁白发送后不会立即产生 AI 回复，必须在下一句「对话」发送时才进入模型上下文。
+- **角色切换只在对话页**：`ComposerBar` 是唯一的切换入口；侧栏「新建对话」刻意不带角色参数，
+  新建出来的对话跟随「新对话默认角色」。故事会话里那个选择器是置灰的 —— 它的角色属故事区（`story.json` 的 meta）。
+- **切角色不会换记忆库**：长期记忆按「用户人设」分域，不按 AI 角色分域，切换角色后仍会召回同一批事实记忆。
 - 元素编号按 DOM 顺序生成，**新增控件会让后面的编号后移** —— 改完 UI 必须重跑截图并重新生成本文。

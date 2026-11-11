@@ -7,6 +7,7 @@ import type {
   ChatDelta,
   ChatDone,
   ChatFailure,
+  ChatReasoning,
   ChatToolUpdate,
   MemoryDraft,
   MemoryEntry,
@@ -24,6 +25,7 @@ import type {
   SendResult,
   Session,
   Settings,
+  SummaryStatus,
   WorkspaceCatalog,
   WorkspaceDraft
 } from './types'
@@ -123,6 +125,20 @@ export interface NahidaApi {
     /** 打开模型目录，让用户知道该往哪放文件 */
     openModelDir: () => Promise<string>
   }
+  /**
+   * 对话摘要（窗口外对话的滚动压缩）。
+   *
+   * 🔴 与 `memory` 不是一回事：memory 是「按 query 检索事实」的 RAG 库，
+   * summary 是「把对话压成四段文本、无条件注入」的窗口。配置在 Settings.summary。
+   */
+  summary: {
+    /** 整体状态：有多少会话已有摘要、多少条消息被覆盖、数据文件在哪 */
+    status: () => Promise<SummaryStatus>
+    /** 忘掉某条会话的摘要（下一次请求会回落全量历史） */
+    forget: (sessionId: string) => Promise<SummaryStatus>
+    /** 清空全部摘要（只删摘要，不动聊天记录与 RAG 记忆） */
+    clear: () => Promise<SummaryStatus>
+  }
   chat: {
     listSessions: () => Promise<Session[]>
     createSession: (input?: CreateSessionInput) => Promise<Session>
@@ -133,6 +149,8 @@ export interface NahidaApi {
     narrate: (sessionId: string, content: string) => Promise<Message>
     stop: (sessionId: string) => Promise<void>
     onDelta: (handler: (payload: ChatDelta) => void) => Unsubscribe
+    /** 思考增量（DeepSeek reasoning_content / Anthropic thinking / Gemini thought） */
+    onReasoning: (handler: (payload: ChatReasoning) => void) => Unsubscribe
     onTool: (handler: (payload: ChatToolUpdate) => void) => Unsubscribe
     onApproval: (handler: (payload: ChatApproval) => void) => Unsubscribe
     onDone: (handler: (payload: ChatDone) => void) => Unsubscribe

@@ -69,6 +69,11 @@ const api: NahidaApi = {
     recall: (query) => ipcRenderer.invoke(IPC.memoryRecall, query),
     openModelDir: () => ipcRenderer.invoke(IPC.memoryOpenModel)
   },
+  summary: {
+    status: () => ipcRenderer.invoke(IPC.summaryStatus),
+    forget: (sessionId) => ipcRenderer.invoke(IPC.summaryForget, sessionId),
+    clear: () => ipcRenderer.invoke(IPC.summaryClear)
+  },
   chat: {
     listSessions: () => ipcRenderer.invoke(IPC.chatList),
     createSession: (input) => ipcRenderer.invoke(IPC.chatCreate, input),
@@ -78,6 +83,7 @@ const api: NahidaApi = {
     narrate: (sessionId, content) => ipcRenderer.invoke(IPC.chatNarrate, sessionId, content),
     stop: (sessionId) => ipcRenderer.invoke(IPC.chatStop, sessionId),
     onDelta: (handler) => subscribe(IPC.chatDelta, handler),
+    onReasoning: (handler) => subscribe(IPC.chatReasoning, handler),
     onTool: (handler) => subscribe(IPC.chatTool, handler),
     onApproval: (handler) => subscribe(IPC.chatApproval, handler),
     onDone: (handler) => subscribe(IPC.chatDone, handler),

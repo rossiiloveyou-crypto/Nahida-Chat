@@ -7,6 +7,12 @@
  *  - 真触发一次 ask 类工具，断言审批"当场拒绝且不挂起"（G5）
  *  - 真给 WebContentsSink 一个假 sender，逐条比对 IPC 通道名与载荷（渲染层零回归）
  *
+ * **T1 判据集变更（2026-11-12，思考过程功能）**：
+ * 契约从「只有 chatDelta / chatDone」扩成「多一条 chat:reasoning」，ChatDone 多了可选的
+ * `reasoning` 字段。这两条断言原本是**精确集合相等**（专抓意外漂移），所以必须同步改，
+ * 否则它会把一次**有意**的契约扩展误报成回归。新增的三条断言盯的是同一件事的新边界：
+ * 思考走独立通道、不混进正文、载荷形状固定。
+ *
  * 跑法：pnpm test:chat-sink
  */
 import fs from 'node:fs'
@@ -212,14 +218,37 @@ const wcSink = new WebContentsSink(fakeSender)
 const wsSession = chatService.createSession({ mode: 'chat' })
 const wsOutcome = await chatService.sendAwait({ sessionId: wsSession.id, content: '你好' }, wcSink)
 const channels = [...new Set(sent.map((s) => s.channel))]
-check('通道名只有既有的 chatDelta / chatDone', channels.every((c) => c === IPC.chatDelta || c === IPC.chatDone), channels.join(','))
+check(
+  '通道名只有 chatDelta / chatReasoning / chatDone',
+  channels.every((c) => c === IPC.chatDelta || c === IPC.chatReasoning || c === IPC.chatDone),
+  channels.join(',')
+)
 check('chatDelta 载荷字段 = {sessionId,messageId,delta}', sent
   .filter((s) => s.channel === IPC.chatDelta)
   .every((s) => Object.keys(s.payload).sort().join(',') === 'delta,messageId,sessionId'))
+const reasoningSent = sent.filter((s) => s.channel === IPC.chatReasoning)
+check(
+  'chatReasoning 载荷字段 = {sessionId,messageId,delta}',
+  reasoningSent.length > 0 &&
+    reasoningSent.every((s) => Object.keys(s.payload).sort().join(',') === 'delta,messageId,sessionId'),
+  reasoningSent.length
+)
 const donePayload = sent.filter((s) => s.channel === IPC.chatDone).pop()
-check('chatDone 载荷字段 = {sessionId,messageId,content,toolCalls}', !!donePayload &&
-  Object.keys(donePayload.payload).sort().join(',') === 'content,messageId,sessionId,toolCalls')
+check('chatDone 载荷字段 = {sessionId,messageId,content,toolCalls,reasoning}', !!donePayload &&
+  Object.keys(donePayload.payload).sort().join(',') === 'content,messageId,reasoning,sessionId,toolCalls',
+  donePayload ? Object.keys(donePayload.payload).sort().join(',') : '')
 check('chatDone 的 content 与 outcome 一致', donePayload && donePayload.payload.content === wsOutcome.content)
+// 🔴 思考绝不能走正文通道：混进去就等于把模型的自我嘀咕当成回答落库、回灌、甚至发到群里
+const deltaText = sent
+  .filter((s) => s.channel === IPC.chatDelta)
+  .map((s) => s.payload.delta)
+  .join('')
+check('思考没有混进 chatDelta', !deltaText.includes('演示模式的思考过程'), deltaText.slice(0, 40))
+check(
+  '思考全文进了 done.reasoning',
+  !!donePayload && typeof donePayload.payload.reasoning === 'string' &&
+    donePayload.payload.reasoning.includes('演示模式的思考过程')
+)
 
 // 窗口销毁后既不再发消息、也不把生成流程打断（原来 sender.isDestroyed() 那个分支的等价物）
 const deadSent = []

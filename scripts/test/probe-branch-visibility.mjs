@@ -62,26 +62,28 @@ chatService.appendMessages(root.id, messages)
 const B = deriveBranch({ storyId: story.storyId, fromSessionId: root.id, fromMessageId: 'r4', title: 'B' })
 
 const scope = storyScope(story.storyId)
+/* P2：故事库内按 (userId, personaId) 写，scope 只剩「有没有可写域」的哨兵语义 */
+const TENANT = { userId: 'root', personaId: 'default' }
 const mstore = new MemoryStore(storyDbPath(story.storyId))
 const svc = new MemoryService(mstore)
-mstore.upsert({ content: '这个镇上有个钟楼', scopeId: scope, sourceSessionId: root.id, sourceMessageIndex: 12, weight: 1 })
+mstore.upsert({ content: '这个镇上有个钟楼', ...TENANT, sourceSessionId: root.id, sourceMessageIndex: 12, weight: 1 })
 // 对照物：分叉点之前的事实（分叉点=4）
-mstore.upsert({ content: '她怕水', scopeId: scope, sourceSessionId: root.id, sourceMessageIndex: 2, weight: 1 })
+mstore.upsert({ content: '她怕水', ...TENANT, sourceSessionId: root.id, sourceMessageIndex: 2, weight: 1 })
 
 const vis = branchVisibility(story.storyId, B.sessionId).visible
-const blockBefore = await svc.buildContextBlock('钟楼', SETTINGS, [scope])
-const blockAfter = await svc.buildContextBlock('钟楼', SETTINGS, [scope], vis)
+const blockBefore = await svc.buildContextBlock('钟楼', SETTINGS, [TENANT])
+const blockAfter = await svc.buildContextBlock('钟楼', SETTINGS, [TENANT], vis)
 const beforeHit = blockBefore.includes('钟楼')
 const afterHit = blockAfter.includes('钟楼')
 
 if (phase === 'before') {
   console.log('P-2 记忆可见性 · BEFORE（P5 行为：召回不看 sourceSessionId）')
   console.log('分支 B 能否召回「钟楼」: ' + beforeHit)
-  console.log('说明：P5 只按 scope 过滤，同一 story 的所有分支共用一个域 → 分叉点之后的记忆也会被召回。')
+  console.log('说明：P5 只按域过滤，同一 story 的所有分支共用一个域 → 分叉点之后的记忆也会被召回。')
   process.exit(0)
 }
 
-const control = await svc.buildContextBlock('怕水', SETTINGS, [scope], vis)
+const control = await svc.buildContextBlock('怕水', SETTINGS, [TENANT], vis)
 console.log('P-2 记忆可见性 · AFTER（P6 行为：branchVisibility 过滤）')
 console.log('分支 B 能否召回「钟楼」: ' + afterHit)
 console.log('对照物：分支 B 能否召回分叉点之前的事实「怕水」: ' + control.includes('她怕水'))

@@ -49,6 +49,19 @@ export const openAiCompatibleProvider: LlmProvider = {
       const delta = choice.delta as Record<string, unknown> | undefined
       if (!delta) continue
 
+      // 思考增量。两家写法不同，都要认：
+      // - DeepSeek / 通义 / 智谱 / Kimi：delta.reasoning_content
+      // - OpenRouter / 部分中转：delta.reasoning
+      // 顺手也认 thinking（少数自建网关），三种都空就是没有思考。
+      const reasoning =
+        (typeof delta.reasoning_content === 'string' && delta.reasoning_content) ||
+        (typeof delta.reasoning === 'string' && delta.reasoning) ||
+        (typeof delta.thinking === 'string' && delta.thinking) ||
+        ''
+      if (reasoning) {
+        yield { type: 'reasoning', text: reasoning }
+      }
+
       if (typeof delta.content === 'string' && delta.content) {
         yield { type: 'text', text: delta.content }
       }

@@ -11,7 +11,8 @@ import type {
   MemorySettings,
   MemoryStatus
 } from '@shared/types'
-import type { MemoryScopeId } from '@shared/zones'
+import { DEFAULT_PERSONA_ID, ROOT_USER_ID } from '@shared/persona'
+import type { PersonaIdentity } from '@shared/persona'
 import { embedder } from './embedder'
 import { extractMemories } from './extract'
 import { recall as hybridRecall } from './retriever'
@@ -62,9 +63,11 @@ class MemoryService {
       modelId: MEMORY_MODEL_ID,
       dimensions: info.dimensions || MEMORY_MODEL_DIMENSIONS,
       modelPath: info.modelPath,
+      // 全库计数（管理视图口径），不是某个租户的条数 —— 与 list() 同属有意保留的不隔离点
       entryCount: this.store.healthy() ? this.store.count() : 0,
       dbPath: this.store.dbFile,
-      lastError: info.lastError
+      lastError: info.lastError,
+      personasReady: this.store.healthy()
     }
   }
 
@@ -73,23 +76,23 @@ class MemoryService {
     return embedder.modelInstalled()
   }
 
+  /**
+   * 🔴 全库管理视图（设置页总览 / 调试），**有意不做租户过滤**（B9）。
+   *    对话注入路径只有 buildContextBlock()，那条必须强制租户；本方法与下面几个同性质：
+   *    countByUser() / countByPersona() / probeRecall() / status().entryCount。
+   */
   list(): MemoryEntry[] {
     return this.store.list()
   }
 
-  /** 按域列出（区块面板统计用） */
-  listByScope(scope: MemoryScopeId): MemoryEntry[] {
-    return this.store.listByScope(scope)
+  /** 单人单设的记忆（设置页按人聚合后点开某人某设时用） */
+  listByTenant(userId: string, personaId: string): MemoryEntry[] {
+    return this.store.listByTenant(userId, personaId)
   }
 
-  /** 各域条数 */
-  countByScope(): Array<{ scopeId: MemoryScopeId; count: number }> {
-    return this.store.countByScope()
-  }
-
-  /** 把一个域的记忆整体搬到另一个域（删区块时搬回 root） */
-  reassignScope(from: MemoryScopeId, to: MemoryScopeId): number {
-    return this.store.reassignScope(from, to)
+  /** 按人聚合条数（设置页「按人」列表）——全库管理视图，跨租户汇总是有意的 */
+  countByUser(): Array<{ userId: string; count: number }> {
+    return this.store.countByUser()
   }
 
   async save(draft: MemoryDraft): Promise<MemoryEntry[]> {
@@ -101,6 +104,8 @@ class MemoryService {
       id: draft.id,
       content,
       weight: draft.weight,
+      userId: draft.userId ?? ROOT_USER_ID,
+      personaId: draft.personaId ?? DEFAULT_PERSONA_ID,
       embedding: vector
     })
     return this.store.list()
@@ -112,11 +117,14 @@ class MemoryService {
   }
 
   clear(): MemoryEntry[] {
-    this.store.clear()
+    this.store.clearAll()
     return this.store.list()
   }
 
-  /** 设置页的检索调试：直接把命中分数摆出来，便于调 minScore */
+  /**
+   * 设置页的检索调试：直接把命中分数摆出来，便于调 minScore。
+   * 🔴 全库读取（管理视图），不是对话注入路径；对话注入必须经 buildContextBlock 的租户过滤。
+   */
   async probeRecall(query: string, settings: MemorySettings | undefined): Promise<MemoryRecallHit[]> {
     const config = this.normalize(settings)
     return hybridRecall(this.store, query, { topK: config.topK, minScore: 0 })
@@ -126,6 +134,10 @@ class MemoryService {
    * 召回并拼成可注入的文本块。
    * 返回空串表示「没有可用记忆」——调用方据此决定不加这一段。
    *
+   * 🔴 P2：这是**唯一的对话注入路径**，租户必填。
+   *    与本类里 list() / countByUser() / countByPersona() / probeRecall() / status() 不同，
+   *    那些是设置页的管理与调试视图，全库读取是有意保留的（B9）。
+   *
    * 预算由用户自己定，代码里没有第二道上限：填多少就按多少截。
    * 截断发生在条目边界：超出预算的条目整条丢弃，不切半句——
    * 切半句会让记忆变成断章取义的噪声，比不注入更糟。
@@ -133,7 +145,7 @@ class MemoryService {
   async buildContextBlock(
     query: string,
     settings: MemorySettings | undefined,
-    scopes?: MemoryScopeId[],
+    tenants: PersonaIdentity[],
     visible?: (entry: {
       sourceSessionId: string | null
       sourceMessageIndex?: number | null
@@ -143,15 +155,14 @@ class MemoryService {
     if (!config.enabled) return ''
     if (!query.trim()) return ''
     if (!this.store.healthy()) return ''
-    // 🔴 scopes = [] 是「不召回」（fail-closed）；只有 undefined 才是「全库」，
-    // 而 undefined 仅用于兼容旧调用，生产路径（chatService）必须显式传域。
-    if (scopes !== undefined && scopes.length === 0) return ''
+    // 🔴 P2 合同：租户必填，没有「省略 = 全库」的生产入口。
+    if (!tenantListUsable(tenants)) return ''
 
     try {
       const hits = await hybridRecall(this.store, query, {
         topK: config.topK,
         minScore: config.minScore,
-        ...(scopes === undefined ? {} : { scopes }),
+        tenants,
         ...(visible === undefined ? {} : { visible })
       })
       if (hits.length === 0) return ''
@@ -194,14 +205,22 @@ class MemoryService {
     provider: Parameters<typeof extractMemories>[1]
     llmSettings: Parameters<typeof extractMemories>[2]
     signal: AbortSignal
-    /** 写入哪个记忆域。缺省 zone:root（兼容 P4 调用方） */
-    scope?: MemoryScopeId
+    /**
+     * 写入哪个用户 × 人设。**P2 起必填**：门面不再补 root/default 默认值，
+     * 默认租户只能由 chatService 统一提供（全仓唯一兜底点 memoryTenantOf）。
+     */
+    tenant: PersonaIdentity
     /** 产生这条记忆时的会话消息下标（P6 / T12）；缺省 null */
     sourceMessageIndex?: number | null
   }): Promise<void> {
     const config = this.normalize(params.settings)
     if (!config.enabled || !config.autoExtract) return
     if (params.userText.trim().length < 8) return
+
+    // 🔴 缺租户 = 不写。这里不做任何默认值兜底：静默落到 root/default 会让
+    //    某条调用链漏传租户时把别人的记忆写进默认库，且面板里看起来「正常」。
+    const tenant: PersonaIdentity | undefined = params.tenant
+    if (!tenantListUsable(tenant ? [tenant] : [])) return
 
     const key = params.sessionId + ':' + params.messageId
     if (this.extracting.has(key)) return
@@ -212,9 +231,9 @@ class MemoryService {
       if (facts.length === 0) return
 
       // 已有记忆的内容集合，用于去重（不做语义去重，一期用精确匹配即可）。
-      // 去重范围必须与写入域一致：拿全库去重会让「群里说过的同一句话」永远写不进群域。
+      // 去重范围必须与写入租户一致：拿全库去重会让「别的用户/人设说过的同一句话」永远写不进来。
       const existing = new Set(
-        (params.scope ? this.store.listByScope(params.scope) : this.store.list()).map((item) => item.content)
+        this.store.listByTenant(tenant.userId, tenant.personaId).map((item) => item.content)
       )
       const fresh = facts.filter((fact) => !existing.has(fact))
       if (fresh.length === 0) return
@@ -223,11 +242,12 @@ class MemoryService {
       for (let i = 0; i < fresh.length; i += 1) {
         this.store.upsert({
           content: fresh[i],
+          userId: tenant.userId,
+          personaId: tenant.personaId,
           sourceSessionId: params.sessionId,
           sourceMessageId: params.messageId,
           sourceMessageIndex: params.sourceMessageIndex ?? null,
-          embedding: vectors ? vectors[i] : null,
-          ...(params.scope ? { scopeId: params.scope } : {})
+          embedding: vectors ? vectors[i] : null
         })
       }
     } catch (error) {
@@ -241,6 +261,23 @@ class MemoryService {
   dispose(): void {
     this.store.close()
   }
+}
+
+/**
+ * 租户是否可用：非空、且每一项的 userId / personaId 都是非空串。
+ *
+ * 🔴 空数组 = 不召回 / 不写入（fail-closed）。
+ *    带空串的租户**整批拒绝**而不是过滤掉那一项：静默过滤会让「传错了」看起来像「隔离生效」。
+ */
+function tenantListUsable(tenants: PersonaIdentity[]): boolean {
+  if (!Array.isArray(tenants) || tenants.length === 0) return false
+  return tenants.every(
+    (tenant) =>
+      typeof tenant?.userId === 'string' &&
+      tenant.userId.trim().length > 0 &&
+      typeof tenant?.personaId === 'string' &&
+      tenant.personaId.trim().length > 0
+  )
 }
 
 function clampInt(value: unknown, min: number, max: number, fallback: number): number {

@@ -23,7 +23,6 @@ import { createProvider } from '../llm'
 import type { LlmMessage } from '../llm'
 import type { ChatSink, ChatTurnOutcome, WindowLike } from './sink'
 import { windowSink } from './sink'
-import { sessionPolicy } from './sessionPolicy'
 import { permissionGate } from '../tools/permission'
 import { channelToolVerdict } from '../channels/toolGate'
 import { definitionOf, executeTool, listDefinitions } from '../tools/registry'
@@ -31,9 +30,13 @@ import { resolveToolSupply } from '../tools/capability'
 import { clockNotice } from '../tools/clock'
 import { promptStore } from '../prompt/promptStore'
 import { memoryService } from '../rag'
+import { summaryService } from '../summary/service'
+import { DEFAULT_PERSONA_ID, ROOT_USER_ID } from '@shared/persona'
+import type { PersonaIdentity } from '@shared/persona'
 import { storyMemory } from '../story/memory'
 import { isStoryId, resolveWorldbookDir, storyDir, storyProfilePath } from '../story/paths'
 import { memoryRouteOf } from '../story/route'
+import type { MemoryRoute } from '../story/route'
 import { branchVisibility } from '../story/visibility'
 import { storyStore } from '../story/store'
 import { STORY_WORLDBOOK_MODE_DEFAULT } from '@shared/story'
@@ -137,7 +140,11 @@ class ChatService {
   deleteSessionsByStory(storyId: string): number {
     this.ensureLoaded()
     const doomed = this.sessions.filter((item) => item.storyId === storyId)
-    for (const session of doomed) this.stop(session.id)
+    for (const session of doomed) {
+      this.stop(session.id)
+      // 故事区整个删掉时，它下面每条分支会话的摘要都是孤儿
+      summaryService.forget(session.id)
+    }
     this.sessions = this.sessions.filter((item) => item.storyId !== storyId)
     if (doomed.length > 0) this.persist()
     return doomed.length
@@ -265,7 +272,15 @@ class ChatService {
     return cloneSession(stored ?? created)
   }
 
-  /** 改会话的模式 / 角色；只允许在没有消息、也没有进行中的生成时改。 */
+  /**
+   * 改会话的模式 / 角色。
+   *
+   * 🔴 两者的门槛**不一样**，别被「都不能改」的旧印象带偏：
+   *    - 模式决定这一轮给不给工具，中途换会把已经发生的工具调用变成无主操作，所以只允许空会话改；
+   *    - 角色只是下一轮换一份人格提示词，历史消息一个字都不动，所以**随时可改**
+   *      （对话页的角色切换器就靠这条：换角色不用新建对话）；
+   *    - 两者共同的硬门槛是「没有进行中的生成」，下一句就查 inflight。
+   */
   updateSession(id: string, patch: UpdateSessionInput): Session {
     this.ensureLoaded()
     const session = this.sessions.find((item) => item.id === id)
@@ -279,6 +294,10 @@ class ChatService {
     if (patch.characterId !== undefined) {
       const next = String(patch.characterId).trim()
       if (!next) throw new Error('角色不能为空')
+      // 🔴 必须校验「提示词库里真有这个目录」。缺了这道校验，拼错或角色被删也会写进会话，
+      //    而 compose() 对缺目录是 fail-safe（跳过角色那几段继续拼），界面照常回消息 ——
+      //    用户看到的现象是「她忽然没了人格」，不是一个错误。这种静默降级最难查。
+      if (!promptStore.hasCharacter(next)) throw new Error('角色不存在：' + next)
       session.characterId = next
     }
     // 换工作区不需要锁会话：和换模型同理，下一步请求就用新值。
@@ -326,6 +345,9 @@ class ChatService {
     this.stop(id)
     this.sessions = this.sessions.filter((s) => s.id !== id)
     this.persist()
+    // 会话没了，它的摘要就是孤儿：不清掉会让 summaries.json 只增不减，
+    // 而且同 id 重建会话时会拿回一段不属于它的记忆。
+    summaryService.forget(id)
   }
 
   stop(sessionId: string): void {
@@ -442,16 +464,21 @@ class ChatService {
     // 任何失败都必须降级成空串——记忆坏了不能影响聊天。
     // P4：记忆路由在**这里**算一次（唯一判定点 memoryRouteOf），召回与抽取共用同一个 route。
     // 🔴 故事区走**它自己的库**，所以不能只传域 —— 库换错时域对不对已经不重要了。
-    const route = memoryRouteOf(session)
-    const recallScopes: string[] = route.storyId ? [route.scope] : sessionPolicy().recallScopes(session.id)
+    // P2：租户也在这里算一次，与 route 一起下发给召回和后台抽取（b2：不许两处各判一次）。
+    //     route.scope 只回答「这条会话有没有可写域」，不再拼接进 PersonaIdentity。
+    const memoryRoute = memoryRouteOf(session)
+    const memoryTenant = this.memoryTenantOf()
+    const memoryTenants: PersonaIdentity[] = memoryRoute.scope ? [memoryTenant] : []
     // P6 / T12：故事区按分支可见性过滤召回（分叉点之后的记忆不泄漏到之前的分支）。
     // 非故事区不传 visible —— P5 行为逐字不变（A-20b）。
-    const visible = route.storyId ? branchVisibility(route.storyId, session.id).visible : undefined
+    const visible = memoryRoute.storyId
+      ? branchVisibility(memoryRoute.storyId, session.id).visible
+      : undefined
     const memoryBlock =
-      recallScopes.length === 0
+      memoryTenants.length === 0
         ? ''
         : await this
-            .recallMemory(userText, stored.memory, recallScopes, route.storyId, visible)
+            .recallMemory(userText, stored.memory, memoryRoute, memoryTenants, visible)
             .catch(() => '')
 
     // 故事设定（世界书目录 + 档位 + 画像）只在这一轮开始时取一次（C22：显式透传，
@@ -498,6 +525,11 @@ class ChatService {
             message.content += event.text
             const delta: ChatDelta = { sessionId: session.id, messageId: message.id, delta: event.text }
             sink.delta(delta)
+          } else if (event.type === 'reasoning') {
+            // 思考增量：只累积到 message.reasoning + 广播给桌面，**不进 content**。
+            // 进 content 会被当成回答的一部分落库、回灌下一轮、甚至被 QQ 发到群里。
+            message.reasoning = (message.reasoning ?? '') + event.text
+            sink.reasoning({ sessionId: session.id, messageId: message.id, delta: event.text })
           } else if (event.type === 'tool_call') {
             // ── 供给闸（ERR-01）：本轮没交给模型的工具，一律不认。 ──
             //
@@ -547,7 +579,9 @@ class ChatService {
         sessionId: session.id,
         messageId: message.id,
         content: message.content,
-        toolCalls: cloneCalls(message.toolCalls)
+        toolCalls: cloneCalls(message.toolCalls),
+        // 没思考时字段缺省为 undefined（不是空串）：渲染层据此决定「显不显示折叠块」
+        ...(message.reasoning ? { reasoning: message.reasoning } : {})
       }
       sink.done(done)
       outcome = {
@@ -577,7 +611,11 @@ class ChatService {
       this.turns.delete(session.id)
       session.updatedAt = Date.now()
       this.persist()
-      this.scheduleExtraction(session, userText)
+      this.scheduleExtraction(session, userText, memoryRoute, memoryTenant)
+      // 对话层记忆：够阈值就在后台压一次，**不 await**。
+      // 放在 finally 里而不是 try 末尾：出错的那一轮也该把已发生的对话记进摘要，
+      // 否则一次网络失败会让这段对话永远进不了窗口外的记忆。
+      summaryService.schedule(session, provider, settings)
     }
 
     return outcome
@@ -589,14 +627,30 @@ class ChatService {
    * 用独立的 AbortController，用户点「停止生成」不应该连记忆抽取一起取消
    * ——那句话已经说完了，事实该记还是要记。
    */
-  private scheduleExtraction(session: Session, userText: string): void {
-    // P5 G5：写进这条会话自己的域（P4 是「完全隔离=什么都不记」，P5 是「记在自己的域里」）。
-    // 取不到域（空串）就不写：没有归属的条目在面板里看不见，等于黑洞。
-    // P4：与召回共用同一个判定点（B2：不许在两处各判一次）。
-    // 故事区写进**自己的库**的 story:<storyId> 域（M11 物理隔离）。
-    const route = memoryRouteOf(session)
-    const scope = route.scope
-    if (!scope) return
+  /**
+   * P2：聊天侧**唯一**的 root/default 兜底点。
+   *
+   * 🔴 P3 只替换本函数实现（改成解析 QQ 发送者），不改变召回 / 抽取的调用形状。
+   * 🔴 不要在任何其他地方再写一份 root/default：两份兜底会在 P3 换真实发送者时对不上。
+   * 🔴 P2 不读 sink.senderId，也不解析 QQ 号 —— 那是 P3 的活。
+   */
+  private memoryTenantOf(): PersonaIdentity {
+    return {
+      userId: ROOT_USER_ID,
+      personaId: DEFAULT_PERSONA_ID
+    }
+  }
+
+  private scheduleExtraction(
+    session: Session,
+    userText: string,
+    route: MemoryRoute,
+    tenant: PersonaIdentity
+  ): void {
+    // P2：route 与 tenant 由 runStream 传入，**不在这里重新解析** memoryRouteOf（B2：一处判定）。
+    // route.scope 只回答「有没有可写域」：没有归属的条目在面板里看不见，等于黑洞，所以空哨兵就不写。
+    // 故事区写进**自己的库**（M11 物理隔离），库内数据行由 tenant 决定。
+    if (!route.scope) return
     const stored = settingsStore.get()
     if (!stored.memory?.enabled || !stored.memory.autoExtract) return
     if (!userText.trim()) return
@@ -620,7 +674,7 @@ class ChatService {
         provider: createProvider(llmSettings),
         llmSettings,
         signal: new AbortController().signal,
-        scope,
+        tenant,
         sourceMessageIndex: sourceMessageIndex >= 0 ? sourceMessageIndex : null
       })
       .catch((error) => console.warn('[chat] 记忆抽取失败', error))
@@ -757,7 +811,16 @@ class ChatService {
     // 和可撤销性完全不同——用户删掉一条记忆，不该动到人格文件。
     if (memoryBlock) payload.push({ role: 'system', content: memoryBlock })
 
-    payload.push(...sessionHistoryToLlm(session))
+    // 对话层记忆：把窗口外的对话压成四段文本，作为最后一段 system。
+    // 顺序是刻意的 —— 人格 → 时间 → RAG 事实 → 对话摘要 → 历史。
+    // 越靠后越贴近这次回答：记忆回答「用户是谁」，摘要回答「刚才聊到哪」，
+    // 后者离当前这轮更近，权重必须更高（docs/01 §5 的注入顺序约定）。
+    const summaryBlock = summaryService.systemBlock(session)
+    if (summaryBlock) payload.push({ role: 'system', content: summaryBlock })
+
+    // 历史只下发窗口内的部分：游标之前的内容已经在摘要里了。
+    // historyOf 返回的是 session.messages 的切片，不复制、不改原数组。
+    payload.push(...sessionHistoryToLlm({ messages: summaryService.historyOf(session) }))
     return payload
   }
 
@@ -847,18 +910,25 @@ class ChatService {
     }
   }
 
+  /**
+   * 召回并拼块。
+   *
+   * 🔴 两条分工不许互换：**storyId 决定物理库，PersonaIdentity 决定库内数据行**。
+   *    故事库与主库换错时，租户对不对已经不重要了。
+   * 🔴 tenants 必须原样透传且非空：空租户在这里就返回空串，不往下游传（fail-closed）。
+   */
   private async recallMemory(
     query: string,
     config: Settings['memory'],
-    scopes: string[],
-    storyId?: string | null,
+    route: MemoryRoute,
+    tenants: PersonaIdentity[],
     visible?: (entry: { sourceSessionId: string | null; sourceMessageIndex?: number | null }) => boolean
   ): Promise<string> {
     if (!config?.enabled) return ''
     if (!query.trim()) return ''
-    // 🔴 scopes 必须原样透传：省成 undefined 等于「全库」，隔离当场失效（retriever 的兼容分支）。
-    if (storyId) return storyMemory(storyId).buildContextBlock(query, config, scopes, visible)
-    return memoryService.buildContextBlock(query, config, scopes, visible)
+    if (!route.scope || tenants.length === 0) return ''
+    if (route.storyId) return storyMemory(route.storyId).buildContextBlock(query, config, tenants, visible)
+    return memoryService.buildContextBlock(query, config, tenants, visible)
   }
 
   /**

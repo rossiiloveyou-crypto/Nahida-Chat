@@ -218,6 +218,34 @@ export const DEFAULT_MEMORY_SETTINGS = {
   minScore: 0.55
 } as const
 
+/**
+ * 对话摘要（会话滚动摘要）的出厂值。
+ *
+ * 与 DEFAULT_MEMORY_SETTINGS 是两套东西：那套是「按 query 检索事实」的 RAG 参数，
+ * 这套是「把对话压成四段文本、无条件注入」的窗口参数。
+ *
+ * 40/12 按桌面聊天调：一轮只有 2 条消息，照搬 galgame 的 250 条等于永远不压缩。
+ * 四段上限决定每轮注入的体积（400+600+400+1200 ≈ 2600 字符）。
+ */
+export const DEFAULT_SUMMARY_SETTINGS = {
+  enabled: true,
+  triggerCount: 40,
+  windowCount: 12,
+  shortTermMaxChars: 400,
+  longTermMaxChars: 1200,
+  userInfoMaxChars: 600,
+  promisesMaxChars: 400
+} as const
+
+/** 触发阈值区间。下限 2 = 至少一问一答，再小就是每轮都压，纯烧钱 */
+export const SUMMARY_TRIGGER_RANGE = { min: 2, max: 10_000 } as const
+
+/** 保留窗口区间。0 = 压缩边界前一条原文都不留，全靠摘要接话 */
+export const SUMMARY_WINDOW_RANGE = { min: 0, max: 10_000 } as const
+
+/** 单段字符上限区间。0 = 不截断（与 MEMORY 的语义一致：填错了别崩） */
+export const SUMMARY_CHARS_RANGE = { min: 0, max: 1_000_000 } as const
+
 /** 记忆 token 预算的合法区间。没有硬上限，只有"填错了别崩"的下限。 */
 export const MEMORY_BUDGET_RANGE = { min: 50, max: 200_000, step: 100 } as const
 

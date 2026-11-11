@@ -17,6 +17,13 @@ export interface LlmMessage {
 
 export type ProviderEvent =
   | { type: 'text'; text: string }
+  /**
+   * 思考增量（DeepSeek reasoning_content / Anthropic thinking / Gemini thought）。
+   *
+   * 🔴 与 text 严格分开：它不是回答的一部分，不能拼进正文、不能回灌历史。
+   *    四家协议各自的字段名见各适配器里的注释。
+   */
+  | { type: 'reasoning'; text: string }
   | { type: 'tool_call'; call: ToolCallRequest }
   | { type: 'finish'; reason: 'stop' | 'tool_calls' | 'length' | 'unknown' }
 

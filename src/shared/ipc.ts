@@ -37,6 +37,11 @@ export const IPC = {
   memoryRecall: 'memory:recall',
   memoryOpenModel: 'memory:open-model',
 
+  // 对话摘要（窗口外对话的滚动压缩）。与上面的 memory:* 是两套：那个是 RAG 事实库
+  summaryStatus: 'summary:status',
+  summaryForget: 'summary:forget',
+  summaryClear: 'summary:clear',
+
   chatList: 'chat:list',
   chatCreate: 'chat:create',
   chatUpdate: 'chat:update',
@@ -46,6 +51,8 @@ export const IPC = {
   chatStop: 'chat:stop',
 
   chatDelta: 'chat:delta',
+  /** main → renderer：思考增量（与正文严格分开，渲染层折进可收起的块） */
+  chatReasoning: 'chat:reasoning',
   chatTool: 'chat:tool',
   chatApproval: 'chat:approval',
   chatDone: 'chat:done',
