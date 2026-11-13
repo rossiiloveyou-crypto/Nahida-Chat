@@ -5,10 +5,10 @@
  * 新断言（P5）：QQ 会话**记在自己的域里**，recall 1 次、extract 1 次。
  * P6 改写：会话 id 就是外部键（qq:<uin>:<type>:<id>），域由 zones/scope 的解析式判定给出。
  * P2 改写：记忆门面的入参从「旧 scope 字符串数组」换成 PersonaIdentity[]，
- *          抽取入参从 scope 换成 tenant。route.scope 只剩「有没有可写域」的哨兵语义，
- *          所以召回 / 抽取都断言同一个固定租户 root/default（P3 才换真实发送者）。
- *
- * 保留 P4 的对照物：桌面会话仍然要召回 / 抽取各 1 次（拒绝「全都不召回」的坏实现）。
+ *          抽取入参从 scope 换成 tenant。route.scope 只剩「有没有可写域」的哨兵语义。
+ * P3 改写：租户不再恒为 root/default，改由 sink.senderId 解析（chatService.memoryTenantOf）。
+ *          桌面 / 无头 sink 仍落 root/default —— 那是**对照物**，不许删；
+ *          另加一组「渠道 + 带发言人」的断言，证明它落的是发言人租户。
  *
  * 跑法：node scripts/test/qq-session-policy.test.mjs
  */
@@ -31,13 +31,24 @@ fs.writeFileSync(
 // 用 stub 顶替 rag 模块：真去加载 embedding 模型会拖几分钟，而且与本判据无关。
 // 记录的是「调用了几次 + 传了哪些租户」。
 
-/** P2：记忆门面吃的固定租户（chatService.memoryTenantOf 的兜底值） */
+/** 桌面 / 无头 sink 的租户（P3 起是 fail-safe 兜底值，不再是「所有人共用」的唯一值） */
 const TENANT = { userId: 'root', personaId: 'default' }
+/** P3：渠道会话 + sink.senderId 之后，租户 = 发言人 */
+const SENDER_TENANT = { userId: '10001', personaId: 'default' }
 globalThis.__memProbe = {
   recall: 0,
   extract: 0,
   tenants: [],
   extractTenants: [],
+  history: [],
+  // P3：chatService 现在会通过门面读人设表、写人设历史，桩必须补齐这四个方法，
+  // 否则会抛「memoryService.activePersona is not a function」——
+  // 那会把「桩不完整」伪装成产品缺陷（P2 报告 §十 记过同一类坑）。
+  activePersona: () => null,
+  upsertPersona: () => {},
+  appendHistory(entry) {
+    globalThis.__memProbe.history.push(entry)
+  },
   async buildContextBlock(_query, _settings, tenants) {
     globalThis.__memProbe.recall += 1
     globalThis.__memProbe.tenants.push(tenants)
@@ -68,12 +79,13 @@ const plugin = {
   }
 }
 
-const { chatService, HeadlessSink, setSessionPolicy, sessionPolicy, createScopeResolver, ZoneStore, soloScope } =
+const { chatService, HeadlessSink, QqSink, setSessionPolicy, sessionPolicy, createScopeResolver, ZoneStore, soloScope } =
   await bundleModule(
     'policy',
     [
       `export { chatService } from '${p('src/main/features/chat/chatService.ts')}'`,
       `export { HeadlessSink } from '${p('src/main/features/chat/sink.ts')}'`,
+      `export { QqSink } from '${p('src/main/features/qq/sink.ts')}'`,
       `export { setSessionPolicy, sessionPolicy } from '${p('src/main/features/chat/sessionPolicy.ts')}'`,
       `export { createScopeResolver } from '${p('src/main/features/zones/scope.ts')}'`,
       `export { ZoneStore } from '${p('src/main/features/zones/store.ts')}'`,
@@ -112,8 +124,16 @@ check('渠道会话被标为「隔离」', sessionPolicy().isMemoryIsolated(chan
 check('桌面会话不被隔离', sessionPolicy().isMemoryIsolated(normalSession.id) === false)
 
 console.log('渠道会话：记在自己的域（P5 新语义 + P6 解析式判定）')
-check('域解析：未归区的群 → solo:外部键', JSON.stringify(resolver.resolveRecallScopes(channelSession.id)) === JSON.stringify([SOLO]), JSON.stringify(resolver.resolveRecallScopes(channelSession.id)))
-check('域解析：桌面 UUID → zone:root', resolver.resolvePrimaryScope(normalSession.id) === 'zone:root', resolver.resolvePrimaryScope(normalSession.id))
+check(
+  '域解析：未归区的群 → solo:外部键',
+  JSON.stringify(resolver.resolveRecallScopes(channelSession.id)) === JSON.stringify([SOLO]),
+  JSON.stringify(resolver.resolveRecallScopes(channelSession.id))
+)
+check(
+  '域解析：桌面 UUID → zone:root',
+  resolver.resolvePrimaryScope(normalSession.id) === 'zone:root',
+  resolver.resolvePrimaryScope(normalSession.id)
+)
 
 const before = { recall: globalThis.__memProbe.recall, extract: globalThis.__memProbe.extract }
 const boundOutcome = await chatService.sendAwait(
@@ -127,19 +147,24 @@ check(
   globalThis.__memProbe.recall - before.recall
 )
 check(
-  '召回时传的是固定租户 [root/default]（不再传旧 scope 字符串）',
+  '无头 sink 的召回租户 = [root/default]（P3 起是 fail-safe 兜底值，不是「所有人共用」）',
   JSON.stringify(globalThis.__memProbe.tenants.at(-1)) === JSON.stringify([TENANT]),
   JSON.stringify(globalThis.__memProbe.tenants.at(-1))
 )
 
-let boundExtract = 0
-for (let i = 0; i < 60 && boundExtract === 0; i += 1) {
-  await sleep(50)
-  boundExtract = globalThis.__memProbe.extract - before.extract
+const waitExtract = async (from) => {
+  let got = 0
+  for (let i = 0; i < 60 && got === 0; i += 1) {
+    await sleep(50)
+    got = globalThis.__memProbe.extract - from
+  }
+  return got
 }
+
+const boundExtract = await waitExtract(before.extract)
 check('extractInBackground 调用 1 次（P4 是 0 次）', boundExtract === 1, boundExtract)
 check(
-  '抽取写入的 tenant 是固定租户 root/default',
+  '无头 sink 的抽取 tenant = root/default',
   JSON.stringify(globalThis.__memProbe.extractTenants.at(-1)) === JSON.stringify(TENANT),
   JSON.stringify(globalThis.__memProbe.extractTenants.at(-1))
 )
@@ -157,16 +182,53 @@ check(
   JSON.stringify(globalThis.__memProbe.tenants.at(-1)) === JSON.stringify([TENANT]),
   JSON.stringify(globalThis.__memProbe.tenants.at(-1))
 )
-let normalExtract = 0
-for (let i = 0; i < 60 && normalExtract === 0; i += 1) {
-  await sleep(50)
-  normalExtract = globalThis.__memProbe.extract - beforeNormal.extract
-}
+const normalExtract = await waitExtract(beforeNormal.extract)
 check('抽取 1 次（对照物）', normalExtract === 1, normalExtract)
 check(
   '桌面会话的抽取租户 = root/default',
   JSON.stringify(globalThis.__memProbe.extractTenants.at(-1)) === JSON.stringify(TENANT),
   JSON.stringify(globalThis.__memProbe.extractTenants.at(-1))
+)
+
+console.log('P3：渠道会话 + 带发言人的 sink → 租户 = 发言人（不是 root）')
+const senderSession = chatService.ensureChannelSession('qq:10001:private:22222', { title: '私聊' })
+const beforeSender = {
+  recall: globalThis.__memProbe.recall,
+  extract: globalThis.__memProbe.extract,
+  history: globalThis.__memProbe.history.length
+}
+const senderOutcome = await chatService.sendAwait(
+  { sessionId: senderSession.id, content: '我叫小P，请记住我' },
+  new QqSink(() => {}, '10001')
+)
+check('带发言人的渠道会话正常完成', senderOutcome.status === 'done', senderOutcome.status)
+check(
+  '召回 1 次',
+  globalThis.__memProbe.recall - beforeSender.recall === 1,
+  globalThis.__memProbe.recall - beforeSender.recall
+)
+check(
+  '召回租户 = [10001/default]（发言人租户，不是 root）',
+  JSON.stringify(globalThis.__memProbe.tenants.at(-1)) === JSON.stringify([SENDER_TENANT]),
+  JSON.stringify(globalThis.__memProbe.tenants.at(-1))
+)
+const senderExtract = await waitExtract(beforeSender.extract)
+check('抽取 1 次', senderExtract === 1, senderExtract)
+check(
+  '抽取写入的 tenant = 10001/default',
+  JSON.stringify(globalThis.__memProbe.extractTenants.at(-1)) === JSON.stringify(SENDER_TENANT),
+  JSON.stringify(globalThis.__memProbe.extractTenants.at(-1))
+)
+
+// 只比对**这一组新增**的历史：前面几组（桌面 / 无头）本来就该落 root，
+// 把它们算进来会让「发言人组」的否定断言恒假。
+const senderHistory = globalThis.__memProbe.history.slice(beforeSender.history)
+check('人设历史至少写了两条（user + assistant）', senderHistory.length >= 2, senderHistory.length)
+check(
+  '人设历史写入的租户也是 10001/default',
+  senderHistory.length > 0 &&
+    senderHistory.every((entry) => entry.userId === '10001' && entry.personaId === 'default'),
+  JSON.stringify(senderHistory.map((entry) => entry.userId + '/' + entry.personaId))
 )
 
 console.log('没有可写域的会话（route.scope 为空串）：fail-closed')

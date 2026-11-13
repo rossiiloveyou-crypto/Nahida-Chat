@@ -1,4 +1,6 @@
 import type { ChannelId } from './channels'
+import { DEFAULT_ACCOUNT_LEVEL } from './persona'
+import type { CommandPermissionLevel } from './persona'
 
 /**
  * 渠道授权的 **v2 数据模型**（P9-R3）—— 授权主体从「会话」改成「人」。
@@ -23,6 +25,11 @@ export interface AccountPermissions {
   group: boolean
   /** 允许调用工具（私聊群聊通用） */
   tool: boolean
+  /**
+   * P4：指令等级。**与上面三位正交**：它回答「能做多重的事」，
+   * 三位回答「能不能做这类事」。缺省 = DEFAULT_ACCOUNT_LEVEL（low）。
+   */
+  level: CommandPermissionLevel
 }
 
 /**
@@ -34,7 +41,8 @@ export interface AccountPermissions {
 export const DEFAULT_ACCOUNT_PERMISSIONS: AccountPermissions = {
   private: false,
   group: true,
-  tool: false
+  tool: false,
+  level: DEFAULT_ACCOUNT_LEVEL
 }
 
 /** 一个账号（QQ 号）及其权限 */

@@ -11,6 +11,7 @@ import type {
   ConversationMode,
   CreateSessionInput,
   Message,
+  PersonaHistoryEntry,
   SendInput,
   SendResult,
   Session,
@@ -467,7 +468,7 @@ class ChatService {
     // P2：租户也在这里算一次，与 route 一起下发给召回和后台抽取（b2：不许两处各判一次）。
     //     route.scope 只回答「这条会话有没有可写域」，不再拼接进 PersonaIdentity。
     const memoryRoute = memoryRouteOf(session)
-    const memoryTenant = this.memoryTenantOf()
+    const memoryTenant = this.memoryTenantOf(session, sink)
     const memoryTenants: PersonaIdentity[] = memoryRoute.scope ? [memoryTenant] : []
     // P6 / T12：故事区按分支可见性过滤召回（分叉点之后的记忆不泄漏到之前的分支）。
     // 非故事区不传 visible —— P5 行为逐字不变（A-20b）。
@@ -612,6 +613,10 @@ class ChatService {
       session.updatedAt = Date.now()
       this.persist()
       this.scheduleExtraction(session, userText, memoryRoute, memoryTenant)
+      // P3：人设历史（D7）。同步写、不 await：SQLite 本地写是微秒级，失败已在 store 内部收敛成 warn。
+      // 🔴 助手那一条只在**真正说完**时才写：aborted 的正文是半句话，写进历史会让下一轮
+      //    把断章当既成事实（与摘要「半句话不压缩」同一条道理）。
+      this.recordHistory(session, message, memoryTenant, message.status === 'done' && !controller.signal.aborted)
       // 对话层记忆：够阈值就在后台压一次，**不 await**。
       // 放在 finally 里而不是 try 末尾：出错的那一轮也该把已发生的对话记进摘要，
       // 否则一次网络失败会让这段对话永远进不了窗口外的记忆。
@@ -628,16 +633,99 @@ class ChatService {
    * ——那句话已经说完了，事实该记还是要记。
    */
   /**
-   * P2：聊天侧**唯一**的 root/default 兜底点。
+   * P3：本轮「这句话是谁说的」—— 全仓**唯一**的发送者解析点（A-01 / A-12）。
    *
-   * 🔴 P3 只替换本函数实现（改成解析 QQ 发送者），不改变召回 / 抽取的调用形状。
-   * 🔴 不要在任何其他地方再写一份 root/default：两份兜底会在 P3 换真实发送者时对不上。
-   * 🔴 P2 不读 sink.senderId，也不解析 QQ 号 —— 那是 P3 的活。
+   * 取值规则（D8 / M8）：
+   * - 渠道会话（id 形如 `qq:<uin>:<chatType>:<chatId>`）+ sink 带 senderId → userId = senderId
+   * - 其余（桌面 / 无头 / 渠道但取不到发言人）→ userId = ROOT_USER_ID
+   *
+   * 🔴 不读 session.id 里的 uin：那是**机器人自己**的号，不是发言人。
+   * 🔴 senderId 为空串与 null 一律按桌面处理（fail-safe）：宁可用 root，
+   *    也不要写一条 userId='' 的孤儿记忆 —— 那种行在面板里看不见，等于黑洞。
+   * 🔴 这里**不缓存**激活人设：P4 的 `//switch` 改完 is_active 必须下一轮立刻生效。
    */
-  private memoryTenantOf(): PersonaIdentity {
-    return {
-      userId: ROOT_USER_ID,
-      personaId: DEFAULT_PERSONA_ID
+  private memoryTenantOf(session: Session, sink: ChatSink): PersonaIdentity {
+    const sender = (sink.senderId ?? '').trim()
+    const userId = isChannelSessionId(session.id) && sender.length > 0 ? sender : ROOT_USER_ID
+    return { userId, personaId: this.activePersonaOf(userId) }
+  }
+
+  /**
+   * 该用户当前激活的人设；没有记录就**自动注册并激活 default**（D4）。
+   *
+   * 🔴 这是全仓唯一一处「无人设 → default」的兜底（B2 / A-13）。不要再在别处写第二份：
+   *    两处兜底会让「切换人设」在某些轮次落到旧人设上，而且不会有任何测试变红。
+   * 🔴 注册必须幂等：upsertPersona 内部是 ON CONFLICT，重复调用不会产生第二行（A-05）。
+   * 🔴 不许在这里顺手把 root 也注册一遍：root 只在 userId === 'root' 那一支才走到，
+   *    上面的调用已经覆盖它；多写一行等于「任何人解析人设时都去写 root 的表」。
+   */
+  private activePersonaOf(userId: string): string {
+    try {
+      const active = memoryService.activePersona(userId)
+      if (active) return active
+      memoryService.upsertPersona(userId, DEFAULT_PERSONA_ID, true)
+      return DEFAULT_PERSONA_ID
+    } catch (error) {
+      // 人设表坏了不能影响聊天：退回 default，并留一条可诊断的日志
+      console.warn('[chat] 人设解析失败，本轮回落 default', error)
+      return DEFAULT_PERSONA_ID
+    }
+  }
+
+  /**
+   * P3：把人设历史写进 `persona_chat_history`（D7 的唯一写入点）。
+   *
+   * 一轮写**两条**：本轮用户原话 + 本轮助手成品。
+   *
+   * 🔴 `assistantDone` 由调用方按「message.status === 'done' **且** 本轮没被 abort」算好传进来。
+   *    真实代码里 abort 走的是 `break` 出循环，**message.status 仍然会被置成 'done'**
+   *    （只有 outcome.status 才是 'aborted'）—— 所以只判 message.status 会把半句话写进历史。
+   *    这与蓝图 step 1.5 写的「只判 message.status」不同，属实测偏差，已记入完成报告 §五。
+   * 🔴 错误轮（status='error'）同理只写 user 一条：出错前那半句不是成品。
+   * 🔴 id 用 `sessionId:u|a:messageId`，配合 store 的 INSERT OR REPLACE 保证幂等（T-18）：
+   *    同一轮因重试被记录两次也不会变成两行。
+   */
+  private recordHistory(
+    session: Session,
+    message: Message,
+    tenant: PersonaIdentity,
+    assistantDone: boolean
+  ): void {
+    // 空租户 = 不写（fail-closed）。这里不做任何默认值兜底：兜底只允许在 activePersonaOf 一处。
+    if (!tenant.userId || !tenant.personaId) return
+
+    const parsed = parseChannelKey(session.id)
+    const chatType: PersonaHistoryEntry['chatType'] = parsed ? parsed.chatType : 'desktop'
+    const chatId = parsed ? parsed.chatId : null
+    const now = Date.now()
+
+    const userMessage = [...session.messages].reverse().find((item) => item.role === 'user')
+    if (userMessage && userMessage.content.trim()) {
+      memoryService.appendHistory({
+        id: session.id + ':u:' + userMessage.id,
+        userId: tenant.userId,
+        personaId: tenant.personaId,
+        role: 'user',
+        content: userMessage.content.trim(),
+        sessionId: session.id,
+        chatType,
+        chatId,
+        createdAt: userMessage.createdAt || now
+      })
+    }
+
+    if (assistantDone && message.content.trim()) {
+      memoryService.appendHistory({
+        id: session.id + ':a:' + message.id,
+        userId: tenant.userId,
+        personaId: tenant.personaId,
+        role: 'assistant',
+        content: message.content.trim(),
+        sessionId: session.id,
+        chatType,
+        chatId,
+        createdAt: now
+      })
     }
   }
 

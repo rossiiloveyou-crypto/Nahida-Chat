@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { QqSettings } from '@shared/qq'
+import { COMMAND_NAMES } from '@shared/persona'
+import type { CommandName, CommandPermissionLevel } from '@shared/persona'
 import { useQq } from '../useQq'
 
 /**
@@ -32,8 +34,19 @@ const OUTCOME_LABEL: Record<string, string> = {
   'dropped-not-mentioned': '群里没 @ 她',
   'dropped-duplicate': '重复消息',
   'dropped-rate-limited': '触发限速',
-  'dropped-queue-full': '队列已满'
+  'dropped-queue-full': '队列已满',
+  // P4：指令被接住，没有进模型。成功与失败分开，排查「//switch 没反应」时才有依据
+  'command-handled': '已执行指令',
+  'command-failed': '指令出错'
 }
+
+/** P4：指令门槛的四个等级。与 shared/persona.ts 的等级名一一对应，顺序即强弱 */
+const LEVEL_OPTIONS = [
+  { value: 'none', label: '无' },
+  { value: 'low', label: '低' },
+  { value: 'medium', label: '中' },
+  { value: 'high', label: '高' }
+] as const
 
 function outcomeLabel(outcome: string): string {
   return OUTCOME_LABEL[outcome] ?? outcome
@@ -63,6 +76,17 @@ export function QqSection() {
 
   const patch = (value: Partial<QqSettings>): void => {
     setDraft((prev) => (prev ? { ...prev, ...value } : prev))
+  }
+
+  /**
+   * P4：改一条指令的门槛。
+   *
+   * 🔴 走**同一条** `patch`（= 同一个「保存设置」按钮）：门槛是 `QqSettings` 的一个字段，
+   *    为它单开一条保存路径就是两处真值（B2），而且会出现「改了但没点保存」的半截状态。
+   */
+  const patchThreshold = (name: CommandName, value: CommandPermissionLevel): void => {
+    if (!draft) return
+    patch({ commandThresholds: { ...draft.commandThresholds, [name]: value } })
   }
 
   const refreshLogs = async (): Promise<void> => {
@@ -121,7 +145,8 @@ export function QqSection() {
             <dt>最近事件</dt>
             <dd>
               收到 {stats ? stats.received : 0} · 回复 {stats ? stats.responded : 0} · 发送{' '}
-              {stats ? stats.sent : 0} · 失败 {stats ? stats.failed : 0}
+              {stats ? stats.sent : 0} · 指令 {stats ? (stats.commands ?? 0) : 0} · 失败{' '}
+              {stats ? stats.failed + (stats.commandsFailed ?? 0) : 0}
             </dd>
             {host.lastError && (
               <>
@@ -346,6 +371,41 @@ export function QqSection() {
                 还原
               </button>
             </div>
+          </div>
+        ) : (
+          <p className="hint-text">读取设置中…</p>
+        )}
+      </section>
+
+      <section className="setting-group" data-ui-region="C2 指令门槛">
+        <h3 className="setting-group__title">指令门槛</h3>
+        <p className="setting-group__desc">
+          每条指令要多少等级才允许使用。账号等级在「渠道控制台 → QQ 号白名单」里逐人设置。
+          等级从低到高：无 &lt; 低 &lt; 中 &lt; 高。
+          <br />
+          指令只在<strong>渠道侧</strong>生效：以 <code>//</code> 开头的一行不会送进模型，
+          也不建会话。<code>//list</code> 看人设、<code>//switch</code> 切换、
+          <code>//add</code> 新建、<code>//dele</code> 删除。
+        </p>
+        {draft ? (
+          <div data-ui-target="门槛组">
+            {COMMAND_NAMES.map((name) => (
+              <label className="memory-check" key={name} data-ui-target={'门槛 ' + name}>
+                <span>{'//' + name}</span>
+                <select
+                  value={draft.commandThresholds[name]}
+                  onChange={(event) =>
+                    patchThreshold(name, event.target.value as CommandPermissionLevel)
+                  }
+                >
+                  {LEVEL_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ))}
           </div>
         ) : (
           <p className="hint-text">读取设置中…</p>

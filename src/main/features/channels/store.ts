@@ -10,6 +10,7 @@ import type {
   ChannelGroup
 } from '@shared/channelAccess'
 import { DEFAULT_ACCOUNT_PERMISSIONS, DEFAULT_CHANNEL_ACCESS, isQqNumber } from '@shared/channelAccess'
+import { normalizeLevel } from '@shared/persona'
 
 /**
  * 渠道授权的落盘层（P6 G2 → **P9-R3 改 v2：按「人」授权**）。
@@ -147,7 +148,14 @@ export class ChannelAccessStore {
       permissions: {
         private: draft.permissions?.private ?? prev?.permissions.private ?? DEFAULT_ACCOUNT_PERMISSIONS.private,
         group: draft.permissions?.group ?? prev?.permissions.group ?? DEFAULT_ACCOUNT_PERMISSIONS.group,
-        tool: draft.permissions?.tool ?? prev?.permissions.tool ?? DEFAULT_ACCOUNT_PERMISSIONS.tool
+        tool: draft.permissions?.tool ?? prev?.permissions.tool ?? DEFAULT_ACCOUNT_PERMISSIONS.tool,
+        // P4：level 是**字符串**，不能用 ?? 判「有没有传」——
+        // ?? 只挡 null/undefined，读起来像「有值就用」，而实际要求是「**显式传了才覆盖**」。
+        // 写成 !== undefined 让这条意图可见，也让「用户把等级从 high 改成 none」不会被下一层吃掉。
+        level:
+          draft.permissions?.level !== undefined
+            ? normalizeLevel(draft.permissions.level)
+            : (prev?.permissions.level ?? DEFAULT_ACCOUNT_PERMISSIONS.level)
       }
     }
     if (index >= 0) config.accounts[index] = next
@@ -452,7 +460,7 @@ function migrateEntries(entries: unknown[], config: ChannelAccessConfig): void {
         label,
         addedAt,
         lastAt,
-        permissions: { private: respond, group: true, tool }
+        permissions: { private: respond, group: true, tool, level: DEFAULT_ACCOUNT_PERMISSIONS.level }
       })
     } else {
       if (!isQqNumber(parsed.chatId)) continue
@@ -480,7 +488,8 @@ function normalizeAccount(input: unknown): ChannelAccount | null {
       // 三个位都按「缺省 = 默认值」处理，非法值同样回默认，不抛
       private: bool(perms.private, DEFAULT_ACCOUNT_PERMISSIONS.private),
       group: bool(perms.group, DEFAULT_ACCOUNT_PERMISSIONS.group),
-      tool: bool(perms.tool, DEFAULT_ACCOUNT_PERMISSIONS.tool)
+      tool: bool(perms.tool, DEFAULT_ACCOUNT_PERMISSIONS.tool),
+      level: normalizeLevel(perms.level)
     }
   }
 }
@@ -553,7 +562,12 @@ export function migrateFromBindings(store: ChannelAccessStore = channelStore): n
         label: displayName,
         addedAt: Date.now(),
         lastAt: 0,
-        permissions: { private: true, group: DEFAULT_ACCOUNT_PERMISSIONS.group, tool: false }
+        permissions: {
+          private: true,
+          group: DEFAULT_ACCOUNT_PERMISSIONS.group,
+          tool: false,
+          level: DEFAULT_ACCOUNT_PERMISSIONS.level
+        }
       })
     }
     added += 1

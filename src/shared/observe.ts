@@ -88,6 +88,11 @@ export type ObserveOutcome =
   | 'dropped-duplicate'
   | 'dropped-rate-limited'
   | 'dropped-queue-full'
+  // P4：指令被接住，**没有进模型**。两条分开记，才能区分「执行成功」与「接住但失败」。
+  // 🔴 它们**不属于 triggered**（见 bridge.ts 的 TRIGGERED_OUTCOMES）：triggered 的语义是
+  //    「是否真的送进了模型」，把指令算进去会让 P8 起的样本分析被指令污染。
+  | 'command-handled'
+  | 'command-failed'
 
 /** 面板的一行：一个会话的汇总 */
 export interface ObserveConversation {

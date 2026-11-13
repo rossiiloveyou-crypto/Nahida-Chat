@@ -3319,11 +3319,29 @@ input[type='range'] {
    grid-template-columns（J-62：列数与别人不同却沿用别人的类名，表头会折到第二行，
    屏幕上看着像「少了几个字段」）。骨架仍然复用，私有部分只有列宽。 */
 
-/* A 区 QQ 号白名单：五列（QQ 号 / 备注 / 权限位 / 最近活动 / 操作）。
-   「权限位」那一格塞三个 checkbox，所以给得比别处宽。 */
+/* A 区 QQ 号白名单 → P4 从五列扩成六列（QQ 号 / 备注 / 权限位 / **等级** / 最近活动 / 操作）。
+   「权限位」那一格塞三个 checkbox，所以给得比别处宽；「等级」是一格 select，给 72px。
+   ⚠️ 六列塞进 678px 的表宽里：固定列 232+72+116+72 = 492，五个 10px gap，
+   剩给两个 fr 列约 136px，QQ 号（11 位数字约 80px）与备注都放得下。 */
 .qq-table--accounts .qq-table__head,
 .qq-table--accounts .qq-table__row {
-  grid-template-columns: minmax(0, 0.8fr) minmax(0, 0.9fr) 232px 116px 72px;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 0.9fr) 232px 72px 116px 72px;
+}
+
+/* P4：账号行的指令等级下拉。原生 select 在深色主题下会吃掉背景色，这里收回设计令牌 */
+.qq-table__level {
+  display: flex;
+  align-items: center;
+}
+
+.qq-table__level select {
+  width: 100%;
+  padding: 2px 4px;
+  border: 1px solid var(--nc-border);
+  border-radius: var(--nc-radius-sm);
+  background: var(--nc-surface);
+  color: var(--nc-text);
+  font-size: 11.5px;
 }
 
 /* B 区群白名单：四列（群号 / 群名 / 最近活动 / 操作） */
@@ -4065,13 +4083,6 @@ input[type='range'] {
   flex-direction: column;
   gap: 3px;
   margin: 4px 0 0;
-}
-
-.story-tree__list .story-tree__list {
-  position: relative;
-  margin-left: 6px;
-  padding-left: 4px;
-  border-left: 1px solid var(--nc-story-guide);
 }
 
 .story-tree__node {

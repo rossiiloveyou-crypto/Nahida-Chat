@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { AccountPermissions, ChannelAccount, ChannelAccessConfig, ChannelGroup } from '@shared/channelAccess'
 import { DEFAULT_ACCOUNT_PERMISSIONS } from '@shared/channelAccess'
+import type { CommandPermissionLevel } from '@shared/persona'
 import { useChannels } from '../useChannels'
 import { useModelProfiles } from '../useModelProfiles'
 import { useSettings } from '../useSettings'
@@ -94,9 +95,17 @@ function timeLabel(at: number): string {
   }
 }
 
+/**
+ * 三个**布尔**权限位。P4 的 `level` 是第四个位，但它**不能**塞进这个数组：
+ * 下面的 `<input type="checkbox" checked={account.permissions[column.key]}>` 是布尔专用，
+ * `level` 是四个字符串，塞进去会类型失配（也失去「四个选项的下拉」这层语义）。
+ * 所以键类型**故意**窄化成三个布尔名，而不是 `keyof AccountPermissions`。
+ */
+type BooleanPermissionKey = 'private' | 'group' | 'tool'
+
 /** 三个权限位的列定义：字段名 / 表头 / 提示语（提示语是「她管什么」的一句话） */
 const PERMISSION_COLUMNS: Array<{
-  key: keyof AccountPermissions
+  key: BooleanPermissionKey
   label: string
   hint: string
 }> = [
@@ -117,14 +126,29 @@ const PERMISSION_COLUMNS: Array<{
   }
 ]
 
+/**
+ * P4：指令等级的四个选项。**顺序即强弱**（无 < 低 < 中 < 高），
+ * 与 `COMMAND_LEVEL_WEIGHT` 同序；文案与 `shared/persona.ts` 的等级名一一对应。
+ */
+const LEVEL_OPTIONS = [
+  { value: 'none', label: '无' },
+  { value: 'low', label: '低' },
+  { value: 'medium', label: '中' },
+  { value: 'high', label: '高' }
+] as const
+
+const LEVEL_HINT =
+  '这个号能用哪些指令：无 = 一条都不能用；低 = 看列表 + 切换；中 = 还能新建；高 = 还能删除'
+
 interface AccountRowProps {
   account: ChannelAccount
   busy: boolean
-  onToggle: (account: ChannelAccount, field: keyof AccountPermissions) => void
+  onToggle: (account: ChannelAccount, field: BooleanPermissionKey) => void
+  onLevel: (account: ChannelAccount, level: CommandPermissionLevel) => void
   onRemove: (account: ChannelAccount) => void
 }
 
-function AccountRow({ account, busy, onToggle, onRemove }: AccountRowProps) {
+function AccountRow({ account, busy, onToggle, onLevel, onRemove }: AccountRowProps) {
   return (
     <div className="qq-table__row" key={account.userId}>
       <span title={account.userId}>{account.userId}</span>
@@ -141,6 +165,20 @@ function AccountRow({ account, busy, onToggle, onRemove }: AccountRowProps) {
             <span>{column.label}</span>
           </label>
         ))}
+      </span>
+      <span className="qq-table__level" title={LEVEL_HINT}>
+        <select
+          value={account.permissions.level}
+          disabled={busy}
+          onChange={(event) => onLevel(account, event.target.value as CommandPermissionLevel)}
+          title={LEVEL_HINT}
+        >
+          {LEVEL_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
       </span>
       <span>{timeLabel(account.lastAt)}</span>
       <span className="qq-table__actions">
@@ -258,11 +296,22 @@ export function ChannelsSection() {
     [config.groups]
   )
 
-  const togglePermission = (account: ChannelAccount, field: keyof AccountPermissions): void => {
+  const togglePermission = (account: ChannelAccount, field: BooleanPermissionKey): void => {
     void channels.saveAccount({
       userId: account.userId,
       permissions: { [field]: !account.permissions[field] }
     })
+  }
+
+  /**
+   * P4：改指令等级。
+   *
+   * 🔴 走既有的部分更新入口（`channels.saveAccount`），**不新开保存路径**：
+   *    两条保存路径 = 两处真值，谁后写谁赢，而且哪一条被调用过没人说得清。
+   * 🔴 只传 `{ level }`：主进程的 `upsertAccount` 是部分覆盖，其余三位保持原值。
+   */
+  const onLevel = (account: ChannelAccount, level: CommandPermissionLevel): void => {
+    void channels.saveAccount({ userId: account.userId, permissions: { level } })
   }
 
   const submitAccount = async (): Promise<void> => {
@@ -355,6 +404,10 @@ export function ChannelsSection() {
           私聊始终校验（没勾「私聊」这个号私聊她不会得到回复）；
           「群聊」只在下面「群成员鉴权」打开时才有意义；
           「工具」决定她能不能替这个号干活。
+          <br />
+          最后一列「等级」管的是<strong>指令</strong>（<code>//list</code> 等）：它与前三位<strong>正交</strong>
+          —— 前三列回答「能不能做这类事」，等级回答「能做多重的事」。
+          每类指令要多少等级，在「QQ 接入 → 指令门槛」里逐条设。
         </p>
 
         <div className="qq-table qq-table--accounts" data-ui-target="账号表">
@@ -362,6 +415,7 @@ export function ChannelsSection() {
             <span>QQ 号</span>
             <span>备注</span>
             <span>权限位</span>
+            <span>等级</span>
             <span>最近活动</span>
             <span>操作</span>
           </div>
@@ -377,6 +431,7 @@ export function ChannelsSection() {
               account={account}
               busy={channels.busy}
               onToggle={togglePermission}
+              onLevel={onLevel}
               onRemove={(item) => void channels.removeAccount(item.userId)}
             />
           ))}
@@ -416,6 +471,21 @@ export function ChannelsSection() {
               <span>{column.label}</span>
             </label>
           ))}
+          <label className="memory-check" title={LEVEL_HINT}>
+            <span>等级</span>
+            <select
+              value={newUserPerms.level}
+              onChange={(event) =>
+                setNewUserPerms((prev) => ({ ...prev, level: event.target.value as CommandPermissionLevel }))
+              }
+            >
+              {LEVEL_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <button
             type="button"
             className="btn-primary"

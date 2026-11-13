@@ -27,6 +27,9 @@ import { createKeyedQueue } from './queue'
 import { splitForQq } from './segment'
 import { qqStore } from './store'
 import { QqSink } from './sink'
+import { DEFAULT_ACCOUNT_LEVEL, normalizeThresholds, parseCommand } from '@shared/persona'
+import { runCommand, unknownCommandReply } from '../commands/run'
+import type { CommandResult } from '../commands/types'
 
 /**
  * 入站 → 模型 → 出站 的编排核心（P4 G2/G4/G5）。
@@ -108,6 +111,8 @@ export function emptyStats(): QqStats {
     droppedDuplicate: 0,
     droppedRateLimited: 0,
     droppedQueueFull: 0,
+    commands: 0,
+    commandsFailed: 0,
     lastError: null,
     lastEventAt: null
   }
@@ -329,6 +334,16 @@ export function createQqBridge(deps: QqBridgeDeps): QqBridge {
     // 动态列名访问：值与 QqStats 的数值字段一一对应（见 DROP_COUNTER 的类型约束）
     ;(stats as unknown as Record<string, number>)[counter] += 1
     record({ ...fields, outcome: ('dropped-' + reason) as QqEventOutcome })
+  }
+
+  /**
+   * P4：指令计数。与 countDrop 并列，但**不是** QqDropReason（指令不是「丢弃」）。
+   * 成功与失败分开记：只记成功的话，「//switch 没反应」时 commandsFailed 永远是 0，
+   * 排查时分不清「没被接住」和「接住但执行失败」。
+   */
+  function countCommand(ok: boolean): void {
+    if (ok) stats.commands += 1
+    else stats.commandsFailed += 1
   }
 
   function allowHit(map: Map<string, number[]>, key: string, limit: number): boolean {
@@ -639,6 +654,46 @@ export function createQqBridge(deps: QqBridgeDeps): QqBridge {
           outcome = 'dropped-not-authorized-member'
           return
         }
+      }
+
+      // ── P4：指令拦截。**必须在三道闸之后、ensureSession 之前** ──────────────
+      //
+      // 为什么在这里：
+      //  · 不能更早：未加白的群 / 陌生号发的指令也不该生效（M11「不绕过既有白名单」）
+      //  · 不能更晚：ensureSession 会**凭空建会话**并 touchAccess **写一次 access.json**，
+      //    让一条被拒的指令留下一条空会话 + 一次写盘（J-56 / F-01 的同一类坑）
+      const parsed = parseCommand(inbound.text)
+      if (parsed) {
+        // ⑤ 等级与门槛都复用**闭包里这一份快照**（settings 在 :561、access 在 :563 已取好）。
+        //    不要在块内重新 deps.store.access()：store 故意不做缓存，每条消息读一次盘，
+        //    重复读可能读到两份不同快照 —— 「同一条消息两套权限」。
+        const level =
+          findAccount(access.accounts, inbound.senderId, 'qq')?.permissions.level ?? DEFAULT_ACCOUNT_LEVEL
+        const thresholds = normalizeThresholds(settings.commandThresholds)
+        let result: CommandResult
+        try {
+          result = parsed.known
+            ? runCommand(parsed.command.name, {
+                userId: inbound.senderId,
+                chatType: inbound.chatType,
+                chatId: inbound.chatId,
+                level,
+                thresholds,
+                args: parsed.command.args
+              })
+            : unknownCommandReply(parsed.name)
+        } catch (error) {
+          // 指令执行不可抛到外层：抛出去会变成 failed 并回 errorReplyText，
+          // 用户看到「（这边卡住了）」，而真实原因只是一条指令，无从排查。
+          stats.lastError = errorMessage(error)
+          console.warn('[qq] 指令执行失败：' + stats.lastError)
+          result = { text: '这条指令执行时出错了，稍后再试。', detail: '指令抛错', ok: false }
+        }
+        if (result.text) await sendText(inbound.uin, inbound.chatType, inbound.chatId, result.text)
+        countCommand(result.ok)
+        outcome = result.ok ? 'command-handled' : 'command-failed'
+        // 🔴 绝不落到 ensureSession：指令不建会话、不写 access.json、不进模型
+        return
       }
 
       // ④ 会话 id = 外部键（P6 核心）。第一次收到消息时凭空建出来，之后一直复用。

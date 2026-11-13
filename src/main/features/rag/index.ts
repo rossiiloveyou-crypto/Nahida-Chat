@@ -9,10 +9,11 @@ import type {
   MemoryEntry,
   MemoryRecallHit,
   MemorySettings,
-  MemoryStatus
+  MemoryStatus,
+  PersonaHistoryEntry
 } from '@shared/types'
 import { DEFAULT_PERSONA_ID, ROOT_USER_ID } from '@shared/persona'
-import type { PersonaIdentity } from '@shared/persona'
+import type { PersonaIdentity, UserPersonaRow } from '@shared/persona'
 import { embedder } from './embedder'
 import { extractMemories } from './extract'
 import { recall as hybridRecall } from './retriever'
@@ -255,6 +256,39 @@ class MemoryService {
     } finally {
       this.extracting.delete(key)
     }
+  }
+
+  /**
+   * P3：该用户当前激活的人设；无记录返回 null。
+   *
+   * 🔴 **无记录就是 null，这里不补 default**：自动注册归 chatService.activePersonaOf 一处
+   *    （B2：同一语义不许两个载体）。门面要是也兜一次底，「切换人设没生效」就会
+   *    在某些轮次静默落到 default，而任何测试都不会变红。
+   *
+   * 🔴 每次现读库、不缓存：P4 的 `//switch` 改完 is_active 必须**下一轮立刻生效**。
+   */
+  activePersona(userId: string): string | null {
+    return this.store.activePersona(userId)
+  }
+
+  /** P3：注册人设（幂等）；activate=true 时原子切换激活项（同事务清零再置 1） */
+  upsertPersona(userId: string, personaId: string, activate?: boolean): void {
+    this.store.upsertPersona(userId, personaId, activate)
+  }
+
+  /** P3：写一条「该用户在该人设下」的往来（人设历史，D7） */
+  appendHistory(entry: PersonaHistoryEntry): void {
+    this.store.appendHistory(entry)
+  }
+
+  /** P4：该用户的人设列表（含 isActive）。指令 //list 用；纯转发，零逻辑 */
+  listPersonas(userId: string): UserPersonaRow[] {
+    return this.store.listPersonas(userId)
+  }
+
+  /** P4：删人设。**拒绝规则在 store 里**（default / 激活项），门面不重判（B2） */
+  deletePersona(userId: string, personaId: string): boolean {
+    return this.store.deletePersona(userId, personaId)
   }
 
   /** 应用退出前调用 */

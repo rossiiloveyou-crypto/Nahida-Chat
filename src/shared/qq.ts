@@ -1,3 +1,5 @@
+import { COMMAND_DEFAULT_THRESHOLDS } from './persona'
+import type { CommandThresholds } from './persona'
 import type { QqHostStatus } from './qqHost'
 
 /**
@@ -38,6 +40,8 @@ export interface QqSettings {
   rateLimitPerChannel: number
   /** 出错时回给对端的一句话（空串 = 不回） */
   errorReplyText: string
+  /** P4：每条指令的门槛。缺字段 = 出厂值（见 COMMAND_DEFAULT_THRESHOLDS） */
+  commandThresholds: CommandThresholds
 }
 
 export const DEFAULT_QQ_SETTINGS: QqSettings = {
@@ -51,7 +55,8 @@ export const DEFAULT_QQ_SETTINGS: QqSettings = {
   maxCharsPerSegment: 1500,
   rateLimitPerUser: 20,
   rateLimitPerChannel: 60,
-  errorReplyText: '（这边卡住了，稍后再试）'
+  errorReplyText: '（这边卡住了，稍后再试）',
+  commandThresholds: { ...COMMAND_DEFAULT_THRESHOLDS }
 }
 
 /** 数字字段的合法区间。越界一律钳制，不抛错（一个坏配置不该让 QQ 功能整体瘫痪）。 */
@@ -140,6 +145,17 @@ export interface QqStats {
   droppedDuplicate: number
   droppedRateLimited: number
   droppedQueueFull: number
+  /**
+   * P4：成功执行的指令条数。
+   *
+   * 🔴 指令**不是**「回复」也不是「丢弃」：它没进模型，so 不占 responded / failed，
+   *    也不属于任何一个 dropped-*（那些是「为什么没回」）。单独一位才好排查
+   *    「为什么 //switch 没反应」——commands 与 commandsFailed 分开，才看得出是
+   *    没被接住（两者都不动）还是接住但执行失败。
+   */
+  commands: number
+  /** P4：接住但执行失败（人设不存在 / 越权 / 缺参数）的指令条数 */
+  commandsFailed: number
   lastError: string | null
   lastEventAt: number | null
 }

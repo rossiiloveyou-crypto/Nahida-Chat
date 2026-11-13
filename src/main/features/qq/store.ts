@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { app } from 'electron'
 import type { QqSettings } from '@shared/qq'
 import { DEFAULT_QQ_SETTINGS, QQ_SETTINGS_LIMITS } from '@shared/qq'
+import { normalizeThresholds } from '@shared/persona'
 
 /**
  * QQ 设置的持久化（P4 G3）。
@@ -87,7 +88,10 @@ export function normalizeSettings(value: unknown): QqSettings {
       DEFAULT_QQ_SETTINGS.rateLimitPerChannel
     ),
     errorReplyText:
-      typeof raw.errorReplyText === 'string' ? raw.errorReplyText.slice(0, 200) : DEFAULT_QQ_SETTINGS.errorReplyText
+      typeof raw.errorReplyText === 'string' ? raw.errorReplyText.slice(0, 200) : DEFAULT_QQ_SETTINGS.errorReplyText,
+    // 🔴 不做深合并：normalizeThresholds 已经是「逐字段回落出厂值」，
+    //    再套一层合并会让「用户把某条设成 none」被误判成「没设」（none 是假值，?? 会跳过它）。
+    commandThresholds: normalizeThresholds(raw.commandThresholds)
   }
 }
 
