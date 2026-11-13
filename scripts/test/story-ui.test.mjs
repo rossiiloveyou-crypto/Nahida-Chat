@@ -40,7 +40,7 @@ fs.writeFileSync(extractStub, 'export async function extractMemories() { return 
 const ragStub = path.join(stubDir, 'rag-stub.ts')
 fs.writeFileSync(
   ragStub,
-  'export const memoryService = { async buildContextBlock() { return "" }, async extractInBackground() {}, dispose() {} }\nexport class MemoryService { constructor() {} }\n',
+  'export const memoryService = { async buildContextBlock() { return "" }, async extractInBackground() {}, activePersona() { return null }, upsertPersona() {}, appendHistory() {}, dispose() {} }\nexport class MemoryService { constructor() {} }\n',
   'utf8'
 )
 const plugin = {
@@ -58,7 +58,7 @@ const plugin = {
 const mod = await bundleModule(
   'story-ui',
   [
-    `export { createStory, deriveBranch, deleteBranch, getBranchTree, listStories, switchBranch, getStory, getStorySession, searchStory, updateStoryMeta, readStoryProfile, saveStoryProfile } from '${p('src/main/features/story/service.ts')}'`,
+    `export { createStory, deriveBranch, deleteBranch, listStoryBranches, listStories, switchBranch, getStory, getStorySession, searchStory, updateStoryMeta, readStoryProfile, saveStoryProfile } from '${p('src/main/features/story/service.ts')}'`,
     `export { StoryStore } from '${p('src/main/features/story/store.ts')}'`,
     `export { chatService } from '${p('src/main/features/chat/chatService.ts')}'`,
     `export { storyProfilePath, storiesRoot } from '${p('src/main/features/story/paths.ts')}'`,
@@ -69,7 +69,7 @@ const mod = await bundleModule(
 const {
   createStory,
   deriveBranch,
-  getBranchTree,
+  listStoryBranches,
   listStories,
   switchBranch,
   getStory,
@@ -294,20 +294,23 @@ check(
   JSON.stringify({ n: derived2Session && derived2Session.messages.length, same: beforeRootIds === afterRootIds })
 )
 
-// A-19：删非活跃叶子 → 树少一节点、会话少一条
-const beforeTree = getBranchTree(storyId)
+// A-19：删**当前**分支 → 列表少一行、会话少一条、活跃指针自动换人
+// 🔴 P6 修订后不再需要「先把活跃分支切走」：分支之间没有父子依赖，删当前分支也被允许，
+//    主进程会把活跃指针交给剩下的里面最近活动的那条。
+const beforeList = listStoryBranches(storyId)
 const beforeSessions = chatService.listSessionsByStory(storyId).length
 const { deleteBranch } = mod
-// 派生即激活（P6），删分支前必须先把活跃分支切走，否则命中「不能删除当前分支」那道拒绝
-switchBranch(storyId, root.id)
 deleteBranch(storyId, derived2.sessionId)
-const afterTree = getBranchTree(storyId)
+const afterList = listStoryBranches(storyId)
 const afterSessions = chatService.listSessionsByStory(storyId).length
-const countNodes = (nodes) => nodes.reduce((sum, node) => sum + 1 + countNodes(node.children), 0)
+const activeAfter = afterList.filter((item) => item.isActive)
 check(
-  'A-19 deleteBranch（非活跃叶子）→ 树少一节点、listSessionsByStory 少一条',
-  countNodes(afterTree) === countNodes(beforeTree) - 1 && afterSessions === beforeSessions - 1,
-  JSON.stringify({ before: countNodes(beforeTree), after: countNodes(afterTree) })
+  'A-19 deleteBranch（删的是当前分支）→ 行数 -1、会话 -1、活跃指针恰好一个且不是被删的',
+  afterList.length === beforeList.length - 1 &&
+    afterSessions === beforeSessions - 1 &&
+    activeAfter.length === 1 &&
+    activeAfter[0].branchId !== derived2.sessionId,
+  JSON.stringify({ before: beforeList.length, after: afterList.length, active: activeAfter.map((i) => i.branchId) })
 )
 
 /* ═══════════════════ A-15：契约存在性（静态文本断言，防 J-01） ═══════════════════ */

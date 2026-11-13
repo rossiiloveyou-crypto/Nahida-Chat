@@ -2,7 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameS
 import { join } from 'node:path'
 import type { MemoryEntry, Session } from '@shared/types'
 import type {
-  StoryBranchNode,
+  StoryBranchItem,
   StoryDeleteResult,
   StoryDraft,
   StoryMeta,
@@ -100,26 +100,28 @@ function countMemories(storyId: string): number {
 }
 
 /**
- * 这个区的分支树（P7 的抽屉直接用，P6 只提供数据 / T6）。
+ * 这个区的分支列表（P7 的抽屉直接用，P6 只提供数据 / T6）。
  *
- * 🔴 懒迁移（A-14）：没有 branches.json 但有会话时，第一次读产出单节点树**并写回**；
+ * 🔴 **扁平列表**：分支之间没有父子关系（P6 修订），所以这里不返回 children。
+ *    「从哪条分出来」只以 forkedFrom 快照跟回来，给界面写一行字。
+ * 🔴 懒迁移（A-14）：没有 branches.json 但有会话时，第一次读产出根分支**并写回**；
  *    第二次读到 file 非 null 就完全不写（否则 P7 一开抽屉就刷盘）。
- * 🔴 会话真源仍是 chatService；结构真源是 branches.json —— 两者在这里合并成树。
+ * 🔴 会话真源仍是 chatService；结构真源是 branches.json —— 两者在这里合并成一行行。
  */
-export function getBranchTree(storyId: string): StoryBranchNode[] {
+export function listStoryBranches(storyId: string): StoryBranchItem[] {
   if (!isStoryId(storyId)) return []
   const sessions = chatService.listSessionsByStory(storyId)
   const infos = sessions.map(toBranchSessionInfo)
-  // ensure 只在没有文件时写一次（幂等）；之后 tree 只读
+  // ensure 只在没有文件时写一次（幂等）；之后 list 只读
   branchStore.ensure(storyId, infos)
-  return branchStore.tree(storyId, infos)
+  return branchStore.list(storyId, infos)
 }
 
-/** 切换活跃分支。返回切换后的树；branchId 非法 → 抛（P7 只调这个，不自己改指针） */
-export function switchBranch(storyId: string, branchId: string): StoryBranchNode[] {
+/** 切换活跃分支。返回切换后的列表；branchId 非法 → 抛（P7 只调这个，不自己改指针） */
+export function switchBranch(storyId: string, branchId: string): StoryBranchItem[] {
   if (!isStoryId(storyId)) throw new Error('非法的故事区 id：' + String(storyId))
   branchStore.setActive(storyId, branchId)
-  return getBranchTree(storyId)
+  return listStoryBranches(storyId)
 }
 /** P7：取某故事的某条分支会话（带 messages，给渲染层视口用）。branchId 省略 = 活跃分支。 */
 export function getStorySession(storyId: string, branchId?: string): Session | null {

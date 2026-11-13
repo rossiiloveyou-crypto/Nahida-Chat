@@ -41,7 +41,7 @@ const KNOWN_TITLES = {
   'settings-prompts': '设置 · 提示词库',
   // P7：故事区三视图（侧栏双分区 / 分支抽屉展开 / 设置·故事区）
   'chat-stories': '对话首页 · 故事分区（侧栏双分区）',
-  'chat-story-drawer': '故事区 · 分支抽屉（检索 / 分支树 / 时间轴）',
+  'chat-story-drawer': '故事区 · 分支抽屉（检索 / 分支列表 / 时间轴）',
   'settings-stories': '设置 · 故事区（元信息 / 用户画像）',
   // P9：世界书编写器（弹层）。settings-prompts 里只留入口，列表与表单全在这个弹层。
   'worldbook-editor': '设置 · 世界书编写器（条目列表 + 新增/编辑表单）',
@@ -99,7 +99,7 @@ const fmt = (v) => 'x' + v.left + ' y' + v.top + ' ' + v.width + 'x' + v.height
 let md = ''
 md += '# UI 定位图（UI_MAP）\n\n'
 md += '> **以图为准。** 本文由 `ui-map-v' + version + '.json` 自动生成，只做索引；有冲突时以 PNG 为准。\n'
-md += '> 重新生成：`pnpm ui:map` 后跑 `node ~/.dsh/agents-global/ui-map/write-ui-map-md.cjs docs/ui/ui-map-v' + version + '.json`\n'
+md += '> 重新生成：`pnpm ui:map --only=<改到的视图>`（只拍改动部分，坐标表与上一份合并）后跑 `node ~/.dsh/agents-global/ui-map/write-ui-map-md.cjs docs/ui/ui-map-v' + version + '.json`\n'
 md += '> 截图尺寸：**' + size.width + 'x' + size.height + ' 内容区**，不含系统标题栏。\n\n'
 
 md += '## 怎么读这张图\n\n'
@@ -112,7 +112,9 @@ md += '## 网格调试开关\n\n'
 md += '| 操作 | 效果 |\n| --- | --- |\n'
 md += '| `Ctrl + Shift + G`（macOS `Cmd`） | 运行时显示 / 隐藏网格与编号 |\n'
 md += '| URL 加 `?grid=1` | 以开启状态启动（截图脚本用这个） |\n'
-md += '| `pnpm ui:map` | 重新生成全部截图与坐标 JSON |\n'
+md += '| `pnpm ui:map --only=<视图>[,…]` | 只重拍改动到的视图，坐标合并进上一份 JSON（**默认写法**） |\n'
+md += '| `pnpm ui:map --all` | 重拍全部视图（公共样式 / 侧栏 / 主题这类全局改动才用） |\n'
+md += '| 裸跑 `pnpm ui:map` | 被拒绝（退出码 6）：网格图只该拍这次改动的地方 |\n'
 md += '| `node ~/.dsh/agents-global/ui-map/verify-map.cjs docs/ui/ui-map-v' + version + '-*.png` | 自检图里是否真有网格 |\n\n'
 md += '网格覆盖层只在调试时使用，不参与业务；生产打包默认关闭。\n\n---\n\n'
 

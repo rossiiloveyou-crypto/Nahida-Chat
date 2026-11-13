@@ -95,7 +95,7 @@ const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-p5-ragstub-'))
 const ragStub = path.join(stubDir, 'rag-stub.ts')
 fs.writeFileSync(
   ragStub,
-  'export const memoryService = { async buildContextBlock() { return "" }, async extractBackground() {}, dispose() {} }\n' +
+  'export const memoryService = { async buildContextBlock() { return "" }, async extractBackground() {}, activePersona() { return null }, upsertPersona() {}, appendHistory() {}, dispose() {} }\n' +
     'export const memoryServiceAlias = memoryService\n',
   'utf8'
 )

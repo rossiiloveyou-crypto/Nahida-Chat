@@ -7,11 +7,14 @@
  * 这里转发一次，保证 `pnpm ui:map --only=settings-tools` 两步拿到的是同一份筛选条件。
  *
  * 用法：
- *   pnpm ui:map                                  全量（默认，慢）
- *   pnpm ui:map --only=settings-tools            只拍这一张（坐标表合并上一次的）
+ *   pnpm ui:map --only=settings-tools            只拍这一张（坐标表合并上一次的）—— **默认写法**
  *   pnpm ui:map --only=settings-tools,settings-channels   几张
- *   pnpm ui:map --only=diff                      只拍上次之后有变化的
+ *   pnpm ui:map --only=diff                      只拍还没拍过 / 哈希对不上的
  *   pnpm ui:map --only=settings-tools --theme=dark       其它参数照样透传
+ *   pnpm ui:map --all                            全量（公共样式 / 侧栏 / 主题这类全局改动才用）
+ *
+ * 🔴 裸跑（既没有 --only 也没有 --all）会被出图脚本直接拒绝（退出码 6）：
+ *    网格图只该拍「这次改动的地方」，全量一轮几分钟、24 张图，绝大多数与改动无关。
  */
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'

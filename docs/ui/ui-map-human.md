@@ -42,7 +42,33 @@
 | 切换后新建对话跟随（不再靠「新建对话」换角色） | 无独立控件 | `ChatPage.tsx`（`handlePickCharacter` → `settings.save({ defaultCharacterId })`） |
 | 故事会话的角色归所属故事区，此处只读（悬停有说明） | `chat-story-drawer` 元素 **43「角色选择」**（置灰）；要改去 设置 → 故事区 | `ChatPage.tsx`（`characterLocked`） |
 
+### 故事分支列表（2026-11-13）
+
+| 需求 | 图上位置 | 代码 |
+| --- | --- | --- |
+| 分支抽屉改成**扁平列表**（不再按父子缩进、不再有子节点缩进线） | `chat-story-drawer` → 区域 **F 分支列表**，元素 **29「分支 时钟之谜」** / **30「分支 雨夜的另一种选择」**（各 237×65） | `features/story/StoryDrawer.tsx`、`styles/global.css`（`.story-tree__origin`） |
+| 每行三行字：标题 / 消息数·时间·当前 / 出处 | 同上；根分支显示「故事的第一条分支」，其余显示「从《某分支》第 N 条之后分出」 | `shared/story.ts`（`StoryForkOrigin`）、`main/features/story/branches.ts`（`list()`） |
+| 删分支按钮（悬停行内出现，**当前分支也能删**；只剩一条时禁用） | 同上，行右侧 22×22，无 `data-ui-target`（所以不占元素编号） | `StoryDrawer.tsx`（`canRemove`）、`main/features/story/derive.ts`（`deleteBranch`） |
+| 时间轴「由此分支」派生后，列表末尾多一行并自动激活 | 元素 **31–40** 为时间轴按钮；派生即最新一行 | `features/story/store.ts`（`deriveFrom`） |
+
 ## 变更记录
+
+### 修订 26（2026-11-13）· 故事分支改独立 + 出图只截改动部分
+
+- **分支不再依赖上级**：`branches.json` 从树改成**扁平列表**（version 2）。节点上不再有
+  `parentBranchId / parentMessageId / parentMessageIndex`，只留两张快照：
+  `forkedFrom`（给人看的一行出处）与 `memoryBounds`（记忆可见范围）。
+  老文件读到自动迁移，迁移前后召回结果逐字一致（`test:story-branch` 的 A-03b / A-03c 盯着）。
+- **删分支只剩两条拒绝**：分支不存在、以及「最后一条不能删」。删当前分支被允许，活跃指针交给最近活动的那条；
+  「先处理子分支」那道拒绝已删除 —— 分支之间本来就没有父子关系。
+- **图上变化（只影响 `chat-story-drawer`）**：区域 F 由「分支树」改名 **F 分支列表**；
+  每行 48→**65** 高（多一行出处小字），元素 29 / 30 宽度 237 不变；**元素编号没有位移**
+  （删按钮不带 `data-ui-target`、且悬停才出现，覆盖层数不到它）。
+- **顺带修掉出图脚本的一个漂移源**：`seedChat` 原来每个视图都往同一条会话追加两条，
+  于是第 2 个 seedChat 视图起对话变 8 条、第 3 个 12 条，所有对话截图的内容与编号跟着漂。
+  现在会话非空即跳过播种（幂等），对话视图稳定在 4 条。
+- **新规则：截图只截改动部分**。裸跑 `pnpm ui:map` 会被拒绝（退出码 6）并列出视图名；
+  必须 `--only=<视图>`（坐标表与上一份合并，UI_MAP.md 仍完整）或 `--all`（公共样式/侧栏/主题这类全局改动）。
 
 ### 修订 25（2026-11-12）· 对话页角色切换
 

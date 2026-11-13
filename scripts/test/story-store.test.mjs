@@ -32,7 +32,7 @@ const stubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-story-ragstub-'))
 const ragStub = path.join(stubDir, 'rag-stub.ts')
 fs.writeFileSync(
   ragStub,
-  'export const memoryService = { async buildContextBlock() { return "" }, async extractInBackground() {}, dispose() {} }\n',
+  'export const memoryService = { async buildContextBlock() { return "" }, async extractInBackground() {}, activePersona() { return null }, upsertPersona() {}, appendHistory() {}, dispose() {} }\n',
   'utf8'
 )
 const plugin = {

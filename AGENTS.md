@@ -36,15 +36,22 @@ renderer (React) ── window.nahida ──▶ preload ──▶ main (Node)
 ### 改 UI 的固定流程
 
 ```bash
-pnpm typecheck && pnpm build     # 1. 必须构建，截图读的是 out/
-pnpm ui:map                      # 2. 重新出图 + 自动重写 UI_MAP.md
-node ~/.dsh/agents-global/ui-map/verify-map.cjs docs/ui/ui-map-v0-*.png   # 3. 自检
+pnpm typecheck && pnpm build                        # 1. 必须构建，截图读的是 out/
+pnpm ui:map --only=<这次改到的视图>[,<视图>]        # 2. 只拍改动部分
+node ~/.dsh/agents-global/ui-map/verify-map.cjs docs/ui/ui-map-v0-<视图>.png   # 3. 自检
 ```
 
 第 3 步必须看到 `PASS`。
 
+**截图只截改动部分（操作者规则，2026-11-13）**：网格图是「这次改动」的证据，不是产品目录。
+
+- 一次改动涉及哪几张就列哪几张，例如 `pnpm ui:map --only=chat-story-drawer`；
+- `--only` 会把新坐标**合并**进上一份 `ui-map-v0.json`，没拍的视图沿用旧坐标，`UI_MAP.md` 仍然是完整的一张表；
+- 只有**公共样式 / 侧栏 / 主题**这类会影响全部视图的改动，才用 `pnpm ui:map --all`；
+- 裸跑 `pnpm ui:map` 会**直接拒绝**（退出码 6）并列出全部视图名，不会静默拍 24 张。
+
 `pnpm ui:map` 已经串好了两步：`electron scripts/ui/generate-ui-map.cjs` 出图 + `node scripts/ui/write-ui-map-md.cjs docs/ui/ui-map-v0.json` 重写文档。
-**不要手写 UI_MAP.md 的区域表/元素表**——新增视图、编号后移都会自动同步；只有「需求对照」「变更记录」「已知约束」三段是人写的。
+**不要手写 UI_MAP.md 的区域表/元素表**——新增视图、编号后移都会自动同步；只有「需求对照」「变更记录」「已知约束」三段是人写的（真源是 `docs/ui/ui-map-human.md`）。
 
 ### 给元素加标注
 
@@ -98,7 +105,7 @@ Prompt/
 pnpm typecheck      # 主进程 + 渲染进程，必须 0 error
 pnpm test           # 行为测试（档案落盘 / 提示词库 / 记忆 / 权限 / 发现 / 沙箱）
 pnpm build          # electron-vite 构建
-pnpm ui:map         # 出可定位图（改 UI 时必跑）
+pnpm ui:map --only=<改到的视图>   # 出可定位图（改 UI 时必跑；只拍改动那几张）
 ```
 
 **测试要测真实边界**：重启后能否读回、删光后是否回落到安全默认、非法输入是否被拒、路径穿越是否被挡。

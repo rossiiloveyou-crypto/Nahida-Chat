@@ -114,34 +114,59 @@ export interface StoryMetaFile {
   meta: StoryMeta
 }
 
-/* ───────────────────────── P6 · 分支树（M08 / M13） ───────────────────────── */
+/* ───────────────────────── P6 · 分支列表（M08 / M13） ───────────────────────── */
 
 /**
- * 一个分支节点（P6 / M08 / M13）。落盘在 userData/stories/<storyId>/branches.json。
+ * 派生来源（**只读快照，不是外键**）。
+ *
+ * 🔴 派生完成后分支就独立了：父分支改名、继续往下写、被整个删掉，
+ *    都不会改变这条分支的任何行为。快照只用于界面上那一行「从《xxx》第 N 条分出」。
+ * 🔴 这里存的是**当时的**副本 —— title / messageNumber 都不跟着父分支变。
+ */
+export interface StoryForkOrigin {
+  /** 源分支当时的会话 id（追溯用；运行时不解析，父分支没了也不影响） */
+  branchId: string
+  /** 源分支当时的标题（快照） */
+  title: string
+  /** 从源分支第几条消息之后分出（1 起，人读）；null = 当时就没记下下标（老数据） */
+  messageNumber: number | null
+  /** 分叉点消息 id（追溯用；运行时不解析） */
+  messageId: string
+}
+
+/**
+ * 「哪条分支的哪些记忆可见」—— 派生那一刻**固化**下来的快照。
+ *
+ * 🔴 这是把旧实现里「沿父链上溯算可见性」改成「派生时算一次、之后只读快照」的落点。
+ *    父分支被删之后，它留下的记忆仍然按这里的边界召回，
+ *    不会因为树变了而突然看不见（P6 修订：分支独立）。
+ */
+export interface StoryMemoryBound {
+  /** 记忆来源分支的会话 id */
+  branchId: string
+  /** 该分支里可见的最大消息下标（含）；null = 无上界 */
+  maxMessageIndex: number | null
+}
+
+/**
+ * 一条分支（P6 / M08 / M13）。落盘在 userData/stories/<storyId>/branches.json。
  *
  * 🔴 一条分支**就是一条会话**（M13）：branchId = 该会话的 Session.id。
  *    分支不是「会话的另一种形态」，它没有独立的消息存储。
+ * 🔴 **分支之间没有依赖**（P6 修订）：派生完成后它就是一条独立会话，
+ *    删掉别的分支（包括它是从哪儿分出来的）都不影响它的读写、检索与记忆召回。
  */
 export interface StoryBranch {
   /** 分支 id = 该分支**会话**的 Session.id（一条分支就是一条会话，M13） */
   branchId: string
-  /** 从哪条分支分出来的；null = 这个区的**根分支**（createStory 建的那条） */
-  parentBranchId: string | null
-  /**
-   * 从父分支的**哪条消息**之后分出去的；null = 根分支。
-   * 🔴 语义是「这条消息**之后**」——派生出的新分支**包含**该消息本身。
-   */
-  parentMessageId: string | null
-  /**
-   * fork 点在父分支 messages 里的下标（P6 实现补充，只做加法）。
-   * 用于记忆可见性计算（visibility.ts）：父分支里 sourceMessageIndex <= 它的记忆才进了本分支的前缀。
-   * 缺省 / null = 未知来源 → 可见性按 fail-open（对父分支全可见）。
-   */
-  parentMessageIndex?: number | null
-  /** 建这条分支的时间 */
-  createdAt: number
   /** 用户可改的分支名；空串 = 用「分支 N」 */
   title: string
+  /** 建这条分支的时间 */
+  createdAt: number
+  /** 派生来源快照；null / 缺省 = 这是故事的第一条分支 */
+  forkedFrom?: StoryForkOrigin | null
+  /** 派生时固化的记忆可见范围；缺省 / 空数组 = 只看得见自己产生的记忆 */
+  memoryBounds?: StoryMemoryBound[]
 }
 
 /** branches.json 的整体形状（带版本，便于将来迁移） */
@@ -152,11 +177,12 @@ export interface StoryBranchesFile {
   branches: StoryBranch[]
 }
 
-/** 给 P7 直接能画的树节点（读时算出来的，**不落盘**） */
-export interface StoryBranchNode extends StoryBranch {
-  /** 子分支，按 createdAt 升序 */
-  children: StoryBranchNode[]
-  /** 这条分支有多少条消息（P7 的时间轴要用） */
+/**
+ * 给界面直接画的一行（读时算出来的，**不落盘**）。
+ * 🔴 扁平列表：没有 children —— 分支之间不存在父子关系，界面也不该暗示有。
+ */
+export interface StoryBranchItem extends Omit<StoryBranch, 'memoryBounds'> {
+  /** 这条分支有多少条消息（抽屉的时间轴要用） */
   messageCount: number
   /** 这条分支最后一次改动的时间（取 Session.updatedAt） */
   lastActiveAt: number
@@ -165,7 +191,8 @@ export interface StoryBranchNode extends StoryBranch {
 }
 
 export const STORY_BRANCHES_FILE = 'branches.json'
-export const STORY_BRANCHES_VERSION = 1
+/** 2：分支改扁平（parentBranchId → forkedFrom 快照 + memoryBounds 快照）；读到 1 会就地迁移 */
+export const STORY_BRANCHES_VERSION = 2
 /** 分支名的回落前缀：第 N 条 = 「分支 N」 */
 export const STORY_BRANCH_TITLE_PREFIX = '分支 '
 

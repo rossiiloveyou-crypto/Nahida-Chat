@@ -4,7 +4,7 @@ import type { MemoryEntry, Session } from '@shared/types'
 import type {
   StoryBranch,
   StoryBranchesFile,
-  StoryBranchNode,
+  StoryBranchItem,
   StoryDeleteResult,
   StoryDeriveDraft,
   StoryDraft,
@@ -20,7 +20,7 @@ import {
   deleteStory,
   deleteStoryMemory,
   deriveBranch,
-  getBranchTree,
+  listStoryBranches,
   getStory,
   getStorySession,
   listStories,
@@ -49,15 +49,19 @@ export function registerStoryIpcHandlers(): void {
     (_event, storyId: string, opts?: { confirmed?: boolean }): StoryDeleteResult =>
       deleteStory(storyId, { confirmed: opts?.confirmed === true })
   )
-  // P6：分支树四条（薄转发到 service；三道拒绝在 derive.deleteBranch）
-  ipcMain.handle(IPC.storyBranches, (_event, storyId: string): StoryBranchNode[] => getBranchTree(storyId))
+  // P6：分支四条（薄转发到 service；拒绝在 derive.deleteBranch）
+  // 🔴 分支是**扁平列表**，没有父子依赖（P6 修订）：删任意一条都不会影响别人
+  ipcMain.handle(
+    IPC.storyBranches,
+    (_event, storyId: string): StoryBranchItem[] => listStoryBranches(storyId)
+  )
   ipcMain.handle(
     IPC.storyDerive,
     (_event, draft: StoryDeriveDraft): { branch: StoryBranch; sessionId: string } => deriveBranch(draft)
   )
   ipcMain.handle(
     IPC.storySwitch,
-    (_event, storyId: string, branchId: string): StoryBranchNode[] => switchBranch(storyId, branchId)
+    (_event, storyId: string, branchId: string): StoryBranchItem[] => switchBranch(storyId, branchId)
   )
   ipcMain.handle(
     IPC.storyBranchDelete,

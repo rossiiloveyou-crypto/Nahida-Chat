@@ -4128,6 +4128,16 @@ input[type='range'] {
   color: var(--nc-text-tertiary);
 }
 
+/* 派生来源的一行小字（forkedFrom 快照）。分支之间没有父子依赖，这只是给人看的出处 */
+.story-tree__origin {
+  font-size: 10px;
+  color: var(--nc-text-tertiary);
+  opacity: 0.75;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .story-tree__delete {
   width: 22px;
   height: 22px;

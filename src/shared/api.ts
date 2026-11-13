@@ -45,7 +45,7 @@ import type {
 import type {
   StoryBranch,
   StoryBranchesFile,
-  StoryBranchNode,
+  StoryBranchItem,
   StoryDeleteResult,
   StoryDeriveDraft,
   StoryDraft,
@@ -308,13 +308,13 @@ export interface NahidaApi {
     create: (draft: StoryDraft) => Promise<{ meta: StoryMeta; sessionId: string }>
     get: (storyId: string) => Promise<StoryMeta | null>
     remove: (storyId: string, opts?: { confirmed?: boolean }) => Promise<StoryDeleteResult>
-    /** P6：这个区的分支树（P7 的抽屉直接用） */
-    branches: (storyId: string) => Promise<StoryBranchNode[]>
-    /** P6：从某条消息派生新分支 */
+    /** P6：这个区的分支列表（**扁平**，分支之间无父子依赖；P7 的抽屉直接用） */
+    branches: (storyId: string) => Promise<StoryBranchItem[]>
+    /** P6：从某条消息派生新分支（派生完即独立） */
     derive: (draft: StoryDeriveDraft) => Promise<{ branch: StoryBranch; sessionId: string }>
-    /** P6：切换活跃分支，返回切换后的树 */
-    switchBranch: (storyId: string, branchId: string) => Promise<StoryBranchNode[]>
-    /** P6：删分支（非活跃叶子），返回删完后的 branches.json */
+    /** P6：切换活跃分支，返回切换后的列表 */
+    switchBranch: (storyId: string, branchId: string) => Promise<StoryBranchItem[]>
+    /** P6：删分支（任意一条，只要不是最后一条），返回删完后的 branches.json */
     removeBranch: (storyId: string, branchId: string) => Promise<StoryBranchesFile>
     /** P7：取某条分支会话（带 messages）。branchId 省略 = 活跃分支 */
     session: (storyId: string, branchId?: string) => Promise<Session | null>

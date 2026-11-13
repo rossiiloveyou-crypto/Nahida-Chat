@@ -24,7 +24,7 @@ fs.writeFileSync(embedderStub, ['export const embedder = {', '  async embedOne()
 const extractStub = path.join(stubDir, 'extract-stub.ts')
 fs.writeFileSync(extractStub, 'export async function extractMemories() { return [] }\n', 'utf8')
 const ragStub = path.join(stubDir, 'rag-stub.ts')
-fs.writeFileSync(ragStub, 'export const memoryService = { async buildContextBlock() { return "" }, async extractInBackground() {}, dispose() {} }\nexport class MemoryService { constructor() {} }\n', 'utf8')
+fs.writeFileSync(ragStub, 'export const memoryService = { async buildContextBlock() { return "" }, async extractInBackground() {}, activePersona() { return null }, upsertPersona() {}, appendHistory() {}, dispose() {} }\nexport class MemoryService { constructor() {} }\n', 'utf8')
 const plugin = {
   name: 'probe-vis-stub',
   setup(build) {

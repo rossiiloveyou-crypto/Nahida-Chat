@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { StoryBranchNode } from '@shared/story'
+import type { StoryBranchItem } from '@shared/story'
 import { useChatStore } from '../chat/store'
 import { activeBranchOf, useStoryStore } from './store'
 import { relativeTime } from './StoryCard'
@@ -12,13 +12,15 @@ interface StoryDrawerProps {
 /**
  * 分支抽屉（D14 / H-09 / D15 / H-08）。
  *
- * 三块：检索 / 分支树 / 消息时间轴。
- * 🔴 树只用 store 里 getBranchTree 的结果，渲染层零树计算（B2）。
+ * 三块：检索 / 分支列表 / 消息时间轴。
+ * 🔴 列表只用 store 里 story.branches 的结果，渲染层零计算（B2）。
+ * 🔴 **扁平列表**：分支之间没有父子关系（P6 修订），所以这里既不画缩进也不画 children。
+ *    派生来源只作为一行小字（forkedFrom 快照）显示，删掉源分支后这行字依然在。
  * 🔴 派生与切换都必须换视口（adoptStorySession 在 store 里），否则用户点完以为没反应。
- * 🔴 不读 zones：故事相关只绑 storyId（总蓝图 §附 前向兼容）。
+ * 🔴 不读 zones：故事相关只绑 storyId（总蓝图 `附 前向兼容）。
  */
 export function StoryDrawer({ storyId, title }: StoryDrawerProps) {
-  const tree = useStoryStore((s) => s.tree)
+  const branches = useStoryStore((s) => s.branches)
   const drawerOpen = useStoryStore((s) => s.drawerOpen)
   const busy = useStoryStore((s) => s.busy)
   const error = useStoryStore((s) => s.error)
@@ -35,7 +37,7 @@ export function StoryDrawer({ storyId, title }: StoryDrawerProps) {
     const active = s.activeId ? s.sessions.find((item) => item.id === s.activeId) : null
     return active && active.storyId === storyId ? active.messages : []
   })
-  const activeBranch = activeBranchOf(tree)
+  const activeBranch = activeBranchOf(branches)
   const [query, setQuery] = useState('')
 
   // 抽屉收起时清空检索结果：下次打开是干净的一块，不会留着上一次的旧命中
@@ -53,10 +55,14 @@ export function StoryDrawer({ storyId, title }: StoryDrawerProps) {
     setFocus(messageId)
   }
 
-  const removeWithConfirm = (node: StoryBranchNode): void => {
-    if (node.isActive) return
-    if (!window.confirm(`这条分支有 ${node.messageCount} 条消息，删除后不可恢复`)) return
-    void removeBranch(node.branchId)
+  const removeWithConfirm = (branch: StoryBranchItem): void => {
+    // 🔴 分支之间没有父子依赖：删任何一条都不会牵连别人，所以这里**不再**要求先处理子分支。
+    //    只剩「最后一条不能删」（删完这个故事就没有会话可进了）。
+    const tail = branch.isActive ? '删的是当前分支，删完会切到最近活动的那一条。' : ''
+    const text =
+      '这条分支有 ' + String(branch.messageCount) + ' 条消息，删除后不可恢复。' + tail
+    if (!window.confirm(text)) return
+    void removeBranch(branch.branchId)
   }
 
   if (!drawerOpen) {
@@ -79,7 +85,9 @@ export function StoryDrawer({ storyId, title }: StoryDrawerProps) {
         <div>
           <strong>{title}</strong>
           <span className="story-drawer__sub">
-            {activeBranch ? `${activeBranch.title} · ${activeBranch.messageCount} 条消息` : '还没有分支'}
+            {activeBranch
+              ? activeBranch.title + ' · ' + String(activeBranch.messageCount) + ' 条消息'
+              : '还没有分支'}
           </span>
         </div>
         <button className="story-drawer__close" aria-label="收起" onClick={() => toggleDrawer(false)}>
@@ -112,15 +120,16 @@ export function StoryDrawer({ storyId, title }: StoryDrawerProps) {
             <p className="story-search__hint">{hits.length} 条命中（跨全部分支）</p>
             <ul className="story-hit-list">
               {hits.map((hit, index) => (
-                <li key={`${hit.branchId}-${hit.messageId}`}>
+                <li key={hit.branchId + '-' + hit.messageId}>
                   <button
                     type="button"
                     className={'story-hit' + (hit.isActiveBranch ? ' is-current' : '')}
-                    data-ui-target={`检索命中 ${index + 1}`}
+                    data-ui-target={'检索命中 ' + String(index + 1)}
                     onClick={() => void openHit(hit.branchId, hit.messageId)}
                   >
                     <span className="story-hit__head">
-                      {hit.branchTitle} · 第 {hit.messageIndex + 1} 条 · {hit.role === 'narration' ? '旁白' : hit.role === 'user' ? '我' : '她'}
+                      {hit.branchTitle} · 第 {hit.messageIndex + 1} 条 ·{' '}
+                      {hit.role === 'narration' ? '旁白' : hit.role === 'user' ? '我' : '她'}
                     </span>
                     <span className="story-hit__snippet">{hit.snippet}</span>
                   </button>
@@ -131,16 +140,16 @@ export function StoryDrawer({ storyId, title }: StoryDrawerProps) {
         )}
       </div>
 
-      <div className="story-tree" data-ui-region="F 分支树">
+      <div className="story-tree" data-ui-region="F 分支列表">
         <p className="story-drawer__section">分支</p>
-        {tree.length === 0 && <p className="story-drawer__empty">还没有分支</p>}
+        {branches.length === 0 && <p className="story-drawer__empty">还没有分支</p>}
         <ul className="story-tree__list">
-          {tree.map((node) => (
-            <BranchNodeRow
-              key={node.branchId}
-              node={node}
-              depth={0}
+          {branches.map((branch) => (
+            <BranchRow
+              key={branch.branchId}
+              branch={branch}
               busy={busy}
+              canRemove={branches.length > 1}
               onSwitch={(branchId) => void switchTo(branchId)}
               onRemove={removeWithConfirm}
             />
@@ -155,12 +164,13 @@ export function StoryDrawer({ storyId, title }: StoryDrawerProps) {
           {messages.map((message, index) => (
             <li key={message.id} className="story-timeline__item">
               <span className="story-timeline__text">
-                {index + 1}. {message.role === 'narration' ? '旁白' : message.role === 'user' ? '我' : '她'} ·{' '}
+                {index + 1}.{' '}
+                {message.role === 'narration' ? '旁白' : message.role === 'user' ? '我' : '她'} ·{' '}
                 {message.content ? message.content.slice(0, 40) : '（生成中）'}
               </span>
               <button
                 type="button"
-                data-ui-target={`从此处分支出新剧情 ${index + 1}`}
+                data-ui-target={'从此处分支出新剧情 ' + String(index + 1)}
                 disabled={busy}
                 onClick={() => void deriveFrom(message.id)}
                 title="从这条消息之后开一条新分支"
@@ -175,65 +185,64 @@ export function StoryDrawer({ storyId, title }: StoryDrawerProps) {
   )
 }
 
-function BranchNodeRow({
-  node,
-  depth,
+/**
+ * 一行分支。
+ *
+ * 🔴 没有 depth：分支之间是平的。旧实现按 depth 做缩进，等于在界面上暗示
+ *    「子分支依赖父分支」—— 正是这次要删掉的设计。
+ */
+function BranchRow({
+  branch,
   busy,
+  canRemove,
   onSwitch,
   onRemove
 }: {
-  node: StoryBranchNode
-  depth: number
+  branch: StoryBranchItem
   busy: boolean
+  canRemove: boolean
   onSwitch: (branchId: string) => void
-  onRemove: (node: StoryBranchNode) => void
+  onRemove: (branch: StoryBranchItem) => void
 }) {
+  const origin = branch.forkedFrom
+  const originText = origin
+    ? '从「' +
+      (origin.title || '原分支') +
+      '」' +
+      (origin.messageNumber ? '第 ' + String(origin.messageNumber) + ' 条之后' : '') +
+      '分出'
+    : '故事的第一条分支'
   return (
     <li>
       <div
-        className={'story-tree__node' + (node.isActive ? ' is-active' : '')}
-        style={{ paddingLeft: 8 + depth * 14 }}
-        data-ui-target={`分支 ${node.title}`}
+        className={'story-tree__node' + (branch.isActive ? ' is-active' : '')}
+        data-ui-target={'分支 ' + branch.title}
       >
         <button
           type="button"
           className="story-tree__main"
-          disabled={busy || node.isActive}
-          onClick={() => onSwitch(node.branchId)}
-          title={node.isActive ? '当前分支' : '切换至此分支'}
+          disabled={busy || branch.isActive}
+          onClick={() => onSwitch(branch.branchId)}
+          title={branch.isActive ? '当前分支' : '切换至此分支'}
         >
-          <span className="story-tree__title">{node.title}</span>
+          <span className="story-tree__title">{branch.title}</span>
           <span className="story-tree__meta">
-            {node.messageCount} 条 · {relativeTime(node.lastActiveAt)}
-            {node.isActive ? ' · 当前' : ''}
+            {branch.messageCount} 条 · {relativeTime(branch.lastActiveAt)}
+            {branch.isActive ? ' · 当前' : ''}
           </span>
+          <span className="story-tree__origin">{originText}</span>
         </button>
-        {!node.isActive && (
-          <button
-            type="button"
-            className="story-tree__delete"
-            aria-label={`删除分支 ${node.title}`}
-            disabled={busy}
-            onClick={() => onRemove(node)}
-          >
-            ×
-          </button>
-        )}
+        <button
+          type="button"
+          className="story-tree__delete"
+          aria-label={'删除分支 ' + branch.title}
+          disabled={busy || !canRemove}
+          title={canRemove ? '删除这条分支' : '故事至少要留一条分支'}
+          onClick={() => onRemove(branch)}
+        >
+          ×
+        </button>
       </div>
-      {node.children.length > 0 && (
-        <ul className="story-tree__list">
-          {node.children.map((child) => (
-            <BranchNodeRow
-              key={child.branchId}
-              node={child}
-              depth={depth + 1}
-              busy={busy}
-              onSwitch={onSwitch}
-              onRemove={onRemove}
-            />
-          ))}
-        </ul>
-      )}
     </li>
   )
 }

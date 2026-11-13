@@ -151,6 +151,31 @@ const VIEWS = JSON.parse(argValue('views', JSON.stringify(DEFAULT_VIEWS)))
  */
 const onlyArg = argValue('only', '')
 const ONLY = onlyArg ? onlyArg.split(',').map((item) => item.trim()).filter(Boolean) : null
+const ALL = process.argv.includes('--all')
+
+/**
+ * 🔴 默认**不许全量**（操作者规则 2026-11-13）。
+ *
+ * 网格图是「这次改动」的证据，不是产品目录。裸跑一轮要几分钟、出 24 张图和一份整表，
+ * 其中只有一两张与改动有关 —— 那是纯浪费，还把审阅成本推给人。
+ * 所以必须二选一：
+ *   --only=<视图名>[,...]  只拍改到的那几张（坐标表与上一份合并，UI_MAP.md 仍然完整）
+ *   --all                  明确认账「这次真的全局都变了」（公共样式 / 侧栏 / 主题）
+ * 什么都不给 → 直接拒绝，一张都不拍。
+ */
+if (!ONLY && !ALL) {
+  const chatLike = VIEWS.filter((view) => !view.hash.startsWith('/settings'))
+  const settings = VIEWS.filter((view) => view.hash.startsWith('/settings'))
+  console.error('拒绝全量截图：只拍你改动的那几张。')
+  console.error('')
+  console.error('  pnpm ui:map --only=<视图名>[,<视图名>]')
+  console.error('')
+  console.error('  对话 / 故事页：' + chatLike.map((view) => view.name).join(', '))
+  console.error('  设置页：      ' + settings.map((view) => view.name).join(', '))
+  console.error('')
+  console.error('真的全局都变了（公共样式 / 侧栏 / 主题）才用：pnpm ui:map --all')
+  process.exit(6)
+}
 
 app.whenReady().then(async () => {
   await new Promise((resolve) => setTimeout(resolve, 1000))
@@ -357,7 +382,12 @@ app.whenReady().then(async () => {
           // 干净 userData 下不会有会话；复用第一条避免多个视图堆积互相影响
           let session = sessions[0]
           if (!session) session = await window.nahida.chat.createSession({ mode: 'chat' })
+          // 🔴 幂等：这条会话已经有消息就不再播种。多个 seedChat 视图共用同一条会话，
+          //    不这么写会**逐视图累加**（第 2 个视图起变成 8 条、第 3 个 12 条），
+          //    于是所有对话截图的内容与元素编号都会跟着漂，图和视图声明对不上。
+          const empty = session.messages.length === 0
           for (const line of lines) {
+            if (!empty) break
             await window.nahida.chat.send({ sessionId: session.id, content: line })
             // send() 同步返回「立即结果」，生成在后台继续；等它从 streaming 变 done
             const deadline = Date.now() + 15000
