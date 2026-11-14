@@ -1,6 +1,7 @@
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { BrowserWindow, nativeTheme, shell } from 'electron'
-import { THEME, THEME_DARK } from '@shared/constants'
+import { POST_WIPE_FLAG, THEME, THEME_DARK } from '@shared/constants'
 import { settingsStore } from './features/settings/settingsStore'
 
 /**
@@ -56,11 +57,28 @@ export function createMainWindow(): BrowserWindow {
     return { action: 'deny' }
   })
 
-  const devServerUrl = process.env['ELECTRON_RENDERER_URL']
+  // 🔴 D-5：清空后重启的实例带 POST_WIPE_FLAG —— 那一次**不许**再连 dev server。
+  //    dev server 住在 electron-vite 进程里，旧实例一退它就没了，连过去只会得到
+  //    ERR_CONNECTION_REFUSED（探针实测 did-fail-load -102），用户看到的就是白屏。
+  const afterWipe = process.argv.includes(POST_WIPE_FLAG)
+  const devServerUrl = afterWipe ? undefined : process.env['ELECTRON_RENDERER_URL']
+  const builtHtml = join(__dirname, '../renderer/index.html')
   if (devServerUrl) {
     void window.loadURL(devServerUrl)
+  } else if (existsSync(builtHtml)) {
+    void window.loadFile(builtHtml)
   } else {
-    void window.loadFile(join(__dirname, '../renderer/index.html'))
+    // 连构建产物都没有：给一句能照着做的提示，绝不留一张纯白页面
+    void window.loadURL(
+      'data:text/html;charset=utf-8,' +
+        encodeURIComponent(
+          '<body style="font:14px/1.7 system-ui;padding:32px;color:#333">' +
+            '<h2 style="margin:0 0 8px">已清空数据，但没有可加载的页面</h2>' +
+            '<p>这次重启既没有 dev server，也没有构建产物（out/renderer/index.html）。</p>' +
+            '<p>请回到终端重新运行 <code>pnpm dev</code>。</p>' +
+            '</body>'
+        )
+    )
   }
 
   return window

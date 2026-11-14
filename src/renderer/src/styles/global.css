@@ -543,9 +543,78 @@ select {
   border-bottom-right-radius: 6px;
 }
 
-.bubble--error {
-  color: var(--nc-danger);
+/* 失败 / 中断 / 空回复（2026-11-14）。
+   原来这里只有一个「把字染红」的选择器，而气泡内容是 `content ? 正文 : 三个点` ——
+   于是「失败」也走三个点那一支：请求挂了以后气泡永远在转圈，没有原因也没有重试键。
+   现在失败态是一张安静的小卡片：说明为什么没回，下面给「重试 / 删除」。
+   🔴 必须连 .message--assistant .bubble 的 padding:4px 0 + 透明底一起覆盖，
+      否则说明文字会贴着头像、没有边界，看着像正文的一部分。 */
+.message--assistant .bubble.bubble--failed {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px;
+  border: 1px solid var(--nc-border-hairline);
+  border-left: 2px solid var(--nc-danger);
+  border-radius: var(--nc-radius-lg);
+  background: var(--nc-surface-subtle);
+  color: var(--nc-text-secondary);
+  font-size: 13px;
+  line-height: 1.7;
 }
+
+/* 已经生成出来的半句：留着，让用户看清它说到哪断的 */
+.bubble__partial {
+  color: var(--nc-text);
+  font-size: 15px;
+  line-height: 1.72;
+}
+
+.bubble__note {
+  color: var(--nc-danger);
+  white-space: pre-wrap;
+}
+
+/* 「重试这一轮 / 删除这条」：和气泡同一列，失败时才出现 */
+.bubble-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.bubble-actions button {
+  padding: 4px 12px;
+  border: 1px solid var(--nc-border-hairline);
+  border-radius: var(--nc-radius-pill);
+  background: var(--nc-surface-subtle);
+  color: var(--nc-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.bubble-actions button:hover {
+  color: var(--nc-text);
+  border-color: var(--nc-accent-ring);
+}
+
+/* 主次分明：重试是主（强调色），删除是次（悬停才发红） */
+.bubble-actions button.bubble-actions__retry {
+  color: var(--nc-accent-strong);
+  border-color: var(--nc-accent-ring);
+}
+
+.bubble-actions button.bubble-actions__remove:hover {
+  color: var(--nc-danger);
+  border-color: var(--nc-danger);
+}
+
+.bubble-actions__hint {
+  color: var(--nc-text-tertiary);
+  font-size: 11.5px;
+}
+
 
 .typing {
   display: inline-flex;
@@ -3322,10 +3391,12 @@ input[type='range'] {
 /* A 区 QQ 号白名单 → P4 从五列扩成六列（QQ 号 / 备注 / 权限位 / **等级** / 最近活动 / 操作）。
    「权限位」那一格塞三个 checkbox，所以给得比别处宽；「等级」是一格 select，给 72px。
    ⚠️ 六列塞进 678px 的表宽里：固定列 232+72+116+72 = 492，五个 10px gap，
-   剩给两个 fr 列约 136px，QQ 号（11 位数字约 80px）与备注都放得下。 */
+   剩给两个 fr 列约 136px。H-14：首轨必须带**下限** 11ch（≈88px），
+   否则 0.8fr 只分到 64px，QQ 号被 minmax(0,…) 压成「29146…」；
+   代价是备注列只剩约 48px（它本来就有 ellipsis，可接受 —— 用户要的是看得见 QQ 号）。 */
 .qq-table--accounts .qq-table__head,
 .qq-table--accounts .qq-table__row {
-  grid-template-columns: minmax(0, 0.8fr) minmax(0, 0.9fr) 232px 72px 116px 72px;
+  grid-template-columns: minmax(11ch, 0.8fr) minmax(0, 0.9fr) 232px 72px 116px 72px; /* H-14：首轨给 QQ 号留 11ch，避免 minmax(0,…) 把它压成「29146…」 */
 }
 
 /* P4：账号行的指令等级下拉。原生 select 在深色主题下会吃掉背景色，这里收回设计令牌 */
@@ -3361,6 +3432,51 @@ input[type='range'] {
 .qq-table--observe .qq-table__head,
 .qq-table--observe .qq-table__row {
   grid-template-columns: 44px 76px minmax(0, 1fr) minmax(0, 1fr) 56px 56px 116px 56px;
+}
+
+/* 旁听面板的概要块：群号收起来之后这里只剩一行数字 + 入口 */
+.observe-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+/* 旁听群号一览（弹层）：搜索行固定，表格自己滚，表头跟着停 */
+.observe-dialog {
+  width: min(880px, 94vw);
+  height: min(72vh, 660px);
+}
+
+.observe-dialog__search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.observe-dialog__search input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.observe-dialog__count {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.observe-dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.observe-dialog__body .qq-table__head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-bottom: 4px;
+  background: var(--nc-surface);
 }
 
 /* 旁听抽屉：时间 / 说话人 / 判定 / 正文。正文那一列吃掉剩余宽度。 */
@@ -3966,7 +4082,9 @@ input[type='range'] {
   flex-direction: column;
   gap: 10px;
   padding: 12px 14px 14px;
-  overflow-y: auto;
+  /* 🔴 抽屉本身不滚：分支列表封顶自滚、时间轴吃掉剩余高度自滚。
+     抽屉整页滚的话，时间轴贴底也只能贴到「抽屉底部之外」，最后几条会被输入区挡住。 */
+  overflow: hidden;
   border-left: 1px solid var(--nc-border);
   background: var(--nc-story-surface);
 }
@@ -4083,6 +4201,10 @@ input[type='range'] {
   flex-direction: column;
   gap: 3px;
   margin: 4px 0 0;
+  /* 分支多了自己滚，别把下面的时间轴窗口顶出屏幕 */
+  max-height: 132px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .story-tree__node {
@@ -4158,12 +4280,51 @@ input[type='range'] {
 
 /* ---------- 消息时间轴 ---------- */
 
+.story-timeline {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.story-timeline__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* 分支名可能很长：标题自己截断，别把右边那行小字挤成两段 */
+.story-timeline__head .story-drawer__section {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.story-timeline__count {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--nc-text-tertiary);
+}
+
+/*
+ * 时间轴是「上下文窗口」：定高 + 内部滚动，**默认贴在最新一条**（滚动位置由 JS 贴底）。
+ * 定高是为了让「向上滚看历史」真的成立 —— 旧实现把 1~N 全铺开，
+ * 抽屉整页跟着变长，想从最后一条分出去还得先往下滚到底。
+ */
 .story-timeline__list {
   list-style: none;
   display: flex;
   flex-direction: column;
   gap: 3px;
   margin: 4px 0 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
 }
 
 .story-timeline__item {
@@ -4753,3 +4914,60 @@ input[type='range'] {
   gap: 8px;
   margin-top: 2px;
 }
+
+/* ── P5 记忆面板（按人聚合 / 单人详情）──────────────────────────────── */
+
+/* 按人聚合表 → 5 列（用户 / 人设 / 记忆 / 历史 / 操作）。
+   骨架复用 .qq-table，私有部分只有列宽（J-62：列数与别人不同就必须自带 grid）。
+   用户列给 14ch 下限：QQ 号 11 位 + 备注时不会被压成「2914…」（H-14 同源坑），
+   三个计数列固定 72px（最多 5 位数字），操作列 116px 放「查看」。 */
+.qq-table--memory .qq-table__head,
+.qq-table--memory .qq-table__row {
+  grid-template-columns: minmax(14ch, 1.4fr) 72px 72px 72px 116px;
+}
+
+/* 单人详情的人设表 → 5 列（人设 / 激活 / 记忆 / 历史 / 操作）。
+   人设名允许 32 字，给 12ch 下限后走 ellipsis；激活列 64px 放 ★；
+   操作列 116px 放「查看 / 删除」两个小按钮。 */
+.qq-table--memory-personas .qq-table__head,
+.qq-table--memory-personas .qq-table__row {
+  grid-template-columns: minmax(12ch, 1.4fr) 64px 72px 72px 116px;
+}
+
+/* 危险区：按人删除是页面最底部的不可逆操作，红框把它与上面的查看项分开。
+   只用既有令牌，不新增颜色变量（避免深色主题下另开一套）。 */
+.setting-group.memory-danger {
+  border: 1px solid var(--nc-warning-border);
+  border-radius: var(--nc-radius-md);
+  padding: 12px 14px;
+  background: var(--nc-warning-surface);
+}
+
+/* P7：清空全部数据的验证码（M15）。
+   「不可鼠标复制」是硬要求，所以 user-select: none 是**必要条件**而不是装饰：
+   少了它，用户拖一下就能复制，验证码就退化成「点两下确认」。
+   caret-color 与 pointer 一起关：避免双击选中、也避免输入框聚焦时误以为能粘贴。 */
+.wipe-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 20px;
+  letter-spacing: 0.28em;
+  user-select: none;
+  -webkit-user-select: none;
+  caret-color: transparent;
+  padding: 8px 14px;
+  margin: 8px 0;
+  border-radius: var(--nc-radius-sm);
+  background: var(--nc-fill-subtle-strong);
+  color: var(--nc-text);
+  /* D-4：inline-block 会让输入框与它挤同一行，弹框宽度不够时占位文字被截断
+     （真机图一：「输入上面的 8 位码（不可…」）。码与输入各占一行。 */
+  display: block;
+  width: fit-content;
+}
+
+.wipe-code + .field__control,
+[data-ui-target='验证码输入'] .field__control {
+  width: 100%;
+  box-sizing: border-box;
+}
+

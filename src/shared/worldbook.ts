@@ -1,7 +1,7 @@
 /**
  * 世界书（Worldbook）的纯数据契约（P9）。
  *
- * 与 `shared/story.ts` / `shared/zones.ts` 同规矩：**零 import**，三端都能直接打进去。
+ * 与 `shared/story.ts` / `shared/qqHost.ts` 同规矩：**零 import**，三端都能直接打进去。
  * 解析、序列化、落盘、路径守卫全在 `main/features/worldbook/`。
  *
  * 心智模型（P9 §2.1 / §2.2）：

@@ -19,6 +19,7 @@ import {
   IconTrash
 } from '../icons'
 import { ModelDiscovery } from './ModelDiscovery'
+import { NumberField } from '../../../components/NumberField'
 
 type Status = { kind: 'success' | 'error' | 'info'; text: string }
 
@@ -545,15 +546,14 @@ export function ModelSection({ onChanged }: ModelSectionProps) {
                       <code>{model}</code>
                     </label>
                     <label className="model-row__field" title="上下文窗口（token）">
-                      <input
+                      <NumberField
                         className="field__control field__control--sm"
-                        type="number"
                         min={CONTEXT_WINDOW_RANGE.min}
                         max={CONTEXT_WINDOW_RANGE.max}
                         step={1024}
                         value={option.contextWindowTokens}
-                        onChange={(event) =>
-                          patchOption(model, { contextWindowTokens: Number(event.target.value) })
+                        onCommit={(next) =>
+                          patchOption(model, { contextWindowTokens: next })
                         }
                       />
                       <span>token</span>

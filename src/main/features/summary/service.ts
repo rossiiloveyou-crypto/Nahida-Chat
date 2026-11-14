@@ -1,7 +1,9 @@
 import type { Message, Session, Settings, SummaryStatus } from '@shared/types'
+import { parseChannelKey } from '@shared/channels'
+import { DEFAULT_PERSONA_ID, ROOT_USER_ID } from '@shared/persona'
 import type { LlmMessage, LlmProvider } from '../llm'
 import { settingsStore } from '../settings/settingsStore'
-import { SummaryStore } from './store'
+import { SummaryStore, summaryKeyOf } from './store'
 import {
   summaryConfigOf,
   SUMMARY_ROLE_LABEL,
@@ -24,7 +26,14 @@ const COMPRESS_TIMEOUT_MS = 90_000
 /** 喂给压缩模型的新增对话字符上限，防止一次把整段历史发出去 */
 const MAX_INPUT_CHARS = 24_000
 
+interface SummaryJob {
+  sessionId: string
+  personaId: string
+  controller: AbortController
+}
+
 interface CompressContext {
+  job: SummaryJob
   session: Session
   provider: LlmProvider
   settings: Settings
@@ -76,8 +85,8 @@ export class SummaryService {
 
   private cache = new Map<string, SessionSummary>()
   private loaded = false
-  /** 正在压缩的会话；用 Set 而不是 Map，因为并发只需要「有没有」 */
-  private readonly inflight = new Set<string>()
+  /** 任务按会话 × 人设隔离；对象身份用于阻断删除后旧任务回写及误清新任务 */
+  private readonly jobs = new Map<string, SummaryJob>()
 
   private all(): Map<string, SessionSummary> {
     if (!this.loaded) {
@@ -99,8 +108,8 @@ export class SummaryService {
   }
 
   /** 调试/设置页用：这条会话当前的摘要状态 */
-  stateOf(sessionId: string): SessionSummary | null {
-    return this.all().get(sessionId) ?? null
+  stateOf(sessionId: string, personaId = DEFAULT_PERSONA_ID): SessionSummary | null {
+    return this.all().get(summaryKeyOf(sessionId, personaId)) ?? null
   }
 
   /** 设置页顶部的概况。只回统计，不回任何会话正文 */
@@ -133,8 +142,7 @@ export class SummaryService {
    * 清完下一次请求就是全量历史下发 —— 和「从没开过这个功能」等价。
    */
   clear(): SummaryStatus {
-    this.all().clear()
-    this.inflight.clear()
+    this.removeMatching(() => true)
     this.persist()
     return this.status()
   }
@@ -147,10 +155,10 @@ export class SummaryService {
    * 「多段 system」的既有模式（clockBlock / memoryBlock），
    * 而动 user 消息内容会卷进工具调用配对，风险大于收益。
    */
-  systemBlock(session: Session): string {
+  systemBlock(session: Session, personaId = DEFAULT_PERSONA_ID): string {
     const config = this.config()
-    if (!config.enabled) return ''
-    const summary = this.all().get(session.id)
+    if (!config.enabled || !personaId) return ''
+    const summary = this.all().get(summaryKeyOf(session.id, personaId))
     if (!summary || sectionsAreEmpty(summary.sections)) return ''
 
     const limits = config.limits
@@ -182,10 +190,10 @@ export class SummaryService {
    * 所以实际长度在 W ~ W+triggerCount 之间摆动：
    * 刚压缩完是 W 条（+ 摘要），攒满 triggerCount 后回到上限再压一次。
    */
-  historyOf(session: Session): Message[] {
+  historyOf(session: Session, personaId = DEFAULT_PERSONA_ID): Message[] {
     const config = this.config()
-    if (!config.enabled) return session.messages
-    const summary = this.all().get(session.id)
+    if (!config.enabled || !personaId) return session.messages
+    const summary = this.all().get(summaryKeyOf(session.id, personaId))
     if (!summary || summary.coveredCount <= 0 || !summary.anchorMessageId) return session.messages
 
     const covered = summary.coveredCount
@@ -216,16 +224,28 @@ export class SummaryService {
    * 一轮对话结束后调用：够阈值就在后台压一次。
    * 刻意不 await、不返回 Promise —— 和 chatService.scheduleExtraction 同一姿势。
    */
-  schedule(session: Session, provider: LlmProvider, settings: Settings): void {
+  schedule(session: Session, provider: LlmProvider, settings: Settings): void
+  schedule(session: Session, personaId: string, provider: LlmProvider, settings: Settings): void
+  schedule(
+    session: Session,
+    personaOrProvider: string | LlmProvider,
+    providerOrSettings: LlmProvider | Settings,
+    explicitSettings?: Settings
+  ): void {
+    // 保持既有三参数测试调用；生产链路显式传入本轮已经解析的人设。
+    const personaId = typeof personaOrProvider === 'string' ? personaOrProvider : DEFAULT_PERSONA_ID
+    const provider = (typeof personaOrProvider === 'string' ? providerOrSettings : personaOrProvider) as LlmProvider
+    const settings = (typeof personaOrProvider === 'string' ? explicitSettings : providerOrSettings) as Settings
     const config = this.config()
-    if (!config.enabled) return
+    if (!config.enabled || !personaId) return
     // 演示模式（离线 mock）没有真实模型：压出来的四段是假文本，
     // 写进库比不写更糟，且会让用户在演示阶段莫名多出 4 次"调用"。
     if (provider.id === 'mock') return
-    if (this.inflight.has(session.id)) return
+    const key = summaryKeyOf(session.id, personaId)
+    if (this.jobs.has(key)) return
 
     const map = this.all()
-    const current = map.get(session.id) ?? emptySummary(session.id)
+    const current = map.get(key) ?? emptySummary(session.id, personaId)
     const now = Date.now()
     if (current.lastAttemptAt > 0 && now - current.lastAttemptAt < RETRY_COOLDOWN_MS) return
 
@@ -243,11 +263,13 @@ export class SummaryService {
 
     // 先记一次尝试再 spawn：失败冷却从「开始尝试」算，避免每轮都白打四个请求
     const base: SessionSummary = { ...current, lastAttemptAt: now }
-    map.set(session.id, base)
+    map.set(key, base)
     this.persist()
 
-    this.inflight.add(session.id)
+    const job: SummaryJob = { sessionId: session.id, personaId, controller: new AbortController() }
+    this.jobs.set(key, job)
     void this.compress({
+      job,
       session,
       provider,
       settings,
@@ -261,15 +283,43 @@ export class SummaryService {
 
   /** 会话被删除时清掉它的摘要，避免 summaries.json 里留下永远查不到的孤儿 */
   forget(sessionId: string): void {
-    const map = this.all()
-    if (!map.delete(sessionId)) return
-    this.inflight.delete(sessionId)
+    this.removeMatching((item) => item.sessionId === sessionId)
     this.persist()
   }
 
+  forgetPersona(sessionId: string, personaId: string): boolean {
+    return this.removeMatching((item) => item.sessionId === sessionId && item.personaId === personaId) > 0
+  }
+
+  forgetByUser(userId: string): number {
+    return this.removeMatching((item) => {
+      const parsed = parseChannelKey(item.sessionId)
+      const owner = parsed ? (parsed.chatType === 'private' ? parsed.chatId : '') : ROOT_USER_ID
+      return owner === userId
+    })
+  }
+
+  private removeMatching(predicate: (item: SessionSummary) => boolean): number {
+    const map = this.all()
+    let removed = 0
+    for (const [key, item] of [...map]) {
+      if (!predicate(item)) continue
+      map.delete(key)
+      removed += 1
+    }
+    for (const [key, job] of [...this.jobs]) {
+      const item = map.get(key)
+      if (item || !predicate({ ...emptySummary(job.sessionId, job.personaId) })) continue
+      job.controller.abort()
+      this.jobs.delete(key)
+    }
+    if (removed > 0) this.persist()
+    return removed
+  }
+
   private async compress(ctx: CompressContext): Promise<void> {
-    const { session, provider, settings, base, target, anchor, chatText } = ctx
-    const controller = new AbortController()
+    const { job, session, provider, settings, base, target, anchor, chatText } = ctx
+    const controller = job.controller
     const timer = setTimeout(() => controller.abort(), COMPRESS_TIMEOUT_MS)
 
     try {
@@ -293,9 +343,12 @@ export class SummaryService {
       if (session.messages.length < target) return
       if (session.messages[target - 1]?.id !== anchor) return
 
+      const key = summaryKeyOf(job.sessionId, job.personaId)
+      if (this.jobs.get(key) !== job || job.controller.signal.aborted) return
       const map = this.all()
-      map.set(session.id, {
-        sessionId: session.id,
+      map.set(key, {
+        sessionId: job.sessionId,
+        personaId: job.personaId,
         coveredCount: target,
         anchorMessageId: anchor,
         sections,
@@ -307,15 +360,19 @@ export class SummaryService {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       console.warn('[summary] 压缩失败，边界不移动（' + session.id + '）', message)
-      const map = this.all()
-      const current = map.get(session.id)
-      if (current) {
-        map.set(session.id, { ...current, lastError: message, lastAttemptAt: base.lastAttemptAt })
-        this.persist()
+      const key = summaryKeyOf(job.sessionId, job.personaId)
+      if (this.jobs.get(key) === job && !job.controller.signal.aborted) {
+        const map = this.all()
+        const current = map.get(key)
+        if (current) {
+          map.set(key, { ...current, lastError: message, lastAttemptAt: base.lastAttemptAt })
+          this.persist()
+        }
       }
     } finally {
       clearTimeout(timer)
-      this.inflight.delete(session.id)
+      const key = summaryKeyOf(job.sessionId, job.personaId)
+      if (this.jobs.get(key) === job) this.jobs.delete(key)
     }
   }
 

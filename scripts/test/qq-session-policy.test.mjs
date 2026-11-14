@@ -3,7 +3,9 @@
  *
  * 旧断言（P4）：绑定到 QQ 的会话「完全隔离」，recall 0 次、extract 0 次。
  * 新断言（P5）：QQ 会话**记在自己的域里**，recall 1 次、extract 1 次。
- * P6 改写：会话 id 就是外部键（qq:<uin>:<type>:<id>），域由 zones/scope 的解析式判定给出。
+ * P6 改写：会话 id 就是外部键（qq:<uin>:<type>:<id>）。
+ * P6-b 改写（区块废弃）：域解析搬进 `chat/sessionPolicy.scopeOf`，**零查表**、恒 zone:root；
+ *          注册表只剩 primaryScope / recallScopes 两个成员（isMemoryIsolated / injectOwnerProfile 已删）。
  * P2 改写：记忆门面的入参从「旧 scope 字符串数组」换成 PersonaIdentity[]，
  *          抽取入参从 scope 换成 tenant。route.scope 只剩「有没有可写域」的哨兵语义。
  * P3 改写：租户不再恒为 root/default，改由 sink.senderId 解析（chatService.memoryTenantOf）。
@@ -79,17 +81,14 @@ const plugin = {
   }
 }
 
-const { chatService, HeadlessSink, QqSink, setSessionPolicy, sessionPolicy, createScopeResolver, ZoneStore, soloScope } =
+const { chatService, HeadlessSink, QqSink, setSessionPolicy, sessionPolicy, scopeOf, ROOT_SCOPE } =
   await bundleModule(
     'policy',
     [
       `export { chatService } from '${p('src/main/features/chat/chatService.ts')}'`,
       `export { HeadlessSink } from '${p('src/main/features/chat/sink.ts')}'`,
       `export { QqSink } from '${p('src/main/features/qq/sink.ts')}'`,
-      `export { setSessionPolicy, sessionPolicy } from '${p('src/main/features/chat/sessionPolicy.ts')}'`,
-      `export { createScopeResolver } from '${p('src/main/features/zones/scope.ts')}'`,
-      `export { ZoneStore } from '${p('src/main/features/zones/store.ts')}'`,
-      `export { soloScope } from '${p('src/shared/zones.ts')}'`
+      `export { setSessionPolicy, sessionPolicy, scopeOf, ROOT_SCOPE } from '${p('src/main/features/chat/sessionPolicy.ts')}'`
     ].join('\n'),
     [plugin]
   )
@@ -102,37 +101,35 @@ const channelSession = chatService.ensureChannelSession(CHANNEL_KEY, { title: '�
 const normalSession = chatService.createSession({ mode: 'chat' })
 const mutedSession = chatService.createSession({ mode: 'chat' })
 
-// 用**真实**的域解析器接线（空 ZoneStore：该群未归区 → solo:外部键）
-const emptyZoneStore = new ZoneStore(fs.mkdtempSync(path.join(os.tmpdir(), 'nc-qq-policy-zones-')))
-const resolver = createScopeResolver({ zones: emptyZoneStore })
-const SOLO = soloScope(CHANNEL_KEY)
-
+// P6-b：用**真实**的 `scopeOf` 接线（零查表）。mutedSession 仍被切成「空域」，
+// 因为 fail-closed 闸门（route.scope 为空 → 不召回不抽取）必须始终可测（B12/V15）。
 setSessionPolicy({
-  isMemoryIsolated: (id) => id === channelSession.id,
-  recallScopes: (id) => (id === mutedSession.id ? [] : resolver.resolveRecallScopes(id)),
-  primaryScope: (id) => (id === mutedSession.id ? '' : resolver.resolvePrimaryScope(id)),
-  injectOwnerProfile: (id) => id !== mutedSession.id
+  recallScopes: (id) => (id === mutedSession.id ? [] : [scopeOf(id)]),
+  primaryScope: (id) => (id === mutedSession.id ? '' : scopeOf(id))
 })
 
 check(
-  '注册表四个方法齐全',
-  ['isMemoryIsolated', 'recallScopes', 'primaryScope', 'injectOwnerProfile'].every(
-    (key) => typeof sessionPolicy()[key] === 'function'
-  )
+  '注册表只剩两个方法（isMemoryIsolated / injectOwnerProfile 已随 P6 删除）',
+  ['recallScopes', 'primaryScope'].every((key) => typeof sessionPolicy()[key] === 'function') &&
+    Object.keys(sessionPolicy()).length === 2,
+  Object.keys(sessionPolicy()).join(',')
 )
-check('渠道会话被标为「隔离」', sessionPolicy().isMemoryIsolated(channelSession.id) === true)
-check('桌面会话不被隔离', sessionPolicy().isMemoryIsolated(normalSession.id) === false)
 
-console.log('渠道会话：记在自己的域（P5 新语义 + P6 解析式判定）')
+console.log('渠道会话：与桌面同域，隔离靠租户（P6 新语义）')
 check(
-  '域解析：未归区的群 → solo:外部键',
-  JSON.stringify(resolver.resolveRecallScopes(channelSession.id)) === JSON.stringify([SOLO]),
-  JSON.stringify(resolver.resolveRecallScopes(channelSession.id))
+  '域解析：渠道群会话 → zone:root',
+  JSON.stringify(sessionPolicy().recallScopes(channelSession.id)) === JSON.stringify([ROOT_SCOPE]),
+  JSON.stringify(sessionPolicy().recallScopes(channelSession.id))
 )
 check(
-  '域解析：桌面 UUID → zone:root',
-  resolver.resolvePrimaryScope(normalSession.id) === 'zone:root',
-  resolver.resolvePrimaryScope(normalSession.id)
+  '域解析：桌面 UUID → zone:root（与渠道同值）',
+  sessionPolicy().primaryScope(normalSession.id) === ROOT_SCOPE,
+  sessionPolicy().primaryScope(normalSession.id)
+)
+check(
+  '域解析不再按会话形态分支（渠道 === 桌面）',
+  scopeOf(channelSession.id) === scopeOf(normalSession.id),
+  scopeOf(channelSession.id) + ' vs ' + scopeOf(normalSession.id)
 )
 
 const before = { recall: globalThis.__memProbe.recall, extract: globalThis.__memProbe.extract }

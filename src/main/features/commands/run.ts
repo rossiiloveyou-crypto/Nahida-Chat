@@ -10,9 +10,10 @@ import type { CommandContext, CommandResult } from './types'
  *  1. **不自己发消息**：sendText 在 createQqBridge 的闭包里，绑了 deps.host 与 stats。
  *     在这里抄一份 = 第二处发送实现（B2），而且第二份不会更新 stats.sent。
  *     所以执行器只返回 text，由 bridge 用既有 sendText 发。
- *  2. **不重判存储层的规则**：`deletePersona` 自己拒绝 default / 激活项，
- *     `upsertPersona` 自己保证 `SUM(is_active)=1`。这里只为了给**可读原因**而读一次，
- *     判定结果仍以被调方为准（两处各判一次必然漂移）。
+ *  2. **`//switch` 不重判存储层的规则**：`upsertPersona` 自己保证 `SUM(is_active)=1`，
+ *     这里只为了给**可读原因**而读一次 `listPersonas`。
+ *     🔴 但 `//dele` 是**例外**（M25 之后）：它调 `deleteByPersona`，那个方法**零拒绝、返回条数**，
+ *     所以 default / 存在性 / 激活项三道判断**只能**在指令层做 —— 不是重复判定，是唯一一处。
  *  3. **不读盘、不碰 access.json**：等级与门槛都是入参。
  */
 
@@ -61,15 +62,19 @@ export function runCommand(name: CommandName, ctx: CommandContext): CommandResul
     const personaId = personaOf(ctx)
     if (!personaId) return { text: NAME_RULE, detail: '人设名不合法', ok: false }
     const rows = memoryService.listPersonas(ctx.userId)
-    if (!rows.some((row) => row.personaId === personaId)) {
-      // 🔴 不做「顺手建一个」：建人设是 //add 的职责，两个动作不许互相兜底
+    const exists = rows.some((row) => row.personaId === personaId)
+    // 🔴 2026-11-13 修正（M26）：`default` 是**语义上恒存在**的兜底人设（连 `//dele default` 都明确拒绝），
+    //    它没被注册只说明这个用户从没走完一轮对话 —— 指令在 bridge 的 `ensureSession` 之前就 return 了，
+    //    永远到不了 `runStream` → `activePersonaOf`，所以「只发过指令、没聊过天」的用户一个 default 都没有。
+    //    因此**仅对 default** 放行自动注册；其它名字仍不自动建（建人设是 //add 的职责，两个动作不互相兜底）。
+    if (!exists && personaId !== DEFAULT_PERSONA_ID) {
       return {
         text: '你没有人设「' + personaId + '」。先「//add ' + personaId + '」再切。',
         detail: '目标人设不存在',
         ok: false
       }
     }
-    memoryService.upsertPersona(ctx.userId, personaId, true) // 原子：同事务清零再置 1
+    memoryService.upsertPersona(ctx.userId, personaId, true) // 原子：同事务清零再置 1；default 不存在时这一步顺带注册
     return {
       text: '已切到人设「' + personaId + '」，下一句话就写进这里。',
       detail: '切到 ' + personaId,
@@ -103,9 +108,21 @@ export function runCommand(name: CommandName, ctx: CommandContext): CommandResul
   if (missing) return missing
   const personaId = personaOf(ctx)
   if (!personaId) return { text: NAME_RULE, detail: '人设名不合法', ok: false }
-  // 为了给**可读原因**先读两次；但**判定仍以 deletePersona 的返回值为准**
+  // 🔴 2026-11-13 修正（M26）：`default` 语义上恒存在 —— 它连「删」都拒绝，
+  //    所以这条判断**放在存在性检查之前**：不能因为它还没注册就说「不存在，没什么可删的」。
   if (personaId === DEFAULT_PERSONA_ID) {
     return { text: '「default」是每个用户的兜底人设，不能删。', detail: '拒绝：default 不可删', ok: false }
+  }
+  // 🔴 2026-11-13 修正（M25）：改用 `deleteByPersona`（连记忆与历史一起删）。
+  //    它返回的是**删掉的记忆条数**，不是布尔 —— 条数为 0 无法区分
+  //    「删成功但本来就没记忆」与「这个人设根本不存在」，所以**存在性必须自己先查一次**。
+  const rows = memoryService.listPersonas(ctx.userId)
+  if (!rows.some((row) => row.personaId === personaId)) {
+    return {
+      text: '你没有人设「' + personaId + '」，没什么可删的。用「//list」看看现有哪些。',
+      detail: '目标人设不存在',
+      ok: false
+    }
   }
   if (memoryService.activePersona(ctx.userId) === personaId) {
     return {
@@ -114,19 +131,15 @@ export function runCommand(name: CommandName, ctx: CommandContext): CommandResul
       ok: false
     }
   }
-  const ok = memoryService.deletePersona(ctx.userId, personaId)
-  if (!ok) {
-    return {
-      text: '没删成：这条人设不存在，或者它是兜底项/正在使用中。',
-      detail: '删除失败（store 拒绝）',
-      ok: false
-    }
-  }
+  // 🔴 2026-11-13 修正（M25）：用户拍板「删人设就要连记忆与历史一起删」（原来是只删注册行）。
+  //    `deleteByPersona` 单事务删 persona_chat_history + memories + user_personas，**本身不做任何拒绝**，
+  //    所以上面三道判断（default / 存在性 / 激活项）必须留在指令层。
+  //    ⚠️ 能力边界：sessions.json 原始消息与 summaries.json 摘要清不掉（H-C-07），那是 P5 的事。
+  const removed = memoryService.deletePersonaWithData(ctx.userId, personaId)
   return {
     text:
-      '已删除人设「' + personaId + '」。\n' +
-      '（这条人设名下的记忆与历史仍保留；要连记忆一起删，等记忆面板的「按人删除」。）',
-    detail: '删除 ' + personaId,
+      '已删除人设「' + personaId + '」，连同它的 ' + String(removed) + ' 条记忆与全部聊天历史。',
+    detail: '删除 ' + personaId + '（记忆 ' + removed + ' 条）',
     ok: true
   }
 }

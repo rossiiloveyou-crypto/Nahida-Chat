@@ -81,9 +81,11 @@ const afterRestart = reloaded.chatService.listSessions().find((item) => item.id 
 check('重新加载后同一条会话还在，title/createdAt 一致', Boolean(afterRestart) && afterRestart.title === '小明改名了' && afterRestart.createdAt === first.createdAt, JSON.stringify(afterRestart && { id: afterRestart.id, title: afterRestart.title }))
 check('重新加载后渠道会话的 workspaceId 仍是 null', Boolean(afterRestart) && afterRestart.workspaceId === null, String(afterRestart && afterRestart.workspaceId))
 
-console.log('12 · isMemoryIsolated 对齐')
-check('渠道会话被标为隔离', sessionPolicy().isMemoryIsolated(KEY) === true)
-check('桌面 UUID 会话不被隔离', sessionPolicy().isMemoryIsolated(desktop.id) === false)
+console.log('12 · 域对齐（P6：注册表只剩 primaryScope / recallScopes）')
+// P6 之前这里断言 isMemoryIsolated；该成员已删（chatService 从不调用它）。
+// 现在守「bridge 注册后域非空」+「渠道与桌面同域」，与 PHASE-6 的 ZN-07 同义。
+check('渠道会话的域非空', Boolean(sessionPolicy().primaryScope(KEY)), sessionPolicy().primaryScope(KEY))
+check('桌面 UUID 会话也落同一个域', sessionPolicy().primaryScope(desktop.id) === 'zone:root', sessionPolicy().primaryScope(desktop.id))
 
 console.log('13 · 非法 key（记录不一致）')
 const invalid = 'qq::private:'

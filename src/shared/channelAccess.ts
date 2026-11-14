@@ -74,7 +74,7 @@ export interface ChannelGroup {
  * `userData/channels/access.json` 的整体形状（v2）。
  *
  * ⚠️ `uins` 是**机器人自己的登录号**列表（不是被授权的人）。
- *    它只用于两件事：① 面板显示「哪个号在跑」；② 区块面板把「(机器人号, 群) 组合」
+ *    它只用于两件事：① 面板显示「哪个号在跑」；② 把「(机器人号, 群) 组合」
  *    展开成具体的会话键 qq:<uin>:group:<群号>。授权判定**一个字节都不读它**。
  */
 export interface ChannelAccessConfig {

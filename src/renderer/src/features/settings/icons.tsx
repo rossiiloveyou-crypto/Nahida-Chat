@@ -79,18 +79,6 @@ export function IconMemory(props: IconProps) {
   )
 }
 
-export function IconZones(props: IconProps) {
-  return (
-    <svg {...base(props)}>
-      <rect x="3.5" y="4" width="7" height="7" rx="1.4" />
-      <rect x="13.5" y="4" width="7" height="7" rx="1.4" />
-      <rect x="3.5" y="13" width="7" height="7" rx="1.4" />
-      <path d="M13.5 16.5h7" />
-      <path d="M17 13v7" />
-    </svg>
-  )
-}
-
 export function IconQq(props: IconProps) {
   return (
     <svg {...base(props)}>

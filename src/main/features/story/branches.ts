@@ -13,7 +13,7 @@ import { assertStoryId, storiesRoot } from './paths'
 /**
  * branches.json 的落盘层（P6 / M08）。
  *
- * 存盘纪律照抄 `zones/store.ts` / `story/store.ts`（**已被验证过的形状**）：
+ * 存盘纪律照抄 `story/store.ts`（**已被验证过的形状**）：
  *  - 写：write tmp → rename（原子）
  *  - 读：文件不存在返回 null；JSON 坏 / 结构不合法 / version 不认识 / 空数组 → **返回 null 并 warn，不抛**
  *

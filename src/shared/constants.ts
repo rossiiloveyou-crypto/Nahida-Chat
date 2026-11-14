@@ -3,6 +3,15 @@ import type { ProviderId } from './types'
 /** 应用级常量：出现在多个进程里的魔法值统一收口到这里。 */
 export const APP_NAME = 'Nahida Chat'
 
+/**
+ * P7 · 清空后重启时加给新进程的标记（D-5）。
+ *
+ * 开发模式下窗口默认加载 `ELECTRON_RENDERER_URL`，而那个 dev server 住在 electron-vite 进程里，
+ * 旧实例一退它就跟着退。带这个标记启动的实例会**跳过 dev server**、直接读已构建的 index.html，
+ * 否则重启出来就是一张 ERR_CONNECTION_REFUSED 白屏。
+ */
+export const POST_WIPE_FLAG = '--nahida-post-wipe'
+
 export const DEFAULT_SESSION_TITLE = '新的对话'
 
 /**

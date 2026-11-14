@@ -4,7 +4,6 @@ import { channelStore, migrateFromBindings } from './features/channels/store'
 import { startQqHost } from './features/qq/host'
 import { startQqBridge } from './features/qq/bridge'
 import { settingsStore } from './features/settings/settingsStore'
-import { zoneStore } from './features/zones/store'
 import { registerBuiltinTools } from './features/tools/builtin'
 import { ensureWorkspace } from './features/workspace'
 import { createMainWindow } from './window'
@@ -69,9 +68,6 @@ if (!gotTheLock) {
     // 之前 app.getPath('userData') 还不可靠，而宿主的数据目录就落在 userData/snowluma。
     // 起不来不影响 NC 主进程（宿主是独立 node.exe），面板状态会显示 degraded。
     startQqHost()
-    // 区块表要先可用：startQqBridge 注册的域解析器会在第一条消息到达时就查它，
-    // 提前 touch 一次让 zones.json 在首次运行时落盘（而不是等第一条消息）。
-    zoneStore.listZones()
     // 入站/出站编排。必须晚于宿主启动：桥一创建就订阅宿主的 event 通道。
     startQqBridge()
 

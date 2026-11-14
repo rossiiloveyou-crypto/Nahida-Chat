@@ -131,7 +131,7 @@ export function useChannels(): ChannelsState {
         await window.nahida.channels.rememberUin(uin)
         await refresh()
       } catch {
-        /* 记号失败不打扰用户：群白名单照样能存，只是区块里暂时展不开 */
+        /* 记号失败不打扰用户：群白名单照样能存，只是旁听面板里暂时展不开 */
       }
     },
     [refresh]

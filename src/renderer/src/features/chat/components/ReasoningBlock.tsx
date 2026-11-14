@@ -12,9 +12,23 @@ import type { Message } from '@shared/types'
  * 只在 assistant 消息上出现，且必须真的有过思考（`message.reasoning` 非空）。
  * 演示模式也会产生思考文本（明写「这是演示」），所以首装即能看到这个块。
  */
-export function ReasoningBlock({ message, uiLabel }: { message: Message; uiLabel: string }) {
+export function ReasoningBlock({
+  message,
+  uiLabel,
+  live = true
+}: {
+  message: Message
+  uiLabel: string
+  /**
+   * 这条消息此刻是不是真的在流式生成。
+   *
+   * 2026-11-14：状态还写着 streaming 的消息不一定在跑（上次没跑完被留在盘里）。
+   * 那一种是「断了」，不是「思考中」—— 不区分的话它会一直挂着闪烁光标。
+   */
+  live?: boolean
+}) {
   const text = message.reasoning ?? ''
-  const streaming = message.status === 'streaming'
+  const streaming = message.status === 'streaming' && live
   // 「已经在回答」= 正文有内容了。工具调用不算回答，所以不看 toolCalls。
   const answering = message.content.trim().length > 0
 
@@ -32,10 +46,12 @@ export function ReasoningBlock({ message, uiLabel }: { message: Message; uiLabel
 
   const chars = text.length
   const label = streaming && !answering ? '思考中…' : '已思考 · ' + String(chars) + ' 字'
-  const live = streaming && !answering
+  // 正在逐字追加思考（挂 cursor）。与入参 live 不是一回事：那个是「这条消息在跑吗」，
+  // 这个是「此刻还在思考、还没开始回答」。
+  const thinking = streaming && !answering
 
   return (
-    <div className={'reasoning' + (live ? ' reasoning--live' : '')}>
+    <div className={'reasoning' + (thinking ? ' reasoning--live' : '')}>
       <button
         type="button"
         className="reasoning__toggle"
@@ -55,7 +71,7 @@ export function ReasoningBlock({ message, uiLabel }: { message: Message; uiLabel
       {open && (
         <div className="reasoning__body">
           {text}
-          {live && <span className="reasoning__cursor" aria-hidden="true" />}
+          {thinking && <span className="reasoning__cursor" aria-hidden="true" />}
         </div>
       )}
     </div>

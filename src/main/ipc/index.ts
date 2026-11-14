@@ -28,7 +28,8 @@ import { registerObserveIpcHandlers } from './observe'
 import { registerQqIpcHandlers } from './qq'
 import { registerStoryIpcHandlers } from './story'
 import { registerWorldbookIpcHandlers } from './worldbook'
-import { registerZonesIpcHandlers } from './zones'
+import { registerMemoryIpcHandlers } from './memory'
+import { registerWipeIpcHandlers } from './wipe'
 
 /** 所有 IPC handler 在这里集中注册，渲染进程能做的事一目了然。 */
 export function registerIpcHandlers(): void {
@@ -120,6 +121,9 @@ export function registerIpcHandlers(): void {
     return shell.openPath(workspace.dir)
   })
 
+  registerMemoryIpcHandlers()
+  registerWipeIpcHandlers()
+
   // P6：渠道会话（id 形如 qq:<uin>:<type>:<id>）不进侧栏。
   // 它们由 QQ 消息驱动出现，用户没有「新建/删除」动作，出现在侧栏只会制造困惑。
   // 主进程内仍然能拿到（listSessions），只是不过 IPC。
@@ -138,13 +142,18 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.chatStop, (_event, sessionId: string) => {
     chatService.stop(sessionId)
   })
+  // 重试 / 删消息（2026-11-14）：失败的气泡要能自己收场，不能只靠「再发一条消息绕过去」
+  ipcMain.handle(IPC.chatRetry, (event, sessionId: string, messageId: string) =>
+    chatService.retry(sessionId, messageId, event.sender)
+  )
+  ipcMain.handle(IPC.chatDeleteMessage, (_event, sessionId: string, messageId: string) => {
+    chatService.deleteMessage(sessionId, messageId)
+  })
 
   // QQ 接入（P4）：状态 / 进程 / 设置 / 日志
   registerQqIpcHandlers()
   // 渠道白名单（P6）：授权真源，替代已废弃的 QQ 绑定表
   registerChannelsIpcHandlers()
-  // 区块（P5）：记忆域 / 群角色绑定
-  registerZonesIpcHandlers()
   // 旁听库（P8）：只增不清的群语料，只读转发
   registerObserveIpcHandlers()
   // 故事区（P4）：建区 / 列区 / 读区 / 删区（删区要 confirmed）

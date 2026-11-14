@@ -10,7 +10,7 @@ import type {
   QqSettings,
   QqStats
 } from '@shared/qq'
-import { channelKeyOf, channelSessionIdOf, isChannelSessionId } from '@shared/channels'
+import { channelKeyOf, channelSessionIdOf } from '@shared/channels'
 import type { ChannelAccessConfig } from '@shared/channelAccess'
 import { findAccount, findGroup, resolveMessageAccess } from '@shared/channelAccess'
 import type { ObserveOutcome, ObserveRecord } from '@shared/observe'
@@ -18,8 +18,7 @@ import { observeStore } from '../observe/store'
 import type { QqActionResult, QqHostEventMessage } from '@shared/qqHost'
 import type { ChatSink, ChatTurnOutcome } from '../chat/sink'
 import { chatService } from '../chat/chatService'
-import { setSessionPolicy } from '../chat/sessionPolicy'
-import { createScopeResolver } from '../zones/scope'
+import { scopeOf, setSessionPolicy } from '../chat/sessionPolicy'
 import { channelStore } from '../channels/store'
 import { qqHost } from './host'
 import { inboundOutcome } from './inbound'
@@ -66,8 +65,8 @@ export interface QqBridgeDeps {
     /**
      * 记下机器人自己的登录号（P9-R3）。可选。
      *
-     * 为什么需要：群白名单存的是**群号**，区块 / 旁听要的是会话键 qq:<uin>:group:<群号>。
-     * 没有 uin 就把群展不开成会话（区块面板会看不到它）。
+     * 为什么需要：群白名单存的是**群号**，旁听要的是会话键 qq:<uin>:group:<群号>。
+     * 没有 uin 就把群展不开成会话（旁听面板会看不到它）。
      */
     rememberUin?(uin: string): void
   }
@@ -164,7 +163,9 @@ function rawRecord(event: unknown): Record<string, unknown> | null {
  *   R2 私聊：只在白名单里才采（私聊没有「旁观」语义）
  *   R3 有非空文本（纯图片/语音不算语料）
  *
- * ⚠️ 区块开关 observeGroupMessages 在这里**不读**（见 §4.3 末尾的说明）。
+ * ⚠️ 「哪些群进旁听」现在由渠道控制台的「群号一览」决定（shared/channelAccess.ts 的 groups[]），
+ *    区块时代那个「在本域旁听群消息」开关从来没有被读到过，P6 已随区块一起删除
+ *    （字段名与用户预期落差的说明记在 PHASE-6 完成报告，代码里不再留标识符）。
  */
 export function shouldObserve(chatType: QqChatType, bound: boolean, text: string): boolean {
   if (observeDisabled()) return false
@@ -287,19 +288,17 @@ export function createQqBridge(deps: QqBridgeDeps): QqBridge {
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
   let seq = 0
 
-  // 记忆域（G8 → P5 G5 → P6 G6）：域由「会话 id 解析 + zones.json」决定，不再查绑定表。
-  // P6 的判定等价于「这个 id 是不是渠道会话」—— 绑定表已废，UUID 桌面会话不可能再变成 QQ 会话。
-  const scopeResolver = createScopeResolver()
+  // 记忆域（G8 → P5 G5 → P6 G6）：**零查表**，域判定只在 `chat/sessionPolicy.scopeOf` 一处（B2）。
+  // P6 之前它还会查 zones.json 与绑定表；两者都已整体删除，渠道会话与桌面会话同域，
+  // 真正的行级隔离是租户 (user_id, persona_id)。
   const ensureSession =
     deps.ensureSession ??
     ((sessionId: string, title: string) => chatService.ensureChannelSession(sessionId, { title }))
+  // 注册表只剩两个成员（P6 删掉 isMemoryIsolated / injectOwnerProfile：前者 chatService 从不调用，
+  // 后者从来没有消费者）。两个实现都转调同一个 `scopeOf` —— 域判定仍然只有一处。
   setSessionPolicy({
-    // P6：等价于「是不是渠道会话」（绑定表已下线）
-    isMemoryIsolated: (sessionId: string) => isChannelSessionId(sessionId),
-    recallScopes: (sessionId: string) => scopeResolver.resolveRecallScopes(sessionId),
-    primaryScope: (sessionId: string) => scopeResolver.resolvePrimaryScope(sessionId),
-    injectOwnerProfile: (sessionId: string) =>
-      scopeResolver.shouldInjectOwnerProfile(scopeResolver.resolvePrimaryScope(sessionId))
+    recallScopes: (sessionId: string) => [scopeOf(sessionId)],
+    primaryScope: (sessionId: string) => scopeOf(sessionId)
   })
 
   function record(
@@ -577,7 +576,7 @@ export function createQqBridge(deps: QqBridgeDeps): QqBridge {
     // P9-R3：授权配置（按人 + 按群 + 两个总开关）。每条消息读一次盘（store 不做缓存，J-23）
     const access = deps.store.access()
     const bound = boundOf(access, inbound.chatType, inbound.chatId)
-    // 机器人自己的登录号要记下来：群白名单存的是群号，区块 / 旁听要的是会话键 qq:<uin>:group:<群号>
+    // 机器人自己的登录号要记下来：群白名单存的是群号，旁听要的是会话键 qq:<uin>:group:<群号>
     deps.store.rememberUin?.(inbound.uin)
 
     // ── P8：旁听（§4.3 采集资格 / §4.4 单点写入）───────────────────────────

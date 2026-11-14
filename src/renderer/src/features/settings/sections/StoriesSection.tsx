@@ -12,7 +12,7 @@ import { useStoryStore } from '../../story/store'
  *
  * 🔴 画像读写都走主进程 storyProfilePath()（B4）；空串保存 = 删文件。
  * 🔴 删故事区是唯一不可逆动作：确认框必须写明「连同记忆库一起删除」（C10）。
- * 🔴 不读 zones（总蓝图 §附 前向兼容）：故事相关只绑 storyId。
+ * 🔴 不读会话的域（总蓝图 §附 前向兼容）：故事相关只绑 storyId。
  */
 export function StoriesSection() {
   const refreshSidebar = useStoryStore((s) => s.refreshStories)

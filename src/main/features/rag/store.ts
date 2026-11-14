@@ -299,6 +299,26 @@ export class MemoryStore {
     }
   }
 
+  /** 有事实、人设注册或历史记录的用户并集，供面板避免遗漏空记忆租户。 */
+  listUserIds(): string[] {
+    const db = this.open()
+    if (!db) return []
+    try {
+      const rows = db
+        .prepare(
+          `SELECT user_id AS uid FROM memories
+           UNION SELECT user_id AS uid FROM user_personas
+           UNION SELECT user_id AS uid FROM persona_chat_history
+           ORDER BY uid`
+        )
+        .all() as unknown as Array<{ uid: string }>
+      return rows.map((row) => row.uid)
+    } catch (error) {
+      console.warn('[memory] 用户列表读取失败', error)
+      return []
+    }
+  }
+
   /** 一个人下面各人设的条数（用户详情页） */
   countByPersona(userId: string): Array<{ personaId: string; count: number }> {
     const db = this.open()
@@ -313,6 +333,21 @@ export class MemoryStore {
     } catch (error) {
       console.warn('[memory] 按人设统计失败', error)
       return []
+    }
+  }
+
+  /** 该用户该人设的人设历史条数。 */
+  countHistory(userId: string, personaId: string): number {
+    const db = this.open()
+    if (!db) return 0
+    try {
+      const row = db
+        .prepare('SELECT COUNT(*) AS n FROM persona_chat_history WHERE user_id = ? AND persona_id = ?')
+        .get(userId, personaId) as unknown as { n?: number } | undefined
+      return Number(row?.n ?? 0)
+    } catch (error) {
+      console.warn('[memory] 人设历史计数失败', error)
+      return 0
     }
   }
 
@@ -522,6 +557,42 @@ export class MemoryStore {
       db.exec('DELETE FROM memories')
     } catch (error) {
       console.warn('[memory] 清空失败', error)
+    }
+  }
+
+  /**
+   * P7（M13）：清空本库的**全部租户数据** —— 三张表一起删，单事务。
+   *
+   * 🔴 为什么不能复用 clearAll()：它只 DELETE FROM memories，
+   *    persona_chat_history（人设历史 / 剧情原文）与 user_personas（人设注册表）会原样留着。
+   *    用户点「清空全部数据」之后还能 //list 看到人设、还能翻到旧对话 —— 那叫没清干净。
+   * 🔴 顺序照 deleteByUser 的既有约定：历史 → 记忆 → 人设。单事务，失败回滚。
+   */
+  wipeAllTenants(): { histories: number; memories: number; personas: number } {
+    const db = this.open()
+    if (!db) return { histories: 0, memories: 0, personas: 0 }
+    try {
+      db.exec('BEGIN')
+      const histories = Number(
+        (db.prepare('DELETE FROM persona_chat_history').run() as unknown as { changes?: number })
+          .changes ?? 0
+      )
+      const memories = Number(
+        (db.prepare('DELETE FROM memories').run() as unknown as { changes?: number }).changes ?? 0
+      )
+      const personas = Number(
+        (db.prepare('DELETE FROM user_personas').run() as unknown as { changes?: number }).changes ?? 0
+      )
+      db.exec('COMMIT')
+      return { histories, memories, personas }
+    } catch (error) {
+      try {
+        db.exec('ROLLBACK')
+      } catch {
+        // 回滚失败时事务已被 SQLite 自动终止
+      }
+      console.warn('[memory] 清空全部租户失败，已回滚', error)
+      return { histories: 0, memories: 0, personas: 0 }
     }
   }
 

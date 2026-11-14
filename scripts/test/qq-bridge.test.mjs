@@ -432,8 +432,14 @@ console.log('广播')
 console.log('记忆隔离接线')
 {
   harness({ access: [] })
-  check('bridge 创建后，渠道会话 id 被标为隔离', sessionPolicy().isMemoryIsolated(PRIVATE_KEY) === true)
-  check('桌面 UUID 会话不被隔离', sessionPolicy().isMemoryIsolated('3f2a9c1e-0000-4000-8000-000000000000') === false)
+  // P6：注册表只剩 primaryScope / recallScopes；隔离真值是租户 (user_id, persona_id)，
+  // 域恒为 zone:root。这里守的是「bridge 确实注册了策略」+「域非空（fail-closed 闸门保活）」。
+  check('bridge 创建后，渠道会话的域非空', Boolean(sessionPolicy().primaryScope(PRIVATE_KEY)), sessionPolicy().primaryScope(PRIVATE_KEY))
+  check(
+    '桌面 UUID 会话的域也是同一值（域不再按形态分支）',
+    sessionPolicy().primaryScope('3f2a9c1e-0000-4000-8000-000000000000') === 'zone:root',
+    sessionPolicy().primaryScope('3f2a9c1e-0000-4000-8000-000000000000')
+  )
 }
 
 /* ── P6 新增：白名单权限位 / 会话自动派生 ─────────────────────────────── */

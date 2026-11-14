@@ -67,7 +67,18 @@ const api: NahidaApi = {
     remove: (id) => ipcRenderer.invoke(IPC.memoryDelete, id),
     clear: () => ipcRenderer.invoke(IPC.memoryClear),
     recall: (query) => ipcRenderer.invoke(IPC.memoryRecall, query),
-    openModelDir: () => ipcRenderer.invoke(IPC.memoryOpenModel)
+    openModelDir: () => ipcRenderer.invoke(IPC.memoryOpenModel),
+    users: () => ipcRenderer.invoke(IPC.memoryUsers),
+    userDetail: (userId) => ipcRenderer.invoke(IPC.memoryUserDetail, userId),
+    userEntries: (userId, personaId) => ipcRenderer.invoke(IPC.memoryUserEntries, userId, personaId),
+    deleteUser: (userId) => ipcRenderer.invoke(IPC.memoryDeleteUser, userId),
+    deletePersona: (userId, personaId) => ipcRenderer.invoke(IPC.memoryDeletePersona, userId, personaId),
+    openDir: () => ipcRenderer.invoke(IPC.memoryOpenDir)
+  },
+  wipe: {
+    preview: () => ipcRenderer.invoke(IPC.wipePreview),
+    captcha: () => ipcRenderer.invoke(IPC.wipeCaptcha),
+    execute: (code) => ipcRenderer.invoke(IPC.wipeExecute, { code })
   },
   summary: {
     status: () => ipcRenderer.invoke(IPC.summaryStatus),
@@ -82,6 +93,9 @@ const api: NahidaApi = {
     send: (input) => ipcRenderer.invoke(IPC.chatSend, input),
     narrate: (sessionId, content) => ipcRenderer.invoke(IPC.chatNarrate, sessionId, content),
     stop: (sessionId) => ipcRenderer.invoke(IPC.chatStop, sessionId),
+    retry: (sessionId, messageId) => ipcRenderer.invoke(IPC.chatRetry, sessionId, messageId),
+    deleteMessage: (sessionId, messageId) =>
+      ipcRenderer.invoke(IPC.chatDeleteMessage, sessionId, messageId),
     onDelta: (handler) => subscribe(IPC.chatDelta, handler),
     onReasoning: (handler) => subscribe(IPC.chatReasoning, handler),
     onTool: (handler) => subscribe(IPC.chatTool, handler),
@@ -99,18 +113,6 @@ const api: NahidaApi = {
     saveSettings: (patch) => ipcRenderer.invoke(IPC.qqSettingsSave, patch),
     logs: (limit) => ipcRenderer.invoke(IPC.qqLogs, limit),
     onEvent: (handler) => subscribe(IPC.qqEvent, handler)
-  },
-  zones: {
-    list: () => ipcRenderer.invoke(IPC.zoneList),
-    create: (draft) => ipcRenderer.invoke(IPC.zoneCreate, draft),
-    rename: (zoneId, name) => ipcRenderer.invoke(IPC.zoneRename, zoneId, name),
-    remove: (zoneId) => ipcRenderer.invoke(IPC.zoneDelete, zoneId),
-    updateConfig: (zoneId, patch) => ipcRenderer.invoke(IPC.zoneConfig, zoneId, patch),
-    addMember: (draft) => ipcRenderer.invoke(IPC.zoneMemberAdd, draft),
-    removeMember: (zoneId, key) => ipcRenderer.invoke(IPC.zoneMemberRemove, zoneId, key),
-    adopt: (zoneId, members) => ipcRenderer.invoke(IPC.zoneAdopt, zoneId, members),
-    stats: () => ipcRenderer.invoke(IPC.zoneStats),
-    unzoned: () => ipcRenderer.invoke(IPC.zoneUnzoned)
   },
   channels: {
     config: () => ipcRenderer.invoke(IPC.channelsConfig),

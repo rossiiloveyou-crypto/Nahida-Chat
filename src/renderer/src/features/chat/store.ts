@@ -55,6 +55,15 @@ interface ChatStore {
   /** 故事区旁白：只追加消息，不触发模型 */
   narrate: (content: string) => Promise<void>
   stop: () => Promise<void>
+  /**
+   * 重试最后一条回复（用户 2026-11-14）。
+   *
+   * 不新增用户消息：主进程复用失败那条 assistant 的 id 重跑，所以这里只是把气泡清空。
+   * 失败（比如那条已经不是最后一条了）会把原因重新贴回气泡 + 顶部错误条。
+   */
+  retry: (messageId: string) => Promise<void>
+  /** 删掉一条消息（失败的气泡可以清掉，不用留着看） */
+  removeMessage: (messageId: string) => Promise<void>
   respondApproval: (approved: boolean, remember: boolean) => Promise<void>
   dismissError: () => void
   /**
@@ -154,6 +163,8 @@ export function reduceDone(state: ChatBroadcastState, payload: ChatDone): Partia
               ...message,
               content: payload.content,
               status: 'done' as const,
+              // 重试成功后这条曾经写着失败原因：不清掉的话气泡会同时说「失败」和「完成」
+              error: undefined,
               toolCalls: payload.toolCalls,
               // done 里的思考是主进程侧的权威全文，覆盖增量拼出来的那份，
               // 避免丢片（与 content 的处理同理）。
@@ -174,7 +185,37 @@ export function reduceError(state: ChatBroadcastState, payload: ChatFailure): Pa
     sessions: mapSession(state.sessions, payload.sessionId, (session) => ({
       ...session,
       messages: session.messages.map((message) =>
-        message.id === payload.messageId ? { ...message, status: 'error' as const } : message
+        message.id === payload.messageId
+          ? // 原因要贴在**这一条**上（用户 2026-11-14）：顶部错误条会被关掉、也会被下一条消息顶走，
+            // 而气泡旁边那句「为什么没回」必须一直在，否则用户只看到一串停住的省略号。
+            { ...message, status: 'error' as const, error: payload.message }
+          : message
+      )
+    }))
+  }
+}
+
+/**
+ * 重试开始时先把那条气泡清空（J 系列：与 reduceDone 对称）。
+ *
+ * 🔴 必须在**发起 IPC 之前**清：主进程一开始跑就会推增量，增量是按 id 往正文后面拼接的。
+ *    等 IPC 回来再清，第一批增量就会被抹掉（重试后前几个字凭空消失）。
+ */
+export function reduceRetryStart(
+  state: ChatBroadcastState,
+  payload: { sessionId: string; messageId: string }
+): Partial<ChatBroadcastState> {
+  if (!ownedByWindow(state.sessions, payload.sessionId)) return state
+  return {
+    streamingId: payload.sessionId,
+    approval: null,
+    error: null,
+    sessions: mapSession(state.sessions, payload.sessionId, (session) => ({
+      ...session,
+      messages: session.messages.map((message) =>
+        message.id === payload.messageId
+          ? { ...message, content: '', reasoning: undefined, error: undefined, toolCalls: [], status: 'streaming' as const }
+          : message
       )
     }))
   }
@@ -331,6 +372,37 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     if (!sessionId) return
     await window.nahida.chat.stop(sessionId)
     set({ streamingId: null, approval: null })
+  },
+
+  retry: async (messageId) => {
+    const sessionId = get().activeId
+    if (!sessionId) return
+    // 先清气泡、再发 IPC（顺序见 reduceRetryStart 的注释：增量不会等我们）
+    set((state) => reduceRetryStart(state, { sessionId, messageId }))
+    try {
+      await window.nahida.chat.retry(sessionId, messageId)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      set((state) => ({ ...reduceError(state, { sessionId, messageId, message }), error: message }))
+    }
+  },
+
+  removeMessage: async (messageId) => {
+    const sessionId = get().activeId
+    if (!sessionId) return
+    try {
+      // 顺序是「先主进程、后本地」：主进程拒绝了（比如正在生成）就别假装删掉了
+      await window.nahida.chat.deleteMessage(sessionId, messageId)
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : String(error) })
+      return
+    }
+    set((state) => ({
+      sessions: mapSession(state.sessions, sessionId, (session) => ({
+        ...session,
+        messages: session.messages.filter((message) => message.id !== messageId)
+      }))
+    }))
   },
 
   respondApproval: async (approved, remember) => {

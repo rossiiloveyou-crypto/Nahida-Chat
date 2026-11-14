@@ -1,7 +1,7 @@
 /**
  * 故事区（Stories）的纯数据契约（P4）。
  *
- * 与 `shared/qqHost.ts` / `shared/zones.ts` 同规矩：**零 import**，三端都能直接打进去。
+ * 与 `shared/qqHost.ts` 同规矩：**零 import**，三端都能直接打进去。
  * 落盘、校验、不变量全在 `main/features/story/`。
  *
  * 心智模型（M08 / M11）：

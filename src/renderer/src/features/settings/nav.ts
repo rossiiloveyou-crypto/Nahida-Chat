@@ -8,8 +8,7 @@ import {
   IconQq,
   IconStory,
   IconText,
-  IconTools,
-  IconZones
+  IconTools
 } from './icons'
 
 export type SettingsSectionId =
@@ -17,7 +16,6 @@ export type SettingsSectionId =
   | 'prompts'
   | 'stories'
   | 'memory'
-  | 'zones'
   | 'channels'
   | 'qq'
   | 'tools'
@@ -64,19 +62,12 @@ export const SETTINGS_NAV: SettingsNavItem[] = [
   {
     id: 'memory',
     label: '长期记忆',
-    description: '检索、查看与清理',
+    description: '按人查看与清理（RAG 事实 / 摘要）',
     icon: IconMemory,
     group: '能力与安全'
   },
   {
-    id: 'zones',
-    label: '区块',
-    description: '记忆域与群绑定',
-    icon: IconZones,
-    group: '能力与安全'
-  },
-  {
-    // P7：用户的操作链是「先划域（区块）→ 再授权谁能进这个域（渠道控制台）→ 最后看运行时状态（QQ 接入）」。
+    // 用户的操作链是「先授权谁能进（渠道控制台）→ 最后看运行时状态（QQ 接入）」。
     // 放在 QQ 接入前面，符合「配置 → 运行」的阅读顺序。
     id: 'channels',
     label: '渠道控制台',

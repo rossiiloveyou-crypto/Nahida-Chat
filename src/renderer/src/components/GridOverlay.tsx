@@ -45,7 +45,7 @@ interface Target {
 /**
  * 在渲染完成后扫描一份"可标注清单"：
  * 优先用显式的 data-ui-target 属性；没有就退化成主要布局块。
- * 这样新增区块只要加属性就会被自动编号，不用改这个组件。
+ * 这样新增区域只要加属性就会被自动编号，不用改这个组件。
  */
 function collectTargets(root: HTMLElement): { regions: Region[]; targets: Target[] } {
   const explicitRegions = [...root.querySelectorAll<HTMLElement>('[data-ui-region]')]

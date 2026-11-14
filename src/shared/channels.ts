@@ -9,7 +9,6 @@
  * 与两处仍需「会话维度」投影的展示类型：
  *
  *   ChannelAccessEntry  —— v1 条目的形状。**只剩迁移与兼容读**（store 的 normalizeConfig 读它）。
- *   UnzonedChannelItem  —— 区块面板的候选行（会话维度，由白名单投影而来）。
  *   ChannelPermissions  —— v1 权限位。同样只剩迁移用途。
  *
  * 「有条目」这套 v1 语义已由 `boundOf()`（bridge.ts）取代：
@@ -78,26 +77,6 @@ export interface ChannelStatusPayload {
   count: number
   accounts: number
   groups: number
-}
-
-/**
- * 「还没归区」的候选会话（P6 G8，P7 面板要用）—— **会话维度**的投影。
- *
- * 来源是白名单（v2 的 accounts + groups × 已知 uin），与「有没有说过话」彻底解耦。
- */
-export interface UnzonedChannelItem {
-  key: string
-  uin: string
-  chatType: ChannelChatType
-  chatId: string
-  /** 备注（群名 / 昵称），空串表示没填 */
-  label: string
-  /** 已经在某个区块里？是的话 zoneId 给出 */
-  inZone: boolean
-  zoneId: string | null
-  /** 权限位（区块面板显示用，**判定不信它**） */
-  permissions: ChannelPermissions
-  lastAt: number
 }
 
 /** key 的构造。与 P4 `qq/store.ts` 里那份键拼接逻辑必须产生同一字符串。 */

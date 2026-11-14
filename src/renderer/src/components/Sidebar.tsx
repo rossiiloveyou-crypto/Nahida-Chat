@@ -36,7 +36,7 @@ export function Sidebar() {
   /** 「最近」列表按当前活动工作区过滤，并显式排除故事会话（J-09 / A-12）。 */
   const visibleSessions = visibleDesktopSessions(sessions, activeWorkspace?.id ?? null)
 
-  // P7：故事分区。stories 来自主进程，卡片只按 storyId 组织（不读 zones）。
+  // P7：故事分区。stories 来自主进程，卡片只按 storyId 组织（不读会话的域）。
   const stories = useStoryStore((s) => s.stories)
   const currentStoryId = useStoryStore((s) => s.currentStoryId)
   const refreshStories = useStoryStore((s) => s.refreshStories)

@@ -17,7 +17,7 @@ import { channelStore, type AccountDraft, type GatePatch, type GroupDraft } from
  *   channels:group    增改一个群
  *   channels:remove-group
  *   channels:uin      记一个机器人登录号（面板识别到已注入进程时调）
- *   channels:sessions 白名单在**会话维度**上的投影（区块面板的候选集）
+ *   channels:sessions 白名单在**会话维度**上的投影（只读展示）
  *   channels:status   数据目录 / 文件 / 计数
  */
 export function registerChannelsIpcHandlers(): void {

@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import type { ObserveConversation, ObserveRecord } from '@shared/observe'
+import { countObserveKinds } from '../observeFilter'
 import { useObserve } from '../useObserve'
+import { ObserveGroupsDialog } from './ObserveGroupsDialog'
 
 /**
  * 「旁听库」面板（P8 §4.7，渠道控制台 D 区）。
@@ -61,6 +63,9 @@ export function ObservePanel() {
   const duplicateRows = observe.conversations.length - accountCount.size
   const [tail, setTail] = useState<ObserveRecord[]>([])
   const [notice, setNotice] = useState('')
+  /** 群号一览弹层。群号多了平铺会刷屏，所以拆成「概要 + 弹层」。 */
+  const [groupsOpen, setGroupsOpen] = useState(false)
+  const kinds = countObserveKinds(observe.conversations)
 
   const openTail = async (item: ObserveConversation): Promise<void> => {
     setTailOf(item)
@@ -119,16 +124,23 @@ export function ObservePanel() {
       )}
       {notice && <p className="hint-text">{notice}</p>}
 
-      <div className="qq-table qq-table--observe" data-ui-target="旁听会话表">
-        <div className="qq-table__head">
-          <span>类型</span>
-          <span>账号</span>
-          <span>会话号</span>
-          <span>名称</span>
-          <span>行数</span>
-          <span>大小</span>
-          <span>最近</span>
-          <span>操作</span>
+      {/* 群号不再平铺：旁听过几十个群之后，那块表格会把整个设置页顶得老长。
+          面板只留一行概要 + 一个入口，细节去弹层里看，那里能搜。 */}
+      <div className="observe-summary" data-ui-target="旁听群号概要">
+        <p className="hint-text">
+          {kinds.groups} 个群 · {kinds.privates} 个私聊 · 合计 {total?.conversations ?? 0} 条会话记录 ·
+          约 {total?.totalLines ?? 0} 行语料
+        </p>
+        <div className="settings-actions">
+          <button
+            type="button"
+            className="btn-ghost"
+            data-ui-target="打开群号一览"
+            disabled={observe.loading || observe.conversations.length === 0}
+            onClick={() => setGroupsOpen(true)}
+          >
+            群号一览（可搜索）
+          </button>
         </div>
         {observe.loading && <p className="hint-text">加载中…</p>}
         {!observe.loading && observe.conversations.length === 0 && (
@@ -136,39 +148,6 @@ export function ObservePanel() {
             还没有任何旁听记录。群里说一句话就会在这里出现（群聊不需要加白名单）。
           </p>
         )}
-        {observe.conversations.map((item) => (
-          <div className="qq-table__row" key={item.key}>
-            <span>{item.chatType === 'group' ? '群聊' : '私聊'}</span>
-            <span title={'记录账号 uin：' + item.uin}>{item.uin}</span>
-            <span title={item.key}>
-              {item.chatId}
-              {(accountCount.get(item.chatId) ?? 0) > 1 && (
-                <em
-                  className="qq-tag-multi"
-                  title={'该群另有 ' + String((accountCount.get(item.chatId) ?? 1) - 1) + ' 个账号在记录'}
-                >
-                  ⧉{accountCount.get(item.chatId)}
-                </em>
-              )}
-            </span>
-            <span>{chatLabelOf(item)}</span>
-            <span>
-              约 {item.lines}
-              {item.segments > 1 ? '（' + String(item.segments) + ' 片）' : ''}
-            </span>
-            <span>{sizeLabel(item.bytes)}</span>
-            <span>{timeLabel(item.lastAt)}</span>
-            <span className="qq-table__actions">
-              <button
-                type="button"
-                className="btn-ghost btn-ghost--sm"
-                onClick={() => void openTail(item)}
-              >
-                看最近
-              </button>
-            </span>
-          </div>
-        ))}
       </div>
 
       <div className="settings-actions" data-ui-target="旁听操作">
@@ -230,6 +209,19 @@ export function ObservePanel() {
             </button>
           </div>
         </div>
+      )}
+
+      {groupsOpen && (
+        <ObserveGroupsDialog
+          conversations={observe.conversations}
+          accountCount={accountCount}
+          onClose={() => setGroupsOpen(false)}
+          onOpenTail={(item) => {
+            // 弹层盖着面板，tail 在面板下方 → 先把弹层关掉，用户才看得到结果
+            setGroupsOpen(false)
+            void openTail(item)
+          }}
+        />
       )}
     </section>
   )

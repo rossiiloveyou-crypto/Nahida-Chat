@@ -27,18 +27,18 @@ const nav = read('src/renderer/src/features/settings/nav.ts')
 const icons = read('src/renderer/src/features/settings/icons.tsx')
 const page = read('src/renderer/src/features/settings/SettingsPage.tsx')
 const section = read('src/renderer/src/features/settings/sections/ChannelsSection.tsx')
-const useZones = read('src/renderer/src/features/settings/useZones.ts')
-const zonesSection = read('src/renderer/src/features/settings/sections/ZonesSection.tsx')
 
-// 1 · nav 里 channels 的顺序在 zones 之后、qq 之前
+// 1 · nav 里 channels 的顺序在 qq 之前
+//
+// P6 之前这条是「zones 之后、qq 之前」。区块入口已删（P6），于是只剩「在 qq 之前」这半边 ——
+// 它守的仍然是真实约束：配置（谁能进）排在运行（进程状态）前面。
 const navArray = nav.slice(nav.indexOf('SETTINGS_NAV'))
-const iZones = navArray.indexOf("id: 'zones'")
 const iChannels = navArray.indexOf("id: 'channels'")
 const iQq = navArray.indexOf("id: 'qq'")
 check(
-  '1 · nav.ts 的 channels 位置在 zones 之后、qq 之前',
-  iZones >= 0 && iChannels > iZones && iQq > iChannels,
-  'zones=' + iZones + ' channels=' + iChannels + ' qq=' + iQq
+  '1 · nav.ts 的 channels 位置在 qq 之前',
+  iChannels >= 0 && iQq > iChannels,
+  'channels=' + iChannels + ' qq=' + iQq
 )
 
 // 2 · label 是「渠道控制台」
@@ -142,13 +142,6 @@ check(
   'throw=' + hasThrow + ' 旧文案=' + hasOldCopy + ' 相等比较=' + hasEqCompare
 )
 
-// 9 · useZones 不含 bindings
-check(
-  '9 · useZones.ts 不含 bindings',
-  !/\bbindings\b/.test(useZones),
-  (useZones.match(/\bbindings\b/g) || []).length
-)
-
 // 10 · 渲染层不出现 QqBinding
 const rendererFiles = []
 function walk(dir) {
@@ -162,19 +155,17 @@ walk(path.join(projectRoot, 'src/renderer'))
 const bindingHits = rendererFiles.filter((file) => fs.readFileSync(file, 'utf8').includes('QqBinding'))
 check('10 · 渲染层不含 QqBinding', bindingHits.length === 0, bindingHits.join(','))
 
-// 11 · ZonesSection 的候选来自 zones.unzoned（主进程白名单投影）
-check(
-  '11 · ZonesSection 的候选来自 zones.unzoned',
-  zonesSection.includes('zones.unzoned')
-)
-
-// 12 · 区块面板空态文案指向渠道控制台
-check('12 · 区块面板空态文案指向渠道控制台', zonesSection.includes('渠道控制台'))
+// 11 / 12 · P6 退役：原判据守的是「ZonesSection 的候选来自 zones.unzoned」与
+// 「区块面板空态指向渠道控制台」。面板与 IPC 已整体删除（PHASE-6），
+// 这两条断言的对象不存在了。删除完整性由 ZN-01…ZN-06 统一守。
 
 /* ── P9-R2 / R3：面板契约（13…20） ──────────────────────────────────────── */
 
 const css = read('src/renderer/src/styles/global.css')
 const observeSection = read('src/renderer/src/features/settings/sections/ObservePanel.tsx')
+// 2026-11-14：旁听群号表从面板搬进了「群号一览」弹层（面板只留概要 + 入口），
+// 表头 / 账号列 / 跨号角标这三条契约跟着表走 —— 判据不变，只是换了文件。
+const observeDialog = read('src/renderer/src/features/settings/sections/ObserveGroupsDialog.tsx')
 
 // 13 · C14：账号表的 grid 值个数 == 表头列数（J-62：换了列数却沿用别人的类名会让表头折行）
 {
@@ -205,7 +196,7 @@ const observeSection = read('src/renderer/src/features/settings/sections/Observe
 
 // 15 · R2/C1：旁听表头 8 列，第 2 列文案 = 「账号」
 {
-  const headCells = (observeSection.match(/<div className="qq-table__head">([\s\S]*?)<\/div>/) || ['', ''])[1]
+  const headCells = (observeDialog.match(/<div className="qq-table__head">([\s\S]*?)<\/div>/) || ['', ''])[1]
   const labels = (headCells.match(/<span>([^<]*)<\/span>/g) || []).map((item) => item.replace(/<\/?span>/g, ''))
   check('15 · R2-C1 旁听表头 8 列且第 2 列是「账号」', labels.length === 8 && labels[1] === '账号', labels.join(' | '))
 }
@@ -213,7 +204,7 @@ const observeSection = read('src/renderer/src/features/settings/sections/Observe
 // 16 · R2-C2：每行渲染 item.uin
 check(
   '16 · R2-C2 行里渲染 item.uin（账号列有值）',
-  /item\.uin/.test(observeSection) && /title=\{'记录账号 uin：' \+ item\.uin\}/.test(observeSection),
+  /item\.uin/.test(observeDialog) && /title=\{'记录账号 uin：' \+ item\.uin\}/.test(observeDialog),
   ''
 )
 
@@ -242,7 +233,7 @@ check(
 // 18 · R2/C8：跨号角标只在 >1 时渲染
 check(
   '18 · R2-C8 跨号角标 qq-tag-multi 只在 >1 时出现',
-  observeSection.includes('qq-tag-multi') && /\(accountCount\.get\(item\.chatId\) \?\? 0\) > 1/.test(observeSection)
+  observeDialog.includes('qq-tag-multi') && /\(accountCount\.get\(item\.chatId\) \?\? 0\) > 1/.test(observeDialog)
 )
 
 // 19 · R2/C7：面板不再定时轮询 status()

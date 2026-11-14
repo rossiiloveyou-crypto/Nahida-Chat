@@ -96,6 +96,26 @@ class MemoryService {
     return this.store.countByUser()
   }
 
+  listUserIds(): string[] {
+    return this.store.listUserIds()
+  }
+
+  countByPersona(userId: string): Array<{ personaId: string; count: number }> {
+    return this.store.countByPersona(userId)
+  }
+
+  countHistory(userId: string, personaId: string): number {
+    return this.store.countHistory(userId, personaId)
+  }
+
+  recentHistory(userId: string, personaId: string, limit: number): PersonaHistoryEntry[] {
+    return this.store.recentHistory(userId, personaId, limit)
+  }
+
+  deleteByUser(userId: string): { histories: number; memories: number; personas: number } {
+    return this.store.deleteByUser(userId)
+  }
+
   async save(draft: MemoryDraft): Promise<MemoryEntry[]> {
     const content = (draft.content ?? '').trim()
     if (!content) throw new Error('记忆内容不能为空')
@@ -120,6 +140,16 @@ class MemoryService {
   clear(): MemoryEntry[] {
     this.store.clearAll()
     return this.store.list()
+  }
+
+  /**
+   * P7（M13）：清空全部租户数据（记忆 / 人设历史 / 人设注册三表）。纯转发，零逻辑（B2）。
+   *
+   * 🔴 与上面的 clear() 不是一回事：clear() 只删 memories（P5 面板已不用，但 IPC 契约还在），
+   *    本方法才是「清空全部数据」要的那一个。
+   */
+  wipeAllTenants(): { histories: number; memories: number; personas: number } {
+    return this.store.wipeAllTenants()
   }
 
   /**
@@ -286,9 +316,20 @@ class MemoryService {
     return this.store.listPersonas(userId)
   }
 
-  /** P4：删人设。**拒绝规则在 store 里**（default / 激活项），门面不重判（B2） */
+  /** P4：**只**删人设注册行（不删记忆与历史）。指令层已改用下面的 `deletePersonaWithData`（M25）；保留给「只摘标签」场景 */
   deletePersona(userId: string, personaId: string): boolean {
     return this.store.deletePersona(userId, personaId)
+  }
+
+  /**
+   * P4（M25）：删人设 **+ 它的全部记忆与历史**。返回删掉的记忆条数。
+   *
+   * 🔴 **本方法不做任何拒绝**（store 的 `deleteByPersona` 一律照删），且返回的是**条数不是布尔**。
+   *    「拒删 default」「人设必须存在」「拒删激活项」三道判断在**指令层**（`commands/run.ts`），
+   *    不许下沉到这里 —— 门面保持零逻辑（B2）。
+   */
+  deletePersonaWithData(userId: string, personaId: string): number {
+    return this.store.deleteByPersona(userId, personaId)
   }
 
   /** 应用退出前调用 */

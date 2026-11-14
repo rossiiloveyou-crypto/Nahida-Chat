@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { StoryBranchItem } from '@shared/story'
 import { useChatStore } from '../chat/store'
 import { activeBranchOf, useStoryStore } from './store'
@@ -17,7 +17,7 @@ interface StoryDrawerProps {
  * 🔴 **扁平列表**：分支之间没有父子关系（P6 修订），所以这里既不画缩进也不画 children。
  *    派生来源只作为一行小字（forkedFrom 快照）显示，删掉源分支后这行字依然在。
  * 🔴 派生与切换都必须换视口（adoptStorySession 在 store 里），否则用户点完以为没反应。
- * 🔴 不读 zones：故事相关只绑 storyId（总蓝图 `附 前向兼容）。
+ * 🔴 不读会话的域：故事相关只绑 storyId（总蓝图 §附 前向兼容）。
  */
 export function StoryDrawer({ storyId, title }: StoryDrawerProps) {
   const branches = useStoryStore((s) => s.branches)
@@ -39,6 +39,20 @@ export function StoryDrawer({ storyId, title }: StoryDrawerProps) {
   })
   const activeBranch = activeBranchOf(branches)
   const [query, setQuery] = useState('')
+  const listRef = useRef<HTMLOListElement | null>(null)
+
+  /**
+   * 时间轴是个「上下文窗口」：默认贴在**最新一条**，往上滚看历史。
+   *
+   * 为什么默认底部：分支几乎总是从「刚发生的这句话」分出去的，
+   * 旧实现把 1~N 从上往下铺满抽屉、用完还要往下滚才够得着最后一条，
+   * 本末倒置。依赖里带上 branchId：切分支后 messages 换成另一份，必须重新贴底。
+   */
+  useEffect(() => {
+    const list = listRef.current
+    if (!list) return
+    list.scrollTop = list.scrollHeight
+  }, [activeBranch?.branchId, messages.length, drawerOpen])
 
   // 抽屉收起时清空检索结果：下次打开是干净的一块，不会留着上一次的旧命中
   useEffect(() => {
@@ -158,9 +172,14 @@ export function StoryDrawer({ storyId, title }: StoryDrawerProps) {
       </div>
 
       <div className="story-timeline" data-ui-region="G 消息时间轴">
-        <p className="story-drawer__section">时间轴（{activeBranch?.title ?? '当前分支'}）</p>
+        <div className="story-timeline__head">
+          <p className="story-drawer__section">时间轴（{activeBranch?.title ?? '当前分支'}）</p>
+          <span className="story-timeline__count" title="默认停在最新一条，向上滚看历史">
+            共 {messages.length} 条 · 停在最新
+          </span>
+        </div>
         {messages.length === 0 && <p className="story-drawer__empty">这条分支还没有消息</p>}
-        <ol className="story-timeline__list">
+        <ol className="story-timeline__list" ref={listRef}>
           {messages.map((message, index) => (
             <li key={message.id} className="story-timeline__item">
               <span className="story-timeline__text">

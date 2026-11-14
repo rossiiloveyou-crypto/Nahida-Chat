@@ -8,7 +8,7 @@ import { useChatStore } from '../chat/store'
  * 🔴 分支列表只有一份来源：每次操作都用主进程 story.branches 的结果覆盖，
  *    渲染层零计算（B2）。**是扁平列表**，没有 children（P6 修订：分支之间无父子依赖）。
  * 🔴 视口换源只能走 adoptStorySession：故事会话必须在 useChatStore.sessions 里，否则流式会丢。
- * 🔴 不读 zones（总蓝图 `附 前向兼容）：故事相关只绑 storyId。
+ * 🔴 不读会话的域（总蓝图 §附 前向兼容）：故事相关只绑 storyId。
  */
 interface StoryUiStore {
   stories: StorySummary[]

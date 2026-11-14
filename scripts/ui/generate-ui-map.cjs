@@ -42,6 +42,7 @@ const userData = path.resolve(
 fs.rmSync(userData, { recursive: true, force: true })
 fs.mkdirSync(userData, { recursive: true })
 fs.mkdirSync(outDir, { recursive: true })
+seedObserveFiles()
 
 // 深色出图：必须在 rmSync **之后**写预置配置，否则会被上面那行删掉。
 // 只往隔离目录写，绝不碰用户真实的 %APPDATA%/nahida-chat/settings.json。
@@ -58,6 +59,68 @@ app.setAppPath(projectRoot)
 
 const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'))
 const version = pkg.version.split('.')[0] || '1'
+
+
+/**
+ * 旁听库样本（只写隔离 userData）。
+ *
+ * 为什么必须有：旁听面板现在是「一行概要 + 一个入口」，入口没数据就是禁用态，
+ * 弹层截图只会是一句「还没有任何旁听记录」—— 那样拍出来的图和没做一样。
+ * 这里按真源布局 userData/observe/qq/<uin>/<chatType>/<chatId>.jsonl 造几行，
+ * 两个账号记同一个群，好让「⧉2 多账号」也在图上。
+ */
+function seedObserveFiles() {
+  const root = path.join(userData, 'observe', 'qq')
+  const line = (uin, chatType, chatId, chatLabel, at, text, name) =>
+    JSON.stringify({
+      v: 1,
+      id: 'seed-' + uin + '-' + chatId + '-' + at,
+      at,
+      sessionId: 'qq:' + uin + ':' + chatType + ':' + chatId,
+      key: 'qq:' + uin + ':' + chatType + ':' + chatId,
+      channel: 'qq',
+      uin,
+      chatType,
+      chatId,
+      chatLabel,
+      entryLabel: '',
+      messageId: String(at),
+      speakerId: '9000' + at,
+      speakerName: name,
+      speakerCard: '',
+      isBot: false,
+      mentioned: false,
+      triggered: false,
+      allowed: false,
+      outcome: 'dropped-not-allowed',
+      text,
+      segmentTypes: ['text']
+    })
+  const write = (uin, chatType, chatId, lines) => {
+    const dir = path.join(root, uin, chatType)
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, chatId + '.jsonl'), lines.join('\n') + '\n', 'utf8')
+  }
+  const base = 1761000000000
+  write('10001', 'group', '123456789', [
+    line('10001', 'group', '123456789', '时钟研究小组', base, '钟楼到底为什么停？', '阿雨'),
+    line('10001', 'group', '123456789', '时钟研究小组', base + 60000, '听说是没人上发条了。', '老周'),
+    line('10001', 'group', '123456789', '时钟研究小组', base + 120000, '那上去看看不就知道了。', '阿雨')
+  ])
+  write('10002', 'group', '123456789', [
+    line('10002', 'group', '123456789', '时钟研究小组', base + 30000, '同上，我也记一份。', '阿雨'),
+    line('10002', 'group', '123456789', '时钟研究小组', base + 90000, '两个号互为备份。', '老周')
+  ])
+  write('10001', 'group', '987654321', [
+    line('10001', 'group', '987654321', '雨夜读书会', base + 240000, '今晚读哪一本？', '小满'),
+    line('10001', 'group', '987654321', '雨夜读书会', base + 300000, '还是那本没读完的。', '阿雨')
+  ])
+  write('10001', 'private', '20001', [
+    line('10001', 'private', '20001', '', base + 420000, '在吗', '小满'),
+    line('10001', 'private', '20001', '', base + 480000, '我在。', '阿雨')
+  ])
+  console.log('  已播种旁听样本（observe/qq 下 4 个会话）')
+}
 
 /** 入口探测：不同 Electron 脚手架产物路径不同，这里按常见位置找。 */
 function resolveMainEntry() {
@@ -108,6 +171,9 @@ const DEFAULT_VIEWS = [
     seedChat: ['用三句话说明 RAG 和微调的区别', '那在本地优先的客户端里，你会先做哪一个'],
     click: '[data-ui-target="角色选择"]'
   },
+  // 失败的一轮（2026-11-14）：气泡里写原因 + 「重试这一轮 / 删除这条」。
+  // 用**真失败**播种（把会话指到一个连不上的本地地址发一句），不是往页内塞假数据。
+  { hash: '/chat', name: 'chat-failed-turn', seedFailure: true },
   { hash: '/settings/models', name: 'settings-models' },
   { hash: '/settings/prompts', name: 'settings-prompts' },
   // P9：世界书编写器弹层（列表默认 8 条 + 展开按钮 + 新增表单）。
@@ -120,13 +186,31 @@ const DEFAULT_VIEWS = [
   // P8：新建故事区表单（含「背景与剧本设定」与「开场消息」两栏）
   { hash: '/chat', name: 'new-story-dialog', click: '[data-ui-target="新建故事"]' },
   { hash: '/settings/memory', name: 'settings-memory' },
-  { hash: '/settings/zones', name: 'settings-zones' },
-  { hash: '/settings/zones', name: 'settings-zones-lower', scrollY: 900 },
+  // P5：按人聚合面板在页面下半部分（对话摘要之后），补一张下滚视图让新表格可定位
+  { hash: '/settings/memory', name: 'settings-memory-lower', scrollY: 1080 },
+  // P7（H-25）：危险区在页面最末（top ≈ 2000+），上面两张都够不到。
+  // 这一张专门证明「清空全部数据」与「按人删除」两个按钮在**列表态**就能看见（D-1 的回归证据）。
+  // 滚到底（超出会自然夹到最大），并把弹框也拍一张（D-4 的占位文字是否还被截断）。
+  { hash: '/settings/memory', name: 'settings-memory-danger', scrollY: 2400 },
+  {
+    hash: '/settings/memory',
+    name: 'settings-memory-wipe-dialog',
+    scrollY: 2400,
+    click: '[data-ui-target="清空全部数据"] button'
+  },
   // P7：渠道控制台（私聊 / 群聊两块 + 数据位置）。面板高约两屏，故补一张下滚视图。
   { hash: '/settings/channels', name: 'settings-channels' },
   { hash: '/settings/channels', name: 'settings-channels-lower', scrollY: 760 },
   // P8：D 区「旁听库」在 C 区之后（面板最下方），单独一张把它变成可定位的
-  { hash: '/settings/channels', name: 'settings-channels-observe', scrollY: 1560 },
+  // 群号收进弹层之后，面板下半部分（概要 + 入口）才是要看的东西 → 滚到底（超出会自然夹到最大）
+  { hash: '/settings/channels', name: 'settings-channels-observe', scrollY: 3200 },
+  // 旁听群号一览（弹层）：群号收进弹层之后，这是唯一能证明「收起来了 + 能搜」的图
+  {
+    hash: '/settings/channels',
+    name: 'settings-channels-observe-groups',
+    scrollY: 3200,
+    click: '[data-ui-target="打开群号一览"]'
+  },
   { hash: '/settings/qq', name: 'settings-qq' },
   { hash: '/settings/qq', name: 'settings-qq-lower', scrollY: 520 },
   { hash: '/settings/qq', name: 'settings-qq-events', scrollY: 1350 },
@@ -423,19 +507,94 @@ app.whenReady().then(async () => {
       console.log('  已播种对话 ' + seeded.messages + ' 条消息')
     }
 
+    /**
+     * 失败的一轮（2026-11-14）：气泡上要写明原因，并给「重试这一轮 / 删除这条」。
+     *
+     * 为什么不往页内塞一条 status:'error' 的假消息：那样拍到的只是我们自己造的假象，
+     * 真实失败路径（主进程 catch → message.error 落盘 → 广播 → reducer → 气泡）一段都没走到。
+     * 这里把会话指到一个**连不上**的本地地址（127.0.0.1:9）再发一句，失败是真的。
+     * 🔴 播完必须把死地址档案删掉：留着会让 settings-models 视图多一行、元素编号整体后移。
+     */
+    if (view.seedFailure) {
+      const seededFailure = await win.webContents.executeJavaScript(`
+        (async () => {
+          const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+          // 幂等：已经有一条「尾巴是失败」的会话就复用它（同一轮里重复跑视图不会堆）
+          const list = await window.nahida.chat.listSessions()
+          const existing = list.find((s) => {
+            const tail = s.messages[s.messages.length - 1]
+            return Boolean(tail && tail.status === 'error')
+          })
+          if (existing) return { ok: true, sessionId: existing.id, messages: existing.messages.length }
+          const session = await window.nahida.chat.createSession({ mode: 'chat' })
+          const catalog = await window.nahida.modelProfiles.save({
+            name: '连不上',
+            provider: 'openai-compatible',
+            baseUrl: 'http://127.0.0.1:9/v1',
+            apiKey: 'sk-dead',
+            models: ['dead'],
+            defaultModel: 'dead',
+            temperature: 1,
+            modelOptions: {}
+          })
+          const profile = catalog.profiles.find((item) => item.baseUrl === 'http://127.0.0.1:9/v1')
+          if (!profile) return { ok: false, reason: '死地址档案没落盘' }
+          await window.nahida.chat.updateSession(session.id, { modelProfileId: profile.id, modelId: 'dead' })
+          await window.nahida.chat.send({ sessionId: session.id, content: '在吗' })
+          const deadline = Date.now() + 20000
+          for (;;) {
+            const now = (await window.nahida.chat.listSessions()).find((item) => item.id === session.id)
+            const tail = now && now.messages[now.messages.length - 1]
+            if (tail && tail.status === 'error') break
+            if (Date.now() > deadline) return { ok: false, reason: '等待失败超时' }
+            await sleep(120)
+          }
+          // 收尾：会话放回默认档案，死地址档案删掉（不留污染）
+          await window.nahida.chat.updateSession(session.id, { modelProfileId: null, modelId: null })
+          await window.nahida.modelProfiles.remove(profile.id)
+          const final = (await window.nahida.chat.listSessions()).find((item) => item.id === session.id)
+          return { ok: true, sessionId: session.id, messages: final ? final.messages.length : 0 }
+        })()
+      `)
+      if (!seededFailure || !seededFailure.ok) {
+        console.error('失败样本播种失败：' + JSON.stringify(seededFailure) + '（视图 ' + view.name + '）')
+        app.exit(4)
+        return
+      }
+      // 整页重载：chatStore 是模块级单例，只在 init() 时读一次主进程的会话
+      await win.loadFile(indexHtml, {
+        hash: view.hash,
+        query: { grid: '1', v: String(viewIndex), seed: String(Date.now()) }
+      })
+      await win.webContents.executeJavaScript(
+        "document.querySelector('.ui-grid')?.classList.remove('ui-grid--hidden')"
+      ).catch(() => {})
+      await win.webContents.executeJavaScript("window.dispatchEvent(new Event('scroll'))")
+      console.log('  已播种失败样本 ' + seededFailure.sessionId)
+    }
     // 视图级点击（P6/P7）：放在**所有播种之后**再点——seedStory / seedChat 会整页 loadFile 重载，
     // 早于播种点击会被重载冲掉（chat-story-drawer 曾因此拍成与 chat-stories 一模一样）。
     // 元素可能还没渲染，页内重试等它出现。
     // 视图级点击（P6）：用来切到 Agent 模式这类「首帧拿不到、必须交互才出现」的状态。
     // 元素可能还没渲染（loadFile 回来时 React 只挂了一部分），所以在页内重试等它出现。
-    if (typeof view.click === 'string' && view.click) {
+    // P7：click 支持**数组**（多步：先开弹框，再点弹框里的按钮）。单字符串照旧，不做破坏性改动。
+    const clickSteps =
+      typeof view.click === 'string' && view.click
+        ? [view.click]
+        : Array.isArray(view.click)
+          ? view.click.filter((item) => typeof item === 'string' && item)
+          : []
+    for (const clickSelector of clickSteps) {
       const clicked = await win.webContents.executeJavaScript(`
         new Promise((resolve) => {
-          const sel = ${JSON.stringify(view.click)}
-          const deadline = Date.now() + 8000
+          const sel = ${JSON.stringify(clickSelector)}
+          const deadline = Date.now() + 12000
           const tick = () => {
             const node = document.querySelector(sel)
-            if (node) { node.click(); return resolve(true) }
+            // 🔴 存在 ≠ 可点：按钮常在数据还没拉回来时是 disabled 的，
+            //    这时候 click() 是**静默无效**，图会拍成「弹层没打开」而脚本还以为成功了。
+            //    （旁听群号一览就是靠这条：列表为空时入口是禁用的。）
+            if (node && !node.disabled) { node.click(); return resolve(true) }
             if (Date.now() > deadline) return resolve(false)
             requestAnimationFrame(tick)
           }
@@ -444,7 +603,7 @@ app.whenReady().then(async () => {
       `)
       if (!clicked) {
         // 点不到就停下：静默截一张「没点成功」的图比少一张图更糟（会拿错图当证据）
-        console.error('点击目标不存在：' + view.click + '（视图 ' + view.name + '）')
+        console.error('点击目标不存在：' + clickSelector + '（视图 ' + view.name + '）')
         app.exit(3)
         return
       }

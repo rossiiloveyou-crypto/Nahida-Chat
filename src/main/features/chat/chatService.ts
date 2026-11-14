@@ -151,6 +151,22 @@ class ChatService {
     return doomed.length
   }
 
+  /** 删除用户对应的私聊渠道会话，保留群聊与桌面会话。 */
+  deleteSessionsOfUser(userId: string): number {
+    this.ensureLoaded()
+    const belongsToUser = (id: string): boolean => {
+      const parsed = parseChannelKey(id)
+      return Boolean(parsed && parsed.chatType === 'private' && parsed.chatId === userId)
+    }
+    const doomed = this.sessions.filter((session) => belongsToUser(session.id))
+    if (doomed.length === 0) return 0
+    for (const session of doomed) this.stop(session.id)
+    this.sessions = this.sessions.filter((session) => !belongsToUser(session.id))
+    this.persist()
+    for (const session of doomed) summaryService.forget(session.id)
+    return doomed.length
+  }
+
   /**
    * 写入「AI 开场」——建故事区时由主进程调用（P4 / D12 / M14）。
    * 🔴 只允许在会话**还没有任何消息**时调用：否则中途插一条 assistant，
@@ -358,6 +374,95 @@ class ChatService {
     this.inflight.delete(sessionId)
     permissionGate.cancelSession(sessionId)
   }
+  /**
+   * P7：中止**所有**在飞的生成。
+   *
+   * 🔴 为什么必须单独有这一步：stop(id) 只停一条；清空前要把每一条都停掉，
+   *    否则在飞的 runStream 会在 finally 里 persist() —— 把刚删掉的会话写回来。
+   */
+  abortAll(): void {
+    for (const sessionId of [...this.inflight.keys()]) this.stop(sessionId)
+  }
+
+  /**
+   * P7（M13 + M14）：清空全部会话，并把 sessions.json 写回 []。返回清掉的条数。
+   *
+   * 🔴 写回的是 [] 而不是删掉文件：M14 明确要求「写回空白 sessions.json（内容 []）」。
+   * 🔴 停飞任务由调用方先做完（wipeAllData 里先 abortAll），这里只负责清 + persist。
+   */
+  wipeAllSessions(): number {
+    this.ensureLoaded()
+    for (const sessionId of [...this.inflight.keys()]) this.stop(sessionId)
+    const count = this.sessions.length
+    this.sessions = []
+    this.persist()
+    return count
+  }
+
+  /**
+   * 重试刚才那一轮（用户 2026-11-14 反馈的核心诉求）。
+   *
+   * 语义是「重跑这一轮」，不是「再发一次话」：
+   *  - 复用失败那条 assistant 的 **id**，清空正文 / 思考 / 工具记录后重跑，
+   *    **不新增用户消息**。新增的话历史里会有两句一模一样的原话，侧栏条数也会虚增；
+   *  - 只允许重试**最后一条**回复：中间那条重跑会把后面既成事实的上下文截断，
+   *    模型看到的时间线会前后打架（摘要锚点也会跟着漂）；
+   *  - 失败原因不进正文：正文永远是模型说的话，错误是我们的。
+   */
+  async retry(sessionId: string, messageId: string, sender: WindowLike): Promise<Message> {
+    return this.restartTurn(sessionId, messageId, windowSink(sender))
+  }
+
+  /** 重试的同步内核（IPC 与测试共用同一份，不写第二套）。 */
+  private restartTurn(sessionId: string, messageId: string, sink: ChatSink): Message {
+    this.ensureLoaded()
+    const session = this.sessions.find((item) => item.id === sessionId)
+    if (!session) throw new Error('会话不存在')
+    // 与 updateSession 同一条硬门槛：有生成在跑就别动手，否则两轮会往同一条消息里写
+    if (this.inflight.has(session.id)) throw new Error('当前会话仍在生成中，先停止再重试')
+    const index = session.messages.findIndex((item) => item.id === messageId)
+    if (index === -1) throw new Error('这条消息不存在（可能已经被删掉了）')
+    const message = session.messages[index]
+    if (message.role !== 'assistant') throw new Error('只有回复能重试')
+    if (index !== session.messages.length - 1) throw new Error('只能重试最后一条回复')
+    // 故事开场那种「没有提问的回答」重跑没有意义：模型会拿到一段没有 user 的上下文
+    const hasUser = session.messages.some((item) => item.role === 'user')
+    if (!hasUser) throw new Error('这段对话还没有用户发言，没有可重试的一轮')
+
+    message.content = ''
+    message.toolCalls = []
+    delete message.reasoning
+    delete message.error
+    message.status = 'streaming'
+    session.updatedAt = Date.now()
+    this.persist()
+
+    const controller = new AbortController()
+    this.inflight.set(session.id, controller)
+    // 与 begin() 同一姿势：先起轮次，再登记 turns（runStream 的 finally 会清掉两条）
+    const turn = this.runStream(session, message, sink, controller)
+    this.turns.set(session.id, turn)
+    return cloneMessage(message)
+  }
+
+  /**
+   * 删掉一条消息（用户 2026-11-14：失败的气泡要能清掉，不能只能留着看）。
+   *
+   * 只做「从数组里拿掉 + 落盘」：摘要游标不在这里清 —— historyOf 的锚点漂移检查
+   * 一旦发现 covered 那条不是当初的 anchorMessageId，就会整份摘要不用（它自己的注释写着
+   * 「撤回 / 重新生成 / 删消息」这三种情况正是为此写的）。
+   */
+  deleteMessage(sessionId: string, messageId: string): void {
+    this.ensureLoaded()
+    const session = this.sessions.find((item) => item.id === sessionId)
+    if (!session) throw new Error('会话不存在')
+    if (this.inflight.has(session.id)) throw new Error('当前会话正在生成，先停止再删')
+    const index = session.messages.findIndex((item) => item.id === messageId)
+    if (index === -1) throw new Error('这条消息不存在（可能已经被删掉了）')
+    session.messages.splice(index, 1)
+    session.updatedAt = Date.now()
+    this.persist()
+  }
 
   /**
    * 渲染进程入口：行为与改动前完全一致（同步返回一条 SendResult，生成在后台继续）。
@@ -511,7 +616,8 @@ class ChatService {
           memoryBlock,
           clockBlock,
           definitions.length > 0,
-          storyPrompt
+          storyPrompt,
+          memoryTenant.personaId
         )
         const calls: ToolCallRecord[] = []
 
@@ -596,6 +702,9 @@ class ChatService {
     } catch (error) {
       message.status = 'error'
       const text = error instanceof Error ? error.message : String(error)
+      // 原因跟着这条消息落盘（用户 2026-11-14）：只发一次 fail 广播的话，
+      // 关掉顶部错误条、或者重启应用之后就再也查不到「上一轮为什么没回」。
+      message.error = text
       sink.fail({ sessionId: session.id, messageId: message.id, message: text })
       outcome = {
         status: 'error',
@@ -616,11 +725,17 @@ class ChatService {
       // P3：人设历史（D7）。同步写、不 await：SQLite 本地写是微秒级，失败已在 store 内部收敛成 warn。
       // 🔴 助手那一条只在**真正说完**时才写：aborted 的正文是半句话，写进历史会让下一轮
       //    把断章当既成事实（与摘要「半句话不压缩」同一条道理）。
-      this.recordHistory(session, message, memoryTenant, message.status === 'done' && !controller.signal.aborted)
+      this.recordHistory(
+        session,
+        message,
+        memoryTenant,
+        message.status === 'done' && !controller.signal.aborted,
+        memoryRoute.storyId
+      )
       // 对话层记忆：够阈值就在后台压一次，**不 await**。
       // 放在 finally 里而不是 try 末尾：出错的那一轮也该把已发生的对话记进摘要，
       // 否则一次网络失败会让这段对话永远进不了窗口外的记忆。
-      summaryService.schedule(session, provider, settings)
+      summaryService.schedule(session, memoryTenant.personaId, provider, settings)
     }
 
     return outcome
@@ -689,10 +804,12 @@ class ChatService {
     session: Session,
     message: Message,
     tenant: PersonaIdentity,
-    assistantDone: boolean
+    assistantDone: boolean,
+    storyId: string | null
   ): void {
     // 空租户 = 不写（fail-closed）。这里不做任何默认值兜底：兜底只允许在 activePersonaOf 一处。
     if (!tenant.userId || !tenant.personaId) return
+    if (storyId) return
 
     const parsed = parseChannelKey(session.id)
     const chatType: PersonaHistoryEntry['chatType'] = parsed ? parsed.chatType : 'desktop'
@@ -870,7 +987,8 @@ class ChatService {
     memoryBlock: string,
     clockBlock: string,
     toolsEnabled: boolean,
-    story: StoryPrompt | null
+    story: StoryPrompt | null,
+    personaId: string
   ): LlmMessage[] {
     const payload: LlmMessage[] = []
 
@@ -903,12 +1021,12 @@ class ChatService {
     // 顺序是刻意的 —— 人格 → 时间 → RAG 事实 → 对话摘要 → 历史。
     // 越靠后越贴近这次回答：记忆回答「用户是谁」，摘要回答「刚才聊到哪」，
     // 后者离当前这轮更近，权重必须更高（docs/01 §5 的注入顺序约定）。
-    const summaryBlock = summaryService.systemBlock(session)
+    const summaryBlock = summaryService.systemBlock(session, personaId)
     if (summaryBlock) payload.push({ role: 'system', content: summaryBlock })
 
     // 历史只下发窗口内的部分：游标之前的内容已经在摘要里了。
     // historyOf 返回的是 session.messages 的切片，不复制、不改原数组。
-    payload.push(...sessionHistoryToLlm({ messages: summaryService.historyOf(session) }))
+    payload.push(...sessionHistoryToLlm({ messages: summaryService.historyOf(session, personaId) }))
     return payload
   }
 
@@ -1058,10 +1176,36 @@ class ChatService {
             storyId: keptStoryIdOf(session)
           }))
         : []
+      if (this.settleInterrupted(this.sessions) > 0) this.persist()
     } catch (error) {
       console.warn('[chat] 会话历史读取失败，已从空列表启动', error)
       this.sessions = []
     }
+  }
+
+  /**
+   * 读盘时收敛「上次没跑完」的回复（用户 2026-11-14）。
+   *
+   * 应用被关掉 / 崩溃 / 渲染进程重载时，sessions.json 里会留下 status:'streaming' 的回复：
+   * 重启后没有任何东西会把它推到 done，界面上就是一串永远在动的省略号 —— 用户以为它还在生成，
+   * 而它其实永远不会动（同一份数据也进不了摘要：isReadableMessage 会把 streaming 判成不可读）。
+   * 这里统一改成 'error' 并写明原因，界面于是变成「中断了 · 可以重试」。
+   *
+   * 🔴 只处理**没有在跑**的会话：主进程里还有一轮在跑时（比如渲染进程 reload）不许改，
+   *    那一条会正常收到 done，改成 error 反而会让用户看到一条假的失败。
+   */
+  private settleInterrupted(sessions: Session[]): number {
+    let settled = 0
+    for (const session of sessions) {
+      if (this.inflight.has(session.id)) continue
+      for (const message of session.messages) {
+        if (message.status !== 'streaming') continue
+        message.status = 'error'
+        message.error = message.error || INTERRUPTED_NOTICE
+        settled += 1
+      }
+    }
+    return settled
   }
 
   private persist(): void {
@@ -1180,6 +1324,9 @@ export function sessionHistoryToLlm(session: Pick<Session, 'messages'>): LlmMess
   }
   return messages
 }
+
+/** 读盘时给「上次没跑完」的回复写的原因（见 settleInterrupted） */
+export const INTERRUPTED_NOTICE = '上次生成没有跑完（应用被关闭或崩溃），可以重试这一轮。'
 
 function cloneMessage(message: Message): Message {
   return { ...message, toolCalls: cloneCalls(message.toolCalls) }

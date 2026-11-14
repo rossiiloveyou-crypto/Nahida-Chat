@@ -29,6 +29,8 @@ export function ChatPage() {
   const createSession = useChatStore((s) => s.createSession)
   const updateSession = useChatStore((s) => s.updateSession)
   const respondApproval = useChatStore((s) => s.respondApproval)
+  const retry = useChatStore((s) => s.retry)
+  const removeMessage = useChatStore((s) => s.removeMessage)
   const dismissError = useChatStore((s) => s.dismissError)
   const fail = useChatStore((s) => s.fail)
   const { settings, save: saveSettings } = useSettings()
@@ -290,7 +292,13 @@ export function ChatPage() {
             disabled={streaming}
           />
         ) : (
-          <MessageList messages={messages} focusMessageId={focusMessageId} />
+          <MessageList
+            messages={messages}
+            focusMessageId={focusMessageId}
+            isStreaming={streaming}
+            onRetry={(messageId) => void retry(messageId)}
+            onRemove={(messageId) => void removeMessage(messageId)}
+          />
         )}
 
         {active?.storyId && <StoryDrawer storyId={active.storyId} title={active.title} />}

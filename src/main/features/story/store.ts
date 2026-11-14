@@ -24,7 +24,7 @@ import { assertStoryId, isStoryId, newStoryId, storiesRoot } from './paths'
 /**
  * 故事区元信息的落盘层（P4）。
  *
- * 存盘纪律照抄 `zones/store.ts`（**已被验证过的形状**）：
+ * 存盘纪律沿用本仓已验证过的形状（write tmp → rename、坏文件返回 null 并 warn）：
  *  - 写：write tmp → rename（原子）
  *  - 读：文件不存在返回 null、JSON 坏或字段不合法 → **返回 null 并 warn，不抛**
  *

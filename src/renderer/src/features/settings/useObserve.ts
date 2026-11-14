@@ -4,7 +4,7 @@ import type { ObserveConversation, ObserveRecord, ObserveStatus } from '@shared/
 /**
  * 旁听库的渲染层状态（P8 G8）。
  *
- * 与 useChannels / useZones 同一套路：只做「拉取 / 重拉 / 取尾部」，
+ * 与 useChannels 同一套路：只做「拉取 / 重拉 / 取尾部」，
  * 判定与写盘全在主进程（features/observe/store.ts）。
  *
  * 🔴 这里**没有** clear / delete —— 旁听库「只增不清」是硬要求（M21b）。

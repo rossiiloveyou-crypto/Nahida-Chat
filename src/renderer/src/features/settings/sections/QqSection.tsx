@@ -4,11 +4,12 @@ import type { QqSettings } from '@shared/qq'
 import { COMMAND_NAMES } from '@shared/persona'
 import type { CommandName, CommandPermissionLevel } from '@shared/persona'
 import { useQq } from '../useQq'
+import { NumberField } from '../../../components/NumberField'
 
 /**
  * 设置页「QQ」面板（P4 G7，P6 删掉绑定表）。
  *
- * 四个区块的顺序就是用户的操作顺序：宿主状态 → 注入哪个 QQ → 行为开关 → 最近事件。
+ * 四块的顺序就是用户的操作顺序：宿主状态 → 注入哪个 QQ → 行为开关 → 最近事件。
  * 最后一块是排查「为什么不回我」的唯一现场。
  *
  * P6：原来的 C 区「绑定表」整块删除 —— 谁能响应改由「渠道控制台」（P7）决定，
@@ -289,59 +290,54 @@ export function QqSection() {
             <div className="field__row">
               <label className="field">
                 <span className="field__label">段间延迟（ms）</span>
-                <input
+                <NumberField
                   className="field__control"
-                  type="number"
                   min={0}
                   max={5000}
                   value={draft.segmentDelayMs}
-                  onChange={(event) => patch({ segmentDelayMs: Number(event.target.value) })}
+                  onCommit={(next) => patch({ segmentDelayMs: next })}
                 />
               </label>
               <label className="field">
                 <span className="field__label">单句段数上限</span>
-                <input
+                <NumberField
                   className="field__control"
-                  type="number"
                   min={1}
                   max={20}
                   value={draft.maxSegments}
-                  onChange={(event) => patch({ maxSegments: Number(event.target.value) })}
+                  onCommit={(next) => patch({ maxSegments: next })}
                 />
               </label>
               <label className="field">
                 <span className="field__label">单段码点上限</span>
-                <input
+                <NumberField
                   className="field__control"
-                  type="number"
                   min={200}
                   max={4000}
                   value={draft.maxCharsPerSegment}
-                  onChange={(event) => patch({ maxCharsPerSegment: Number(event.target.value) })}
+                  onCommit={(next) => patch({ maxCharsPerSegment: next })}
                 />
               </label>
             </div>
             <div className="field__row">
               <label className="field">
                 <span className="field__label">每用户 / 60s</span>
-                <input
+                <NumberField
                   className="field__control"
-                  type="number"
                   min={1}
                   max={1000}
                   value={draft.rateLimitPerUser}
-                  onChange={(event) => patch({ rateLimitPerUser: Number(event.target.value) })}
+                  onCommit={(next) => patch({ rateLimitPerUser: next })}
                 />
               </label>
               <label className="field">
                 <span className="field__label">每渠道 / 60s</span>
-                <input
+                <NumberField
                   className="field__control"
-                  type="number"
                   min={1}
                   max={1000}
                   value={draft.rateLimitPerChannel}
-                  onChange={(event) => patch({ rateLimitPerChannel: Number(event.target.value) })}
+                  onCommit={(next) => patch({ rateLimitPerChannel: next })}
                 />
               </label>
             </div>

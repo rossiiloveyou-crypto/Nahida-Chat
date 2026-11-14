@@ -1,4 +1,5 @@
 import { DEFAULT_SUMMARY_SETTINGS } from '@shared/constants'
+import { DEFAULT_PERSONA_ID } from '@shared/persona'
 import type { Message, SummarySettings } from '@shared/types'
 
 /**
@@ -28,9 +29,11 @@ export interface SummarySections {
   promises: string
 }
 
-/** 一条会话的摘要状态。每会话一份，落在 userData/summaries.json */
+/** 一条会话的摘要状态。每（会话，人设）一份，落在 userData/summaries.json */
 export interface SessionSummary {
   sessionId: string
+  /** 摘要只注入所属人设，避免切换人设后沿用另一份对话记忆 */
+  personaId: string
   /**
    * 已被摘要覆盖的消息条数，也是下一次压缩的起点。
    * 🔴 它是**消息下标**不是时间戳：消息被删除/重新生成后下标会失真，
@@ -121,9 +124,10 @@ function clampInt(value: unknown, fallback: number): number {
   return Math.floor(numeric)
 }
 
-export function emptySummary(sessionId: string): SessionSummary {
+export function emptySummary(sessionId: string, personaId = DEFAULT_PERSONA_ID): SessionSummary {
   return {
     sessionId,
+    personaId,
     coveredCount: 0,
     anchorMessageId: null,
     sections: { short_term: '', long_term: '', user_info: '', promises: '' },

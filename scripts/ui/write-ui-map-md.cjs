@@ -37,6 +37,9 @@ const KNOWN_TITLES = {
   'chat-conversation': '对话中（含 AI 头像与用户头像）',
   // 第 8 轮：角色切换菜单。点开输入区最左的选择器，验证清单来自提示词库而不是写死的数组。
   'chat-character-menu': '对话中 · 角色切换菜单（提示词库里的全部角色）',
+  // 第 9 轮：失败的一轮（原因写在气泡里 + 「重试这一轮 / 删除这条」）。
+  // 用真失败播种（把会话指到连不上的地址），所以图上的原因就是主进程真正抛出来的那句。
+  'chat-failed-turn': '对话中 · 失败的一轮（失败原因 + 重试/删除）',
   'settings-models': '设置 · 模型配置',
   'settings-prompts': '设置 · 提示词库',
   // P7：故事区三视图（侧栏双分区 / 分支抽屉展开 / 设置·故事区）
@@ -48,12 +51,11 @@ const KNOWN_TITLES = {
   // P8：新建故事区表单（背景与剧本设定 / 开场消息）
   'new-story-dialog': '故事区 · 新建故事区（背景设定 / 开场消息）',
   'settings-memory': '设置 · 长期记忆',
-  'settings-zones': '设置 · 区块',
   // P9-R3：渠道控制台从「按会话」重做成「按人」，三张图覆盖 A/B/C/D 四个区。
   'settings-channels': '设置 · 渠道控制台（QQ 号白名单 / 群白名单）',
   'settings-channels-lower': '设置 · 渠道控制台（下半屏 / 鉴权开关）',
+  'settings-channels-observe-groups': '渠道控制台 · 旁听群号一览（弹层，可搜索）',
   'settings-channels-observe': '设置 · 渠道控制台（旁听库）',
-  'settings-zones-lower': '设置 · 区块（下半屏 / 行为开关）',
   'settings-qq': '设置 · QQ 接入',
   'settings-qq-lower': '设置 · QQ 接入（下半屏 / 行为开关）',
   'settings-qq-events': '设置 · QQ 接入（最近事件）',

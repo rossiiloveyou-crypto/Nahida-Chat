@@ -317,8 +317,8 @@ console.log('4 · 指令行为（落点读真库）')
   after4.close()
   check('T-14 A-11 切走之后可删，条数 −1', delOk.ok === true && rows4.length === rows3.length - 1, delOk.text)
   check(
-    'T-14b H-C-04 //dele 的文案必须写明「记忆与历史仍保留」',
-    delOk.text.includes('记忆与历史仍保留'),
+    'T-14b M25 //dele 的文案必须写明「连同 N 条记忆与聊天历史」（不再声明"仍保留"）',
+    delOk.text.includes('连同它的') && delOk.text.includes('条记忆') && !delOk.text.includes('仍保留'),
     delOk.text.replace(/\n/g, ' / ')
   )
 
@@ -326,6 +326,101 @@ console.log('4 · 指令行为（落点读真库）')
   check('T-14c 非法人设名 → 给人话规则，不抛', bad.ok === false && bad.text.includes('1–32'), bad.text)
   const noArg = runCommand('switch', ctx({ args: [] }))
   check('T-14d 缺参数 → 给用法', noArg.ok === false && noArg.text.includes('用法'), noArg.text)
+}
+
+/* ── 4b · 真机验收补的三条（A-22 / A-23 / A-24） ─────────────────────── */
+
+console.log('4b · M25 / M26 修正（A-22 / A-23 / A-24）')
+
+{
+  // A-22（M26）：//switch default 必须**永远**可用。
+  // 真机踩到：只发过指令、没聊过天的用户一个 default 都没有 ——
+  //   指令在 bridge 的 ensureSession 之前就 return，永远走不到 activePersonaOf。
+  const FRESH = '50005'
+  const store0 = freshStore()
+  store0.close()
+
+  const listOut = runCommand('list', ctx({ userId: FRESH }))
+  check('T-28a A-22 前置：该用户确实零人设', listOut.text.includes('//add'), listOut.text)
+
+  const swOut = runCommand('switch', ctx({ userId: FRESH, args: ['default'] }))
+  check('T-28 A-22 //switch default 在 default 未注册时必须成功', swOut.ok === true, swOut.text)
+
+  const after = freshStore()
+  const rows = after.listPersonas(FRESH)
+  const active = after.activePersona(FRESH)
+  after.close()
+  check(
+    'T-28b A-22 切完 default 真的被注册且是激活项',
+    rows.length === 1 && rows[0].personaId === 'default' && rows[0].isActive === true && active === 'default',
+    JSON.stringify(rows) + ' active=' + active
+  )
+  check('T-28c A-22 SUM(is_active)=1（自动注册没有破坏唯一激活）', rows.filter((r) => r.isActive).length === 1)
+
+  // A-24（M25 副作用）：不存在的人设 → 明确失败，不许"假成功"
+  const ghost = runCommand('dele', ctx({ userId: FRESH, args: ['从没建过'] }))
+  const after2 = freshStore()
+  const rows2 = after2.listPersonas(FRESH)
+  after2.close()
+  check('T-30 A-24 //dele 不存在的人设 → ok:false', ghost.ok === false, ghost.text)
+  check('T-30b A-24 回复说明"没什么可删的"', ghost.text.includes('没什么可删的'), ghost.text)
+  check('T-30c A-24 人设条数不变（没有误删 default）', rows2.length === rows.length, rows2.length + '/' + rows.length)
+}
+
+{
+  // A-23（M25）：//dele 必须**连记忆与历史一起删**。
+  const DEL = '60006'
+  const P1 = '测试'
+
+  const seed = freshStore()
+  seed.upsertPersona(DEL, 'default', true)
+  seed.upsertPersona(DEL, P1, false)
+  for (let i = 0; i < 3; i++) {
+    seed.upsert({ content: '人设' + P1 + '的记忆' + i, userId: DEL, personaId: P1 })
+  }
+  seed.upsert({ content: '兜底人设的记忆', userId: DEL, personaId: 'default' })
+  seed.appendHistory({
+    id: 'h-' + DEL + '-1',
+    userId: DEL,
+    personaId: P1,
+    role: 'user',
+    content: '你好',
+    sessionId: 's1',
+    chatType: 'private',
+    chatId: DEL,
+    createdAt: Date.now()
+  })
+  seed.appendHistory({
+    id: 'h-' + DEL + '-2',
+    userId: DEL,
+    personaId: P1,
+    role: 'assistant',
+    content: '你好呀',
+    sessionId: 's1',
+    chatType: 'private',
+    chatId: DEL,
+    createdAt: Date.now() + 1
+  })
+  const memBefore = seed.listByTenant(DEL, P1).length
+  const hisBefore = seed.recentHistory(DEL, P1, 10).length
+  const defBefore = seed.listByTenant(DEL, 'default').length
+  seed.close()
+  check('T-29a A-23 前置：目标人设攒到 3 条记忆 + 2 条历史', memBefore === 3 && hisBefore === 2, memBefore + ' 记忆 / ' + hisBefore + ' 历史')
+
+  const delOut = runCommand('dele', ctx({ userId: DEL, args: [P1] }))
+  const after = freshStore()
+  const memAfter = after.listByTenant(DEL, P1).length
+  const hisAfter = after.recentHistory(DEL, P1, 10).length
+  const defAfter = after.listByTenant(DEL, 'default').length
+  const rowsAfter = after.listPersonas(DEL)
+  after.close()
+
+  check('T-29 A-23 //dele 成功', delOut.ok === true, delOut.text)
+  check('T-29b A-23 记忆清零（deleteByPersona 不是只删注册行）', memAfter === 0, memAfter + '/' + memBefore)
+  check('T-29c A-23 人设历史清零', hisAfter === 0, hisAfter + '/' + hisBefore)
+  check('T-29d A-23 注册行也没了', rowsAfter.some((r) => r.personaId === P1) === false, JSON.stringify(rowsAfter))
+  check('T-29e P17 对照物：default 的记忆一条不少（没误伤别人设）', defAfter === defBefore && defAfter === 1, defAfter + '/' + defBefore)
+  check('T-29f A-23 文案报出真实删除条数', delOut.text.includes(String(memBefore)), delOut.text.replace(/\n/g, ' / '))
 }
 
 /* ── 5 · 门槛可配 + 越权（A-12b / A-13） ───────────────────────────────── */

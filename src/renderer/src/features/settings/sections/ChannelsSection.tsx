@@ -17,7 +17,7 @@ import { ObservePanel } from './ObservePanel'
  *   C  鉴权开关       —— 群成员鉴权（默认关）/ 工具调用拦截（默认开）/ 群聊工具增强（默认开）
  *   E  渠道工作区     —— 渠道会话唯一允许落地的根（P3 / M21），可改、可恢复默认
  *   D  数据位置
- *   +  ObservePanel（旁听库，与其他区块无关）
+ *   +  ObservePanel（旁听库，与上面几块无关）
  *
  * 🔴 面板只做展示与转发：真源在 userData/channels/access.json，
  *    校验在 features/channels/store.ts。面板不重复实现一遍校验（J-34）。
@@ -197,7 +197,7 @@ function AccountRow({ account, busy, onToggle, onLevel, onRemove }: AccountRowPr
 
 interface GroupRowProps {
   group: ChannelGroup
-  /** 已知机器人号的数量：0 表示这个群暂时展不开成会话（区块里看不到它） */
+  /** 已知机器人号的数量：0 表示这个群暂时展不开成会话（旁听面板里看不到它） */
   uinCount: number
   busy: boolean
   onRemove: (group: ChannelGroup) => void
@@ -209,7 +209,7 @@ function GroupRow({ group, uinCount, busy, onRemove }: GroupRowProps) {
       <span title={group.chatId}>
         {group.chatId}
         {uinCount === 0 && (
-          <em className="qq-tag-multi" title="还没识别到机器人登录号：这个群暂时不会出现在区块候选里">
+          <em className="qq-tag-multi" title="还没识别到机器人登录号：这个群暂时不会出现在旁听面板里">
             待识别
           </em>
         )}
@@ -275,7 +275,7 @@ export function ChannelsSection() {
   }
 
   // 识别到机器人号就顺手记进 access.json 的 uins[] ——
-  // 群白名单存的是群号，区块 / 旁听要的是会话键 qq:<uin>:group:<群号>，没有 uin 就展不开。
+  // 群白名单存的是群号，旁听要的是会话键 qq:<uin>:group:<群号>，没有 uin 就展不开。
   useEffect(() => {
     if (bot.uin) void channels.rememberUin(bot.uin)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -382,7 +382,7 @@ export function ChannelsSection() {
         {bot.mode === 'none' && (
           <p className="hint-text hint-text--error">
             还没有拿到机器人号。先在「QQ 接入」里注入一个已登录的 QQ，或在上面手填。
-            群白名单没有它也能存，只是区块候选里暂时看不到那些群。
+            群白名单没有它也能存，只是旁听面板里暂时看不到那些群。
           </p>
         )}
         {config.uins.length > 0 && (

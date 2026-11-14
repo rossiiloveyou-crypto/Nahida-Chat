@@ -8,7 +8,6 @@ import { PromptsSection } from './sections/PromptsSection'
 import { StoriesSection } from './sections/StoriesSection'
 import { ToolsSection } from './sections/ToolsSection'
 import { QqSection } from './sections/QqSection'
-import { ZonesSection } from './sections/ZonesSection'
 import { ChannelsSection } from './sections/ChannelsSection'
 import { AboutSection, AppearanceSection } from './sections/MiscSections'
 import { isSettingsSectionId, type SettingsSectionId } from './nav'
@@ -60,7 +59,6 @@ export function SettingsPage() {
             {active === 'prompts' && <PromptsSection />}
             {active === 'stories' && <StoriesSection />}
             {active === 'memory' && <MemorySection />}
-            {active === 'zones' && <ZonesSection />}
             {active === 'channels' && <ChannelsSection />}
             {active === 'qq' && <QqSection />}
             {active === 'tools' && <ToolsSection />}

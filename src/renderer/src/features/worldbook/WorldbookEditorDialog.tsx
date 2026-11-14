@@ -7,6 +7,7 @@ import type {
   WorldbookListing
 } from '@shared/worldbook'
 import { filterWorldbookEntries } from './filter'
+import { NumberField } from '../../components/NumberField'
 import {
   WORLDBOOK_DEFAULT_PRIORITY,
   WORLDBOOK_DEFAULT_VALUE,
@@ -504,24 +505,22 @@ export function WorldbookEditorDialog({ initialTarget, onClose }: WorldbookEdito
               </label>
               <label className="story-field wb-num">
                 <span>优先级 {WORLDBOOK_PRIORITY_MIN}–{WORLDBOOK_PRIORITY_MAX}</span>
-                <input
-                  type="number"
-                  data-ui-target="世界书优先级"
+                <NumberField
+                  uiTarget="世界书优先级"
                   min={WORLDBOOK_PRIORITY_MIN}
                   max={WORLDBOOK_PRIORITY_MAX}
                   value={form.priority}
-                  onChange={(event) => setForm((prev) => ({ ...prev, priority: Number(event.target.value) }))}
+                  onCommit={(next) => setForm((prev) => ({ ...prev, priority: next }))}
                 />
               </label>
               <label className="story-field wb-num">
                 <span>内在价值 {WORLDBOOK_VALUE_MIN}–{WORLDBOOK_VALUE_MAX}</span>
-                <input
-                  type="number"
-                  data-ui-target="世界书内在价值"
+                <NumberField
+                  uiTarget="世界书内在价值"
                   min={WORLDBOOK_VALUE_MIN}
                   max={WORLDBOOK_VALUE_MAX}
                   value={form.value}
-                  onChange={(event) => setForm((prev) => ({ ...prev, value: Number(event.target.value) }))}
+                  onCommit={(next) => setForm((prev) => ({ ...prev, value: next }))}
                 />
               </label>
             </div>

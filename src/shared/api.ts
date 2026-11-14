@@ -13,6 +13,7 @@ import type {
   MemoryEntry,
   MemoryRecallHit,
   MemoryStatus,
+  PersonaHistoryEntry,
   Message,
   ModelDiscoveryRequest,
   ModelDiscoveryResult,
@@ -31,11 +32,10 @@ import type {
 } from './types'
 import type { ToolApprovalReply, ToolDefinition } from './tools'
 import type { QqEventFeedItem, QqSettings, QqStatusPayload } from './qq'
-import type { ChannelStatusPayload, UnzonedChannelItem } from './channels'
+import type { ChannelStatusPayload } from './channels'
 import type { ChannelAccount, ChannelAccessConfig, ChannelGroup } from './channelAccess'
 import type { ObserveConversation, ObserveRecord, ObserveStatus } from './observe'
 import type { QqHostStatus, QqProcessSnapshot } from './qqHost'
-import type { Zone, ZoneAdoptResult, ZoneConfig, ZoneDraft, ZoneMemberDraft, ZoneStat } from './zones'
 import type {
   DuplicateKeyword,
   WorldbookDirInfo,
@@ -54,6 +54,94 @@ import type {
   StorySearchHit,
   StorySummary
 } from './story'
+
+export interface MemoryUserRow {
+  userId: string
+  label: string
+  inAllowList: boolean
+  personaCount: number
+  memoryCount: number
+  historyCount: number
+  lastAt: number
+}
+
+export interface MemoryPersonaRow {
+  personaId: string
+  isActive: boolean
+  memoryCount: number
+  historyCount: number
+  createdAt: number
+}
+
+export interface MemoryUserDetail {
+  userId: string
+  label: string
+  inAllowList: boolean
+  personas: MemoryPersonaRow[]
+  sessions: Array<{ sessionId: string; title: string; updatedAt: number }>
+  dbPath: string
+  userDataPath: string
+}
+
+/**
+ * P7：「清空全部数据」的清单项。willDelete 每一条都必须能在 `wipeAllData` 里找到对应动作 ——
+ * 少一项是漏删，多一项是误删（判据 WP-01…WP-11 逐项比对）。
+ */
+export interface WipePreviewItem {
+  path: string
+  detail: string
+  bytes: number
+}
+
+export interface WipeKeepItem {
+  path: string
+  why: string
+}
+
+export interface WipePreview {
+  willDelete: WipePreviewItem[]
+  willKeep: WipeKeepItem[]
+}
+
+/** 一次性验证码（M15/M16）。code 由**主进程**生成并校验，渲染层只负责显示 */
+export interface WipeCaptcha {
+  /** 8 位小写 hex */
+  code: string
+  /** 过期毫秒数（防「开了框去泡茶」） */
+  ttlMs: number
+}
+
+/** 清空后的报告（与 main/features/wipe 的 WipeReport 同形） */
+export interface WipeReport {
+  sessions: number
+  memories: number
+  histories: number
+  personas: number
+  summaries: number
+  stories: number
+  backupDir: string
+  ok: boolean
+  detail: string
+}
+
+export type WipeFailReason = 'no_captcha' | 'expired' | 'wrong' | 'too_many_failures' | 'failed'
+
+export interface WipeExecuteResult {
+  ok: boolean
+  reason?: WipeFailReason
+  report?: WipeReport
+}
+
+export interface MemoryDeleteReport {
+  userId: string
+  personaId: string | null
+  memories: number
+  histories: number
+  personas: number
+  summaries: number
+  sessions: number
+  stillAuthorized: boolean
+}
 
 type Unsubscribe = () => void
 
@@ -124,6 +212,12 @@ export interface NahidaApi {
     recall: (query: string) => Promise<MemoryRecallHit[]>
     /** 打开模型目录，让用户知道该往哪放文件 */
     openModelDir: () => Promise<string>
+    users: () => Promise<MemoryUserRow[]>
+    userDetail: (userId: string) => Promise<MemoryUserDetail>
+    userEntries: (userId: string, personaId: string) => Promise<{ entries: MemoryEntry[]; history: PersonaHistoryEntry[] }>
+    deleteUser: (userId: string) => Promise<MemoryDeleteReport>
+    deletePersona: (userId: string, personaId: string) => Promise<MemoryDeleteReport>
+    openDir: () => Promise<string>
   }
   /**
    * 对话摘要（窗口外对话的滚动压缩）。
@@ -139,6 +233,21 @@ export interface NahidaApi {
     /** 清空全部摘要（只删摘要，不动聊天记录与 RAG 记忆） */
     clear: () => Promise<SummaryStatus>
   }
+  /**
+   * 清空全部数据（P7）。**不可撤销** —— 唯一的安全网是执行前自动做的备份。
+   *
+   * 🔴 三步分开是有意的：preview 只列清单（用户先看清删什么/留什么），
+   *    captcha 才生成一次性码（M15：点「我明白」之后才生成），execute 带码执行。
+   * 🔴 执行成功 → 主进程在把报告回给渲染层之后**立即重启**（M14）。
+   */
+  wipe: {
+    /** 要删什么 / 要留什么（含各自字节数），不生成码 */
+    preview: () => Promise<WipePreview>
+    /** 生成一次性 8 位 hex 码；每次调用都换新码并清零失败计数 */
+    captcha: () => Promise<WipeCaptcha>
+    /** 带码执行；reason 只有 no_captcha / expired / wrong / too_many_failures / failed */
+    execute: (code: string) => Promise<WipeExecuteResult>
+  }
   chat: {
     listSessions: () => Promise<Session[]>
     createSession: (input?: CreateSessionInput) => Promise<Session>
@@ -148,6 +257,13 @@ export interface NahidaApi {
     /** 故事区旁白：只追加一条旁白消息并落盘，不调用模型；下次 send 时作为 system 下发 */
     narrate: (sessionId: string, content: string) => Promise<Message>
     stop: (sessionId: string) => Promise<void>
+    /**
+     * 重试最后一条回复：清空它的正文与思考后重跑一轮，**不新增用户消息**。
+     * 返回那条 assistant 消息的重置态（渲染层据此先清气泡，增量随后到达）。
+     */
+    retry: (sessionId: string, messageId: string) => Promise<Message>
+    /** 删除一条消息（正在生成时拒绝） */
+    deleteMessage: (sessionId: string, messageId: string) => Promise<void>
     onDelta: (handler: (payload: ChatDelta) => void) => Unsubscribe
     /** 思考增量（DeepSeek reasoning_content / Anthropic thinking / Gemini thought） */
     onReasoning: (handler: (payload: ChatReasoning) => void) => Unsubscribe
@@ -176,31 +292,6 @@ export interface NahidaApi {
     onEvent: (handler: (payload: QqEventFeedItem) => void) => Unsubscribe
   }
   /**
-   * 区块（P5）：记忆域 / 群角色绑定。
-   *
-   * 每个写操作都返回**整份区块列表**：面板不用自己合并，也不会出现
-   * 「改完这个区块，别的区块的成员数还停在旧值」。
-   * 🔴 root 不可删、不可改名 —— 这两条在 store 里强制，IPC 只是薄转发。
-   */
-  zones: {
-    list: () => Promise<Zone[]>
-    create: (draft: ZoneDraft) => Promise<Zone[]>
-    rename: (zoneId: string, name: string) => Promise<Zone[]>
-    remove: (zoneId: string) => Promise<Zone[]>
-    updateConfig: (zoneId: string, patch: Partial<ZoneConfig>) => Promise<Zone[]>
-    addMember: (draft: ZoneMemberDraft) => Promise<Zone[]>
-    removeMember: (zoneId: string, key: string) => Promise<Zone[]>
-    /** 批量把「未归区的 QQ 绑定」加进来（面板的「加入本区块」） */
-    adopt: (
-      zoneId: string,
-      members: Array<{ key: string; chatType: 'private' | 'group'; chatId: string; displayName?: string }>
-    ) => Promise<ZoneAdoptResult>
-    /** 每个区块的记忆条数与成员数 */
-    stats: () => Promise<ZoneStat[]>
-    /** P6：还没归区的白名单会话（加了白名单就出现，与有没有说过话无关） */
-    unzoned: () => Promise<UnzonedChannelItem[]>
-  }
-  /**
    * 渠道授权（P6 → **P9-R3 v2：按「人」授权**）。
    *
    * 真源：`userData/channels/access.json`，用户可以直接手改（每次读盘，没有缓存）。
@@ -223,7 +314,7 @@ export interface NahidaApi {
     removeGroup: (chatId: string) => Promise<boolean>
     /** 记一个机器人登录号（面板识别到已注入进程时调；不参与授权） */
     rememberUin: (uin: string) => Promise<ChannelAccessConfig>
-    /** 白名单在会话维度上的投影（区块面板的候选集来源） */
+    /** 白名单在会话维度上的投影（只读展示：会话键 / 群号 / 备注 / 权限位） */
     sessions: () => Promise<Array<{
       key: string
       uin: string

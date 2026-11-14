@@ -1,9 +1,15 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
+import { DEFAULT_PERSONA_ID } from '@shared/persona'
 import { emptySummary, type SessionSummary } from './types'
 
-const FILE_VERSION = 1
+const FILE_VERSION = 2
+
+/** NUL 只用于 JSON / Map 的复合键，不作为文件名，也不与普通分隔文本碰撞 */
+export function summaryKeyOf(sessionId: string, personaId: string): string {
+  return sessionId + '\u0000' + personaId
+}
 
 interface SummaryFile {
   version: number
@@ -57,9 +63,17 @@ export class SummaryStore {
         : undefined
     if (!items || typeof items !== 'object') return map
 
-    for (const [sessionId, raw] of Object.entries(items)) {
-      const normalized = normalizeEntry(sessionId, raw)
-      if (normalized) map.set(sessionId, normalized)
+    for (const [key, raw] of Object.entries(items)) {
+      if (!raw || typeof raw !== 'object') continue
+      const source = raw as Partial<SessionSummary>
+      const sessionId = typeof source.sessionId === 'string' ? source.sessionId : key.split('\u0000')[0]
+      // v1 没有人设列：旧四段与游标全部保留，统一归到 default。
+      const personaId =
+        typeof source.personaId === 'string' && source.personaId
+          ? source.personaId
+          : DEFAULT_PERSONA_ID
+      const normalized = normalizeEntry(sessionId, personaId, raw)
+      if (normalized) map.set(summaryKeyOf(sessionId, personaId), normalized)
     }
     return map
   }
@@ -67,7 +81,9 @@ export class SummaryStore {
   save(map: Map<string, SessionSummary>): void {
     const file = this.file()
     const items: Record<string, SessionSummary> = {}
-    for (const [sessionId, summary] of map) items[sessionId] = summary
+    for (const summary of map.values()) {
+      items[summaryKeyOf(summary.sessionId, summary.personaId)] = summary
+    }
     const payload: SummaryFile = { version: FILE_VERSION, items }
     try {
       mkdirSync(dirname(file), { recursive: true })
@@ -82,14 +98,15 @@ export class SummaryStore {
 }
 
 /** 读盘即校验：手改坏字段、老版本缺字段，一律落回安全默认 */
-function normalizeEntry(sessionId: string, raw: unknown): SessionSummary | null {
+function normalizeEntry(sessionId: string, personaId: string, raw: unknown): SessionSummary | null {
   if (!raw || typeof raw !== 'object') return null
   const source = raw as Partial<SessionSummary>
-  const base = emptySummary(sessionId)
+  const base = emptySummary(sessionId, personaId)
   const sections = source.sections ?? base.sections
 
   return {
     sessionId,
+    personaId,
     coveredCount:
       typeof source.coveredCount === 'number' && Number.isFinite(source.coveredCount)
         ? Math.max(0, Math.floor(source.coveredCount))

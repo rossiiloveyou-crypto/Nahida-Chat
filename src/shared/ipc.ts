@@ -36,11 +36,24 @@ export const IPC = {
   memoryClear: 'memory:clear',
   memoryRecall: 'memory:recall',
   memoryOpenModel: 'memory:open-model',
+  memoryUsers: 'memory:users',
+  memoryUserDetail: 'memory:user-detail',
+  memoryUserEntries: 'memory:user-entries',
+  memoryDeleteUser: 'memory:delete-user',
+  memoryDeletePersona: 'memory:delete-persona',
+  memoryOpenDir: 'memory:open-dir',
 
   // 对话摘要（窗口外对话的滚动压缩）。与上面的 memory:* 是两套：那个是 RAG 事实库
   summaryStatus: 'summary:status',
   summaryForget: 'summary:forget',
   summaryClear: 'summary:clear',
+
+  // P7：清空全部数据（本任务唯一不可逆的功能入口）。
+  // 🔴 三个通道分工：preview 只列清单（不生成码）／captcha 生成一次性 8 位 hex／
+  //    execute 带码执行并在回复之后重启。码的真值只在主进程（见 ipc/wipe.ts）。
+  wipePreview: 'wipe:preview',
+  wipeCaptcha: 'wipe:captcha',
+  wipeExecute: 'wipe:execute',
 
   chatList: 'chat:list',
   chatCreate: 'chat:create',
@@ -49,6 +62,10 @@ export const IPC = {
   chatSend: 'chat:send',
   chatNarrate: 'chat:narrate',
   chatStop: 'chat:stop',
+  /** 重跑刚才那一轮（复用失败那条回复的 id，不新增用户消息） */
+  chatRetry: 'chat:retry',
+  /** 删掉一条消息（失败/中断的气泡可以清掉） */
+  chatDeleteMessage: 'chat:delete-message',
 
   chatDelta: 'chat:delta',
   /** main → renderer：思考增量（与正文严格分开，渲染层折进可收起的块） */
@@ -70,19 +87,6 @@ export const IPC = {
   qqLogs: 'qq:logs',
   /** 主进程 → 渲染层：最近事件推送（渲染层订阅，不发请求） */
   qqEvent: 'qq:event',
-
-  // 区块（P5）：记忆域 / 群角色绑定
-  zoneList: 'zone:list',
-  zoneCreate: 'zone:create',
-  zoneRename: 'zone:rename',
-  zoneDelete: 'zone:delete',
-  zoneConfig: 'zone:config',
-  zoneMemberAdd: 'zone:member-add',
-  zoneMemberRemove: 'zone:member-remove',
-  zoneAdopt: 'zone:adopt',
-  zoneStats: 'zone:stats',
-  /** P6：未归区的白名单会话（区块面板 C 区，只读） */
-  zoneUnzoned: 'zone:unzoned',
 
   // 渠道授权（P6 → P9-R3 v2：按「人」授权）。真源 userData/channels/access.json
   channelsConfig: 'channels:config',
