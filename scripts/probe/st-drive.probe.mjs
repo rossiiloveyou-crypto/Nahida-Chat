@@ -301,6 +301,7 @@ async function runInElectron() {
 
     const failedIds = items.filter(i => i.ok !== true).map(i => i.id);
     const passed = items.filter(i => i.ok === true && !i.skipped).length;
+    report.assertions.total = items.length; // A3b 是附加断言，总条数以实际 items 为准（8 → 9）
     report.assertions.failed = failedIds.length;
     report.assertions.passed = passed;
     report.assertions.failedIds = failedIds;
