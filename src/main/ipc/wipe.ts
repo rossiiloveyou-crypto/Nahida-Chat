@@ -131,7 +131,7 @@ export function buildWipePreview(): WipePreview {
       },
       {
         path: 'zones.json.retired-bak',
-        detail: '区块数据的历史副本（你 2026-11-14 裁决「一起删了」）',
+        detail: '区块功能的历史遗留副本（旧版本数据，可一并删除）',
         bytes: bytesOf(userData, 'zones.json.retired-bak')
       }
     ],
@@ -143,7 +143,7 @@ export function buildWipePreview(): WipePreview {
       { path: 'presets/', why: '你手调的预设快照' },
       { path: 'workspace/', why: '工具的工作区文件（你的文件，不是聊天数据）' },
       { path: 'qq/settings.json', why: 'QQ 面板的行为设置' },
-      { path: 'memory.db.p5-backup', why: '改造前的旧库副本（memory-scope-counts 套件依赖它）' },
+      { path: 'memory.db.p5-backup', why: '改造前的旧库副本（旧版本遗留，可一并删除）' },
       { path: 'models/', why: '向量模型（本机可能没有；有就不动）' },
       { path: 'Local Storage / Cookies', why: 'Electron 自带，未验证内容，宁少不清' }
     ]

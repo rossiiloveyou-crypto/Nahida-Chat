@@ -249,7 +249,7 @@ export function QqSection() {
         {draft ? (
           <div data-ui-target="开关组">
             <label className="field">
-              <span className="field__label">typing 提示（仅私聊，M12）</span>
+              <span className="field__label">typing 提示（仅私聊）</span>
               <select
                 className="field__control"
                 value={draft.typingMode}
@@ -258,7 +258,7 @@ export function QqSection() {
                 }
               >
                 <option value="text">发一条极短文本</option>
-                <option value="status">set_input_status（未真机验证）</option>
+                <option value="status">set_input_status</option>
                 <option value="off">不做</option>
               </select>
             </label>
