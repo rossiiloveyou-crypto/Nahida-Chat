@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { BrowserWindow, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, nativeTheme, shell } from 'electron'
 import { POST_WIPE_FLAG, THEME, THEME_DARK } from '@shared/constants'
 import { settingsStore } from './features/settings/settingsStore'
 
@@ -27,6 +27,23 @@ function resolveEffectiveTheme(): 'light' | 'dark' {
   return mode
 }
 
+/**
+ * 窗口/任务栏图标。
+ *
+ * 打包后从 resources 读（extraResources 带进去的），开发态从仓库 build/ 读。
+ * 为什么不做成"找不到就跳过"的静默兜底：图标缺失不影响功能，但会让人以为换了皮却没生效，
+ * 所以两条路径都判存在，都没有就返回 undefined 让 Electron 用默认图标（而不是传个坏路径）。
+ */
+function resolveWindowIcon(): string | undefined {
+  const candidates = app.isPackaged
+    ? [join(process.resourcesPath, 'icon.png')]
+    : [join(app.getAppPath(), 'build', 'icon.png')]
+  for (const file of candidates) {
+    if (existsSync(file)) return file
+  }
+  return undefined
+}
+
 export function createMainWindow(): BrowserWindow {
   // 深色下窗口底色必须跟着变，否则渲染进程画出第一帧前会先露出一块浅色底（D5 白闪）
   const theme = resolveEffectiveTheme()
@@ -37,6 +54,7 @@ export function createMainWindow(): BrowserWindow {
     minHeight: 620,
     show: false,
     title: 'Nahida Chat',
+    icon: resolveWindowIcon(),
     backgroundColor: theme === 'dark' ? THEME_DARK.canvas : THEME.canvas,
     autoHideMenuBar: true,
     webPreferences: {
