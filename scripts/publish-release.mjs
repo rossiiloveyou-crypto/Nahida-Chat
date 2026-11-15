@@ -114,8 +114,13 @@ const releaseId = release.json.id
 
 const existing = await api('GET', '/repos/' + OWNER + '/' + REPO + '/releases/' + releaseId + '/assets')
 if (existing.status < 300 && Array.isArray(existing.json)) {
+  // 🔴 GitHub 会把上传文件名里的空格/特殊字符换成点（"Nahida Chat Setup 1.0.0.exe"
+  //    变成 "Nahida.Chat.Setup.1.0.0.exe"），拿原名去比对永远删不掉旧附件，
+  //    重发同一版就会撞 already_exists。两边都归一化再比。
+  const norm = (s) => s.toLowerCase().replace(/[^a-z0-9.]/g, '.')
+  const wanted = norm(NAME)
   for (const asset of existing.json) {
-    if (asset.name === NAME) {
+    if (asset.name === NAME || norm(asset.name) === wanted) {
       await api('DELETE', '/repos/' + OWNER + '/' + REPO + '/releases/assets/' + asset.id)
       console.log('已删除旧资源：' + asset.name)
     }
