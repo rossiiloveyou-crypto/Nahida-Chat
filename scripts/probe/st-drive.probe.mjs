@@ -88,13 +88,27 @@ async function runInElectron() {
     const DISABLE_BLOCK = process.env.NC_PROBE_DISABLE_BLOCK === '1';
     const PARTITION = 'persist:nc-probe';
 
+    // 写盘面（实测穷举见完成报告：settings/save 与 quick-replies/save 每轮都会写盘，
+    // 蓝图 §四 原清单没列，P4 的 driver 必须一起拦，否则 M2「ST 零持久化」不成立）
     const CANCEL_PATTERNS = [
         /\/api\/chats\/save(\?|$)/,
         /\/api\/chats\/delete(\?|$)/,
         /\/api\/chats\/rename(\?|$)/,
         /\/api\/chats\/import(\?|$)/,
         /\/api\/backups\//,
+        /\/api\/settings\/save(\?|$)/,
+        /\/api\/quick-replies\/save(\?|$)/,
     ];
+
+    const localHosts = new Set(['127.0.0.1', 'localhost', '::1']);
+    const classifyRequest = url => {
+        if (CANCEL_PATTERNS.some(re => re.test(url))) { return 'write'; }
+        let parsed;
+        try { parsed = new URL(url); } catch { return null; }
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') { return null; }
+        if (!localHosts.has(parsed.hostname)) { return 'external'; }
+        return null;
+    };
 
     const startedAt = new Date();
     const cancelled = [];
@@ -150,8 +164,9 @@ async function runInElectron() {
     if (!DISABLE_BLOCK) {
         sess.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
             const url = details.url || '';
-            if (CANCEL_PATTERNS.some(re => re.test(url))) {
-                cancelled.push({ url, method: details.method, at: new Date().toISOString(), resourceType: details.resourceType });
+            const kind = classifyRequest(url);
+            if (kind) {
+                cancelled.push({ url, kind, method: details.method, at: new Date().toISOString(), resourceType: details.resourceType });
                 callback({ cancel: true });
                 return;
             }
@@ -250,18 +265,24 @@ async function runInElectron() {
             note: a6ok ? '原稿含 <tag> 形态标签' : (a5ok ? '当前预设可能不使用标签' : 'A5 未产出文本，A6 无从判定'),
         });
 
-        if (cancelled.length === 0) {
+        const writeHits = cancelled.filter(c => c.kind === 'write');
+        const externalHits = cancelled.filter(c => c.kind === 'external');
+        if (writeHits.length === 0) {
             const active = await js(ACTIVE_SAVE_EXPR);
             report.checks.A7ActiveProbe = active;
             await new Promise(resolve => setTimeout(resolve, 300));
         }
-        report.cancelledWrites = cancelled.slice(0, 50);
+        const finalWriteHits = cancelled.filter(c => c.kind === 'write');
+        report.cancelledWrites = finalWriteHits.slice(0, 50);
         report.checks.A7 = {
-            cancelled: cancelled.length,
-            urls: Array.from(new Set(cancelled.map(c => c.url))),
-            sample: cancelled.slice(0, 8),
+            cancelled: finalWriteHits.length,
+            urls: Array.from(new Set(finalWriteHits.map(c => c.url))),
+            byEndpoint: finalWriteHits.reduce((acc, c) => { const k = c.method + ' ' + c.url.replace(ST_URL, ''); acc[k] = (acc[k] || 0) + 1; return acc; }, {}),
+            externalBlocked: externalHits.length,
+            externalHosts: Array.from(new Set(externalHits.map(c => { try { return new URL(c.url).hostname; } catch { return c.url; } }))),
+            sample: finalWriteHits.slice(0, 8),
         };
-        record('A7', cancelled.length >= 1, { cancelled: cancelled.length, urls: report.checks.A7.urls });
+        record('A7', finalWriteHits.length >= 1, { cancelled: finalWriteHits.length, urls: report.checks.A7.urls, externalBlocked: externalHits.length });
 
         const A8 = await js(CLEAR_EXPR);
         report.checks.A8 = Object.assign({ charactersAtA1: A1.characters }, A8);
