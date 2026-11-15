@@ -36,6 +36,7 @@ Nahida Chat 是一个**本地优先的桌面 AI 对话客户端**，基于 Elect
 
 ```bash
 corepack enable
+node .\node_modules\electron\install.js
 pnpm install
 pnpm dev
 ```
