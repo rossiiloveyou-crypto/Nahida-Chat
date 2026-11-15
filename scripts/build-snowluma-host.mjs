@@ -32,6 +32,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+import releaseResources from './release-resources.cjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, '..');
@@ -353,7 +354,8 @@ function resolvePnpm() {
                 return 0;
             });
         const exact = versions.find((v) => v === '11.25.0');
-        const chosen = exact ?? versions[0];
+        // 不回退到 NC 的 pnpm 10：SL engines 要求精确版本。
+        const chosen = exact;
         if (chosen) {
             return {
                 script: path.join(corepackRoot, chosen, 'bin', 'pnpm.cjs'),
@@ -362,7 +364,7 @@ function resolvePnpm() {
         }
     }
 
-    fail('找不到 pnpm：请设置 SNOWLUMA_PNPM=<pnpm.cjs 绝对路径>');
+    fail('缺少 pnpm 11.25.0：先运行 corepack prepare pnpm@11.25.0（不改 NC 的 pnpm 10），或设置 SNOWLUMA_PNPM=<11.25.0 的 pnpm.cjs 绝对路径>');
 }
 
 function run(command, args, options = {}) {
@@ -541,6 +543,7 @@ function main() {
     }
 
     // 随包宿主 node.exe（H-05=(a)）。必须复制而不是移动：外部来源要保留给复跑。
+    fs.copyFileSync(path.join(vendorRoot, 'LICENSE'), path.join(outDir, 'LICENSE'));
     const hostTarget = path.join(outDir, 'node.exe');
     fs.copyFileSync(hostNode, hostTarget);
     const hostVersion = execFileSync(hostTarget, ['--version'], { encoding: 'utf8' }).trim();
@@ -555,6 +558,8 @@ function main() {
         fail('check-node-version.cjs 拒绝了随包 node.exe —— 版本门禁未通过');
     }
 
+    const manifest = releaseResources.writeManifest(outDir);
+    log('发布资源清单：' + manifest.files.length + ' 个文件（SHA-256）');
     log('完成。产物摘要：');
     log('  index.mjs        ' + (bundleBytes / 1024 / 1024).toFixed(2) + ' MB  sha256=' + sha256(bundle).slice(0, 16) + '…');
     log('  node.exe         ' + hostVersion + '  ' + (fs.statSync(hostTarget).size / 1024 / 1024).toFixed(2) + ' MB');

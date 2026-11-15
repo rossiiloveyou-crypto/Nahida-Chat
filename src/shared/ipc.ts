@@ -42,8 +42,13 @@ export const IPC = {
   memoryDeleteUser: 'memory:delete-user',
   memoryDeletePersona: 'memory:delete-persona',
   memoryOpenDir: 'memory:open-dir',
+  memoryDownloadModel: 'memory:download-model',
+  memoryModelProgress: 'memory:model-progress',
 
   // 对话摘要（窗口外对话的滚动压缩）。与上面的 memory:* 是两套：那个是 RAG 事实库
+  // 显示层正则（P3）：只读 ST 的 regex_scripts 清单。渲染层拿它做「显示层」，绝不参与请求组装。
+  regexListScripts: 'regex:list-scripts',
+
   summaryStatus: 'summary:status',
   summaryForget: 'summary:forget',
   summaryClear: 'summary:clear',
@@ -64,6 +69,8 @@ export const IPC = {
   chatStop: 'chat:stop',
   /** 重跑刚才那一轮（复用失败那条回复的 id，不新增用户消息） */
   chatRetry: 'chat:retry',
+  chatUpdateMessage: 'chat:update-message',
+  chatResend: 'chat:resend',
   /** 删掉一条消息（失败/中断的气泡可以清掉） */
   chatDeleteMessage: 'chat:delete-message',
 

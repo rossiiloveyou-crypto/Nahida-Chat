@@ -31,11 +31,14 @@ import type {
   WorkspaceDraft
 } from './types'
 import type { ToolApprovalReply, ToolDefinition } from './tools'
+import type { StRegexScript } from './regex'
+import type { BridgeHealth } from './bridge'
 import type { QqEventFeedItem, QqSettings, QqStatusPayload } from './qq'
 import type { ChannelStatusPayload } from './channels'
 import type { ChannelAccount, ChannelAccessConfig, ChannelGroup } from './channelAccess'
 import type { ObserveConversation, ObserveRecord, ObserveStatus } from './observe'
 import type { QqHostStatus, QqProcessSnapshot } from './qqHost'
+import type { MemoryModelProgress } from './types'
 import type {
   DuplicateKeyword,
   WorldbookDirInfo,
@@ -186,6 +189,24 @@ export interface NahidaApi {
     respond: (reply: ToolApprovalReply) => Promise<void>
   }
   /**
+   * 显示层正则（P3）：取 ST 的 `regex_scripts` 清单。
+   *
+   * 🔴 读盘失败返回**空数组**（不是 reject）：显示层坏掉不能连累聊天，
+   *    渲染层拿到空数组就退化成「只做 markdown」。
+   */
+  regex: {
+    listScripts: (request?: { stDir?: string }) => Promise<StRegexScript[]>
+  }
+  /**
+   * ST 桥接（P6 / F-07）：**只读**健康度。
+   *
+   * 🔴 刻意没有 turn / rebuild / save 之类的方法：桥接的驱动只发生在 chatService 的
+   *    生成位上，多一条写入口就等于多一个能绕过三条件与的通道（J-06 单点）。
+   */
+  bridge: {
+    health: () => Promise<BridgeHealth>
+  }
+  /**
    * 工作区清单（多工作区）。
    *
    * 每个会话绑定其中一个，文件类工具的路径闸以它为根。
@@ -212,6 +233,10 @@ export interface NahidaApi {
     recall: (query: string) => Promise<MemoryRecallHit[]>
     /** 打开模型目录，让用户知道该往哪放文件 */
     openModelDir: () => Promise<string>
+    /** 一键下载并配置向量模型（userData/models），装完自动生效 */
+    downloadModel: () => Promise<{ ok: boolean; dir?: string; error?: string; status: MemoryStatus }>
+    /** 订阅下载进度；返回取消订阅函数 */
+    onModelProgress: (handler: (progress: MemoryModelProgress) => void) => () => void
     users: () => Promise<MemoryUserRow[]>
     userDetail: (userId: string) => Promise<MemoryUserDetail>
     userEntries: (userId: string, personaId: string) => Promise<{ entries: MemoryEntry[]; history: PersonaHistoryEntry[] }>
@@ -262,6 +287,10 @@ export interface NahidaApi {
      * 返回那条 assistant 消息的重置态（渲染层据此先清气泡，增量随后到达）。
      */
     retry: (sessionId: string, messageId: string) => Promise<Message>
+    /** 逐字保存用户/旁白正文，不启动生成。 */
+    update: (sessionId: string, messageId: string, content: string) => Promise<Message>
+    /** 原子保存并截断后续历史，返回新 assistant 占位。 */
+    resend: (sessionId: string, messageId: string, content: string) => Promise<Message>
     /** 删除一条消息（正在生成时拒绝） */
     deleteMessage: (sessionId: string, messageId: string) => Promise<void>
     onDelta: (handler: (payload: ChatDelta) => void) => Unsubscribe

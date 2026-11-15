@@ -19,6 +19,7 @@ interface ComposerProps {
   draftProfileId: string | null
   draftModelId: string | null
   onPickModel: (profileId: string, modelId: string) => void
+  modelLocked?: boolean
   /** 当前生效的工作区；同理由 ChatPage 解析后传进来 */
   workspaceId: string | null
   onPickWorkspace: (workspaceId: string) => void
@@ -53,6 +54,7 @@ export function Composer({
   draftProfileId,
   draftModelId,
   onPickModel,
+  modelLocked = false,
   workspaceId,
   onPickWorkspace,
   characterId,
@@ -180,6 +182,7 @@ export function Composer({
         draftProfileId={draftProfileId}
         draftModelId={draftModelId}
         onPickModel={onPickModel}
+        modelLocked={modelLocked}
         workspaceId={workspaceId}
         onPickWorkspace={onPickWorkspace}
         characterId={characterId}

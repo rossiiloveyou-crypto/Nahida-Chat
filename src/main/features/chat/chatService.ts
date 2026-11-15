@@ -48,6 +48,8 @@ import {
   resolveWorkspace,
   settingsStore
 } from '../settings/settingsStore'
+import { bridgeEligible, toBridgeMessages, toBridgeSystemPrompts } from '../bridge/router'
+import { bridgeStream } from '../bridge/stream'
 
 /**
  * `promptStore.compose()` 的 story 入参形状（P5）。
@@ -433,6 +435,9 @@ class ChatService {
     message.toolCalls = []
     delete message.reasoning
     delete message.error
+    // P6：上一轮的告警属于上一轮。重试成功后还挂着「auto_continue 已临时关闭」是噪音，
+    // 而且它会和 done 里的新 warnings 混在一起（旧值覆盖新值时没人看得出哪条是这次的）。
+    delete message.warnings
     message.status = 'streaming'
     session.updatedAt = Date.now()
     this.persist()
@@ -443,6 +448,53 @@ class ChatService {
     const turn = this.runStream(session, message, sink, controller)
     this.turns.set(session.id, turn)
     return cloneMessage(message)
+  }
+
+  /** 两个编辑出口共用校验；所有校验先于内存/磁盘修改。 */
+  private editableMessage(sessionId: string, messageId: string, content: string) {
+    this.ensureLoaded()
+    const session = this.sessions.find((item) => item.id === sessionId)
+    if (!session) throw new Error('会话不存在')
+    if (this.inflight.has(session.id)) throw new Error('当前会话仍在生成中，先停止再重试')
+    if (isChannelSessionId(session.id)) throw new Error('渠道会话的消息只读')
+    const index = session.messages.findIndex((item) => item.id === messageId)
+    if (index === -1) throw new Error('这条消息不存在（可能已经被删掉了）')
+    const message = session.messages[index]
+    if (message.role !== 'user' && message.role !== 'narration') {
+      throw new Error('只能编辑用户消息或旁白，助手回复请使用重试')
+    }
+    if (typeof content !== 'string' || !content.trim()) throw new Error('消息内容为空')
+    return { session, message, index }
+  }
+
+  updateMessage(sessionId: string, messageId: string, content: string): Message {
+    const { session, message } = this.editableMessage(sessionId, messageId, content)
+    message.content = content
+    session.updatedAt = Math.max(Date.now(), session.updatedAt + 1)
+    this.persist()
+    return cloneMessage(message)
+  }
+
+  /** 与 restartTurn 同构；保存和截断原子完成，摘要/记忆继续由既有锚点自愈。 */
+  resendFrom(sessionId: string, messageId: string, content: string, sender: WindowLike): Message {
+    const { session, message, index } = this.editableMessage(sessionId, messageId, content)
+    message.content = content
+    delete message.error
+    delete message.warnings
+    session.messages.length = index + 1
+    const now = Date.now()
+    const placeholder: Message = {
+      id: randomUUID(), role: 'assistant', content: '', createdAt: now,
+      status: 'streaming', toolCalls: []
+    }
+    session.messages.push(placeholder)
+    session.updatedAt = Math.max(now, session.updatedAt + 1)
+    this.persist()
+    const controller = new AbortController()
+    this.inflight.set(session.id, controller)
+    const turn = this.runStream(session, placeholder, windowSink(sender), controller)
+    this.turns.set(session.id, turn)
+    return cloneMessage(placeholder)
   }
 
   /**
@@ -621,12 +673,35 @@ class ChatService {
         )
         const calls: ToolCallRecord[] = []
 
-        for await (const event of provider.stream({
-          messages: payload,
-          settings,
-          signal: controller.signal,
-          tools: definitions
-        })) {
+        // ── P6：生成源二选一（**唯一**一处）。判定本身不在这里拼条件：
+        //    bridgeEligible 是 J-06 的单点，停止条件 2 盯着「别处再出现 mode === 'story' + 开关」。
+        //    🔴 桥接分支与 provider.stream 同形状（都是 AsyncGenerator<{type:'text'}>），
+        //    所以下面的循环、落库、收尾、abort 一行都不需要分叉 —— 关掉开关即逐字回到旧路径。
+        const useBridge = bridgeEligible(session, stored)
+        let bridgeFinal: string | null = null
+        const streamSource = useBridge
+          ? bridgeStream({
+              sessionId: session.id,
+              messages: toBridgeMessages(payload),
+              systemPrompts: toBridgeSystemPrompts(payload),
+              signal: controller.signal,
+              // F-06：告警先进这一轮的 message，再由 done 广播带出去（不拼进 content，M5）
+              onWarnings: (list) => {
+                message.warnings = list.slice()
+              },
+              // F-04 / M5：落库必须是桥接结论的正文，不是流式拼出来的那份（丢片不能改历史）
+              onFinal: (text) => {
+                bridgeFinal = text
+              }
+            })
+          : provider.stream({
+              messages: payload,
+              settings,
+              signal: controller.signal,
+              tools: definitions
+            })
+
+        for await (const event of streamSource) {
           if (controller.signal.aborted) break
           if (event.type === 'text') {
             message.content += event.text
@@ -663,6 +738,10 @@ class ChatService {
           }
         }
 
+        // 桥接的最终正文覆盖流式拼接的那份（顺序敏感：必须在 for await 之后、aborted 判断之前）。
+        // 🔴 只在真的拿到了正文时覆盖：桥接失败/取消时 bridgeFinal 是 null，此时留给 catch/abort 分支。
+        if (bridgeFinal !== null) message.content = bridgeFinal
+
         if (controller.signal.aborted) break
         if (calls.length === 0) break
 
@@ -688,7 +767,9 @@ class ChatService {
         content: message.content,
         toolCalls: cloneCalls(message.toolCalls),
         // 没思考时字段缺省为 undefined（不是空串）：渲染层据此决定「显不显示折叠块」
-        ...(message.reasoning ? { reasoning: message.reasoning } : {})
+        ...(message.reasoning ? { reasoning: message.reasoning } : {}),
+        // P6：告警同理 —— 空数组不出现，免得白画一行空的灰字
+        ...(message.warnings && message.warnings.length > 0 ? { warnings: message.warnings } : {})
       }
       sink.done(done)
       outcome = {

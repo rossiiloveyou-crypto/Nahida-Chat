@@ -7,7 +7,11 @@ import { settingsStore } from './features/settings/settingsStore'
 import { registerBuiltinTools } from './features/tools/builtin'
 import { ensureWorkspace } from './features/workspace'
 import { createMainWindow } from './window'
+import { startReleaseSmoke } from './releaseSmoke'
 
+if (process.env['NAHIDA_RELEASE_SMOKE'] === '1') {
+  startReleaseSmoke()
+} else {
 const gotTheLock = app.requestSingleInstanceLock()
 
 if (!gotTheLock) {
@@ -79,4 +83,5 @@ if (!gotTheLock) {
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit()
   })
+}
 }

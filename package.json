@@ -1,26 +1,38 @@
 {
   "name": "nahida-chat",
   "productName": "Nahida Chat",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Nahida Chat - 桌面端 AI 聊天客户端",
   "license": "UNLICENSED",
-  "packageManager": "pnpm@10.33.0",
+  "packageManager": "pnpm@11.25.0",
   "main": "./out/main/index.js",
   "engines": {
-    "node": ">=20.19"
+    "node": "^24.22.1 || >=26.12.1",
+    "pnpm": "11.25.0"
   },
   "scripts": {
     "dev": "electron-vite dev",
     "preview": "electron-vite preview",
     "build": "electron-vite build && node scripts/build-snowluma-host.mjs",
     "build:snowluma-host": "node scripts/build-snowluma-host.mjs",
+    "release:check": "node scripts/release-resources.cjs",
+    "package:dir": "pnpm build && electron-builder --config electron-builder.cjs --win --x64 --dir --publish never",
+    "package:win": "pnpm build && electron-builder --config electron-builder.cjs --win --x64 --publish never",
+    "release:verify": "node scripts/verify-release.mjs",
     "typecheck": "pnpm run typecheck:node && pnpm run typecheck:web",
     "typecheck:node": "tsc -p tsconfig.node.json --noEmit",
     "typecheck:web": "tsc -p tsconfig.web.json --noEmit",
     "test:settings": "node scripts/test/settings-store.test.mjs",
     "test:clock": "node scripts/test/clock-tools.test.mjs",
-    "test": "pnpm run test:settings && pnpm run test:clock && pnpm run test:prompt && pnpm run test:memory && pnpm run test:permission && pnpm run test:discovery && pnpm run test:sandbox && pnpm run test:chat-guard && pnpm run test:qq-host && pnpm run test:qq-segment && pnpm run test:qq-queue && pnpm run test:qq-store && pnpm run test:qq-inbound && pnpm run test:qq-bridge && pnpm run test:qq-session-policy && pnpm run test:channel-access && pnpm run test:channels-store && pnpm run test:channels-session && pnpm run test:p6-zones && pnpm run test:channels-tool-gate && pnpm run test:channels-ui && pnpm run test:observe-store && pnpm run test:memory-scope-isolation && pnpm run test:memory-scope-counts && pnpm run test:chat-sink && pnpm run test:probe-mode-supply && pnpm run test:chat-tools-supply && pnpm run test:chat-tools-settings && pnpm run test:channel-tool-path && pnpm run test:tool-supply-gate && pnpm run test:story-store && pnpm run test:story-memory-isolation && pnpm run test:prompt-story && pnpm run test:story-branch && pnpm run test:story-ui && pnpm run test:story-profile-memory && pnpm run test:worldbook-editor && pnpm run test:story-narration && pnpm run test:persona-store && pnpm run test:persona-rag-binding && pnpm run test:summary && pnpm run test:reasoning && pnpm run test:character && pnpm run test:persona-history && pnpm run test:command-level && pnpm run test:number-field && pnpm run test:memory-panel && pnpm run test:memory-panel-ui && pnpm run test:observe-groups && pnpm run test:chat-failed && pnpm run test:wipe",
+    "test": "pnpm run test:settings && pnpm run test:clock && pnpm run test:prompt && pnpm run test:memory && pnpm run test:permission && pnpm run test:discovery && pnpm run test:sandbox && pnpm run test:chat-guard && pnpm run test:qq-host && pnpm run test:qq-segment && pnpm run test:qq-queue && pnpm run test:qq-store && pnpm run test:qq-inbound && pnpm run test:qq-bridge && pnpm run test:qq-session-policy && pnpm run test:channel-access && pnpm run test:channels-store && pnpm run test:channels-session && pnpm run test:p6-zones && pnpm run test:channels-tool-gate && pnpm run test:channels-ui && pnpm run test:observe-store && pnpm run test:memory-scope-isolation && pnpm run test:memory-scope-counts && pnpm run test:chat-sink && pnpm run test:probe-mode-supply && pnpm run test:chat-tools-supply && pnpm run test:chat-tools-settings && pnpm run test:channel-tool-path && pnpm run test:tool-supply-gate && pnpm run test:story-store && pnpm run test:story-memory-isolation && pnpm run test:prompt-story && pnpm run test:story-branch && pnpm run test:story-ui && pnpm run test:story-profile-memory && pnpm run test:worldbook-editor && pnpm run test:story-narration && pnpm run test:persona-store && pnpm run test:persona-rag-binding && pnpm run test:summary && pnpm run test:reasoning && pnpm run test:character && pnpm run test:persona-history && pnpm run test:command-level && pnpm run test:number-field && pnpm run test:memory-panel && pnpm run test:memory-panel-ui && pnpm run test:observe-groups && pnpm run test:chat-failed && pnpm run test:wipe && pnpm run test:markdown && pnpm run test:display && pnpm run test:bridge && pnpm run test:bridge-switches && pnpm run test:bridge-wiring && pnpm run test:display-cards && pnpm run test:message-edit",
+    "test:message-edit": "node scripts/test/message-edit.test.mjs",
+    "test:display-cards": "node scripts/test/chat-display-cards.test.mjs",
+    "test:markdown": "node scripts/test/markdown-render.test.mjs",
+    "test:bridge": "node scripts/test/bridge-driver.test.mjs",
+    "test:bridge-switches": "node scripts/test/bridge-switches.test.mjs",
+    "test:bridge-wiring": "node scripts/test/bridge-wiring.test.mjs",
+    "test:display": "node scripts/test/display-pipeline.test.mjs",
     "test:memory": "node scripts/test/memory-rag.test.mjs",
     "test:permission": "node scripts/test/permission-modes.test.mjs",
     "test:discovery": "node scripts/test/model-discovery.test.mjs",
@@ -38,7 +50,7 @@
     "test:qq-host:electron": "electron scripts/test/qq-host-electron.cjs",
     "test:chat-sink": "node scripts/test/chat-sink.test.mjs",
     "test:probe-mode-supply": "node scripts/test/probe-mode-supply.test.mjs",
-  "test:chat-tools-supply": "node scripts/test/chat-tools-supply.test.mjs",
+    "test:chat-tools-supply": "node scripts/test/chat-tools-supply.test.mjs",
     "test:chat-tools-settings": "node scripts/test/chat-tools-settings.test.mjs",
     "test:chat-guard": "node scripts/test/chat-broadcast-guard.test.mjs",
     "test:chat-failed": "node scripts/test/chat-failed-turn.test.mjs",
@@ -86,21 +98,15 @@
     "test:worldbook-editor": "node scripts/test/worldbook-editor.test.mjs",
     "test:story-narration": "node scripts/test/story-narration.test.mjs"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "electron",
-      "esbuild",
-      "onnxruntime-node",
-      "protobufjs"
-    ]
-  },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "^45.0.0",
+    "electron-builder": "^26.18.0",
     "electron-vite": "^6.0.0",
+    "jsdom": "^31.0.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-router-dom": "^7.18.4",
@@ -109,6 +115,8 @@
     "zustand": "^5.0.16"
   },
   "dependencies": {
-    "@huggingface/transformers": "4.3.2"
+    "@huggingface/transformers": "4.3.2",
+    "dompurify": "^3.4.18",
+    "marked": "^18.2.0"
   }
 }

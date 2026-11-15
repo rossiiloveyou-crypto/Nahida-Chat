@@ -37,7 +37,18 @@ export class Embedder {
       const packaged = join(process.resourcesPath, MEMORY_MODEL_RELATIVE_DIR)
       if (existsSync(packaged)) return packaged
     }
+    // 一键下载的模型落在 userData：优先它（可写、升级不丢），再退回内置目录。
+    const userDir = join(app.getPath('userData'), MEMORY_MODEL_RELATIVE_DIR)
+    if (existsSync(join(userDir, ...MEMORY_MODEL_ID.split('/'), 'config.json'))) return userDir
     return join(app.getAppPath(), MEMORY_MODEL_RELATIVE_DIR)
+  }
+
+  /** 模型刚下载完时清掉失败缓存，让下一次 ensure() 重新加载。 */
+  reset(): void {
+    this.extractor = null
+    this.loading = null
+    this.ready = false
+    this.lastError = null
   }
 
   /** 模型是否已在磁盘上（不加载，只查文件） */

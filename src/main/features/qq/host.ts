@@ -49,11 +49,13 @@ function errorMessage(error: unknown): string {
  * 产物目录解析。
  *
  * 开发态 `__dirname` = `<repo>/out/main`，产物在 `<repo>/out/snowluma-host`。
- * `NC_SL_HOST_DIR` 可覆盖（测试与将来的打包部署都靠它，不去猜 asar 布局）。
+ * 发布态从 resources/snowluma-host 读取，独立于 app.asar 与开发目录。
+ * `NC_SL_HOST_DIR` 仅作为测试/排障覆盖入口。
  */
 export function resolveHostDir(): string {
   const override = process.env['NC_SL_HOST_DIR']
   if (override && override.trim()) return resolve(override.trim())
+  if (app.isPackaged) return join(process.resourcesPath, 'snowluma-host')
   return resolve(__dirname, '..', 'snowluma-host')
 }
 
@@ -225,7 +227,7 @@ export class QqHost extends EventEmitter {
           nodePath +
           ' 与 ' +
           entryPath +
-          '（先跑 pnpm build:snowluma-host）'
+          (app.isPackaged ? '（安装包资源不完整，请重新安装完整发行包）' : '（先跑 pnpm build:snowluma-host）')
       )
       this.setState('degraded')
       return

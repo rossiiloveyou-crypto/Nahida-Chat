@@ -1,9 +1,13 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { IPC } from '@shared/ipc'
+import { isChannelSessionId } from '@shared/channels'
+import { BRIDGE_IPC } from '@shared/bridge'
+import type { BridgeHealth } from '@shared/bridge'
 import type {
   AppInfo,
   CreateSessionInput,
   MemoryDraft,
+  MemoryModelProgress,
   ModelDiscoveryRequest,
   ModelProfileDraft,
   ModelTestRequest,
@@ -30,6 +34,8 @@ import { registerStoryIpcHandlers } from './story'
 import { registerWorldbookIpcHandlers } from './worldbook'
 import { registerMemoryIpcHandlers } from './memory'
 import { registerWipeIpcHandlers } from './wipe'
+import { registerRegexIpcHandlers } from './regex'
+import { bridgeHost } from '../features/bridge/host'
 
 /** 所有 IPC handler 在这里集中注册，渲染进程能做的事一目了然。 */
 export function registerIpcHandlers(): void {
@@ -67,6 +73,21 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.memoryRecall, (_event, query: string) =>
     memoryService.probeRecall(query, settingsStore.get().memory)
   )
+  ipcMain.handle(IPC.memoryDownloadModel, async (event: Electron.IpcMainInvokeEvent) => {
+    const controller = new AbortController()
+    const sender = event.sender
+    const push = (progress: MemoryModelProgress): void => {
+      if (!sender.isDestroyed()) sender.send(IPC.memoryModelProgress, progress)
+    }
+    try {
+      const dir = await memoryService.downloadModel(push, controller.signal)
+      return { ok: true as const, dir, status: memoryService.status(settingsStore.get().memory) }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      push({ phase: 'failed', file: '', ratio: 0, receivedBytes: 0, totalBytes: 0, error: message })
+      return { ok: false as const, error: message, status: memoryService.status(settingsStore.get().memory) }
+    }
+  })
   ipcMain.handle(IPC.memoryOpenModel, async () => {
     const dir = memoryService.status(settingsStore.get().memory).modelPath
     const { shell } = await import('electron')
@@ -123,6 +144,14 @@ export function registerIpcHandlers(): void {
 
   registerMemoryIpcHandlers()
   registerWipeIpcHandlers()
+  // 显示层正则（P3）：只读 ST 的 regex_scripts；读盘失败返回空数组，绝不抛
+  registerRegexIpcHandlers()
+
+  // 桥接健康度（P6 / F-07）：**只读**一条通道，走 shared/bridge.ts 自己的命名空间
+  // （不并进 shared/ipc.ts 的理由见 BRIDGE_IPC 的注释）。
+  // 🔴 只读：这里不提供「启一轮」「重建窗口」「改配置」—— 桥接的驱动由 chatService 那一处触发，
+  //    多一条写通道就等于多一个能绕过 bridgeEligible 三条件与的入口（J-06 单点）。
+  ipcMain.handle(BRIDGE_IPC.health, (): BridgeHealth => bridgeHost.health())
 
   // P6：渠道会话（id 形如 qq:<uin>:<type>:<id>）不进侧栏。
   // 它们由 QQ 消息驱动出现，用户没有「新建/删除」动作，出现在侧栏只会制造困惑。
@@ -146,7 +175,14 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.chatRetry, (event, sessionId: string, messageId: string) =>
     chatService.retry(sessionId, messageId, event.sender)
   )
+  ipcMain.handle(IPC.chatUpdateMessage, (_event, sessionId: string, messageId: string, content: string) =>
+    chatService.updateMessage(sessionId, messageId, content)
+  )
+  ipcMain.handle(IPC.chatResend, (event, sessionId: string, messageId: string, content: string) =>
+    chatService.resendFrom(sessionId, messageId, content, event.sender)
+  )
   ipcMain.handle(IPC.chatDeleteMessage, (_event, sessionId: string, messageId: string) => {
+    if (isChannelSessionId(sessionId)) throw new Error('渠道会话的消息只读')
     chatService.deleteMessage(sessionId, messageId)
   })
 

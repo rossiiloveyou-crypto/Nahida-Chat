@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { providerMeta } from '@shared/constants'
+import { bridgeEligible } from '@shared/bridge'
+import { isChannelSessionId } from '@shared/channels'
 import type { ConversationMode, ModelProfileCatalog } from '@shared/types'
 import { ApprovalCard } from './components/ApprovalCard'
 import { Composer } from './components/Composer'
@@ -11,6 +13,7 @@ import { useStoryStore } from '../story/store'
 import { useSettings } from '../settings/useSettings'
 import { usePromptLibrary } from '../settings/usePromptLibrary'
 import { useWorkspaces } from '../workspace/useWorkspaces'
+import { useDisplayScripts } from './markdown/useDisplayScripts'
 
 // P4：故事模式只补字典键（角落徽章的文字）。**不是入口** —— 模式滑块仍只列 chat / agent。
 const MODE_LABEL: Record<ConversationMode, string> = { chat: 'Chat', agent: 'Agent', story: '故事' }
@@ -31,11 +34,16 @@ export function ChatPage() {
   const respondApproval = useChatStore((s) => s.respondApproval)
   const retry = useChatStore((s) => s.retry)
   const removeMessage = useChatStore((s) => s.removeMessage)
+  const updateMessage = useChatStore((s) => s.updateMessage)
+  const resendFrom = useChatStore((s) => s.resendFrom)
+  const [editing, setEditing] = useState(false)
   const dismissError = useChatStore((s) => s.dismissError)
   const fail = useChatStore((s) => s.fail)
   const { settings, save: saveSettings } = useSettings()
   const { library } = usePromptLibrary()
   const { catalog: workspaceCatalog, pickDirectory, save: saveWorkspace } = useWorkspaces()
+  // P3：显示层脚本清单（ST 的 regex_scripts）。**只在这里取一次**，往下传，不按消息取。
+  const displayScripts = useDisplayScripts()
   // P6 §4.6：模式真源在 store，侧栏也要读它（它决定工作区段显不显示）
   const draftMode = useChatStore((s) => s.draftMode)
   const setDraftMode = useChatStore((s) => s.setDraftMode)
@@ -79,6 +87,8 @@ export function ChatPage() {
 
   const active = sessions.find((s) => s.id === activeId) ?? null
   const messages = active ? active.messages : []
+  const channelReadOnly = Boolean(active && isChannelSessionId(active.id))
+  const modelLocked = Boolean(active && settings && bridgeEligible(active, settings))
   const streaming = streamingId !== null && streamingId === activeId
   const pendingApproval = approval && approval.sessionId === activeId ? approval : null
 
@@ -139,6 +149,7 @@ export function ChatPage() {
 
   // 没有会话时发第一条消息：先按首页选中的模式建会话，再发
   const handleSend = async (text: string): Promise<void> => {
+    if (editing || channelReadOnly) return
     if (!active) {
       await createSession({
         mode: draftMode,
@@ -157,12 +168,13 @@ export function ChatPage() {
 
   // 旁白只在故事会话出现，所以这里不做“无会话先建区”的分支
   const handleNarrate = async (text: string): Promise<void> => {
-    if (!active?.storyId) return
+    if (!active?.storyId || editing || channelReadOnly) return
     await narrate(text)
   }
 
   // 换模型：有会话就写进会话，没有就先记在草稿上
   const handlePickModel = (profileId: string, modelId: string): void => {
+    if (modelLocked) return
     if (!active) {
       setDraftModel({ profileId, modelId })
       return
@@ -293,9 +305,15 @@ export function ChatPage() {
           />
         ) : (
           <MessageList
+            key={activeId}
             messages={messages}
+            readOnly={channelReadOnly}
+            onUpdate={updateMessage}
+            onResend={resendFrom}
+            onEditingChange={setEditing}
             focusMessageId={focusMessageId}
             isStreaming={streaming}
+            displayScripts={displayScripts}
             onRetry={(messageId) => void retry(messageId)}
             onRemove={(messageId) => void removeMessage(messageId)}
           />
@@ -314,7 +332,7 @@ export function ChatPage() {
       )}
 
       <Composer
-        disabled={ready ? false : true}
+        disabled={!ready || editing || channelReadOnly}
         streaming={streaming}
         onSend={(text) => void handleSend(text)}
         onNarrate={(text) => void handleNarrate(text)}
@@ -323,6 +341,7 @@ export function ChatPage() {
         draftProfileId={chosenProfileId}
         draftModelId={chosenModelId}
         onPickModel={handlePickModel}
+        modelLocked={modelLocked}
         characterId={characterId || null}
         characterName={characterName}
         characters={characters}

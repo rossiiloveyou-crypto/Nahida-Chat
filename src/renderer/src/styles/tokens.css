@@ -14,6 +14,8 @@
  * 改色值的唯一入口就是本文件：组件里出现字面色即违规（AGENTS.md 第一节）。
  */
 :root {
+  --nc-quote: #a94f10;
+  --nc-card-surface: #f2f4ed;
   --nc-canvas: #f8f9f3;
   --nc-canvas-deep: #edf0e4;
   --nc-surface: #ffffff;
@@ -125,6 +127,8 @@
  */
 [data-theme='dark'] {
   /* ---- 底层：画布与面板 ---- */
+  --nc-quote: #f2b276;
+  --nc-card-surface: #202936;
   --nc-canvas: #101722;
   --nc-canvas-deep: #0c121b;
   --nc-surface: #161d29;

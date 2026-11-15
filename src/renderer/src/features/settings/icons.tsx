@@ -102,6 +102,19 @@ export function IconChannels(props: IconProps) {
   )
 }
 
+/** P6：ST 桥接（两个节点 + 一条连线 = 「把两条管线接起来」） */
+export function IconBridge(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <circle cx="5" cy="12" r="2.2" />
+      <circle cx="19" cy="12" r="2.2" />
+      <path d="M7.2 12h9.6" />
+      <path d="M12 4v4" />
+      <path d="M12 16v4" />
+    </svg>
+  )
+}
+
 export function IconPlus(props: IconProps) {
   return (
     <svg {...base(props)}>

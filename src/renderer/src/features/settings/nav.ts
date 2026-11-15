@@ -1,5 +1,6 @@
 import type { ComponentType } from 'react'
 import {
+  IconBridge,
   IconChannels,
   IconInfo,
   IconMemory,
@@ -19,6 +20,7 @@ export type SettingsSectionId =
   | 'channels'
   | 'qq'
   | 'tools'
+  | 'bridge'
   | 'appearance'
   | 'about'
 
@@ -89,6 +91,16 @@ export const SETTINGS_NAV: SettingsNavItem[] = [
     description: '只读 / 审批 / 完全访问',
     icon: IconTools,
     group: '能力与安全'
+  },
+  {
+    // P6：桥接是「用不用 ST 的那条管线」的开关 + 运行状态。
+    // 放在「其他」分组的第一项：它是可选的增强，不是必配项 ——
+    // 混进「能力与安全」会让用户以为不开它就少一块功能。
+    id: 'bridge',
+    label: 'ST 桥接',
+    description: '故事模式借 ST 的提示词管线',
+    icon: IconBridge,
+    group: '其他'
   },
   {
     id: 'appearance',

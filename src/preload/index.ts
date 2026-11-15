@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { IpcRendererEvent } from 'electron'
 import type { NahidaApi } from '@shared/api'
 import { IPC } from '@shared/ipc'
+import { BRIDGE_IPC } from '@shared/bridge'
 
 function subscribe<T>(channel: string, handler: (payload: T) => void): () => void {
   const listener = (_event: IpcRendererEvent, payload: T): void => handler(payload)
@@ -48,6 +49,14 @@ const api: NahidaApi = {
     openLibrary: () => ipcRenderer.invoke(IPC.promptOpen),
     openCharacter: (characterId) => ipcRenderer.invoke(IPC.promptOpenCharacter, characterId)
   },
+  // 显示层正则（P3）：**只读**转发。渲染层拿不到 fs，脚本清单只能从这里来。
+  regex: {
+    listScripts: (request) => ipcRenderer.invoke(IPC.regexListScripts, request)
+  },
+  // 桥接健康度（P6 / F-07）：只读转发，走 shared/bridge.ts 自己的频道名
+  bridge: {
+    health: () => ipcRenderer.invoke(BRIDGE_IPC.health)
+  },
   tools: {
     list: () => ipcRenderer.invoke(IPC.toolList),
     respond: (reply) => ipcRenderer.invoke(IPC.toolRespond, reply)
@@ -68,6 +77,8 @@ const api: NahidaApi = {
     clear: () => ipcRenderer.invoke(IPC.memoryClear),
     recall: (query) => ipcRenderer.invoke(IPC.memoryRecall, query),
     openModelDir: () => ipcRenderer.invoke(IPC.memoryOpenModel),
+    downloadModel: () => ipcRenderer.invoke(IPC.memoryDownloadModel),
+    onModelProgress: (handler: (progress: import("@shared/types").MemoryModelProgress) => void) => subscribe(IPC.memoryModelProgress, handler),
     users: () => ipcRenderer.invoke(IPC.memoryUsers),
     userDetail: (userId) => ipcRenderer.invoke(IPC.memoryUserDetail, userId),
     userEntries: (userId, personaId) => ipcRenderer.invoke(IPC.memoryUserEntries, userId, personaId),
@@ -94,6 +105,10 @@ const api: NahidaApi = {
     narrate: (sessionId, content) => ipcRenderer.invoke(IPC.chatNarrate, sessionId, content),
     stop: (sessionId) => ipcRenderer.invoke(IPC.chatStop, sessionId),
     retry: (sessionId, messageId) => ipcRenderer.invoke(IPC.chatRetry, sessionId, messageId),
+    update: (sessionId, messageId, content) =>
+      ipcRenderer.invoke(IPC.chatUpdateMessage, sessionId, messageId, content),
+    resend: (sessionId, messageId, content) =>
+      ipcRenderer.invoke(IPC.chatResend, sessionId, messageId, content),
     deleteMessage: (sessionId, messageId) =>
       ipcRenderer.invoke(IPC.chatDeleteMessage, sessionId, messageId),
     onDelta: (handler) => subscribe(IPC.chatDelta, handler),

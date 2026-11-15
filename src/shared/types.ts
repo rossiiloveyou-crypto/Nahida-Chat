@@ -48,6 +48,13 @@ export interface Message {
    * 🔴 只做加法：老消息没有该字段就是「原创」，语义正确，不迁移。
    */
   copiedFromMessageId?: string
+  /**
+   * 这一轮的人话告警（P6 / F-06）：开关被临时压制、还原失败等「不致命但用户该知道」的事。
+   *
+   * 🔴 它**不进 content**（落库必须是原稿，M5），渲染层单独画一行灰字。
+   * 🔴 只做加法：老消息没有该字段 = 没有告警，不迁移、不影响读回。
+   */
+  warnings?: string[]
 }
 
 /**
@@ -175,6 +182,21 @@ export interface ModelDiscoveryResult {
   models: DiscoveredModel[]
 }
 
+/**
+ * ST 桥接配置（P6 / F-01 / F-07）。
+ *
+ * 🔴 只有 enabled 一个字段，这是刻意的：它**只**回答「开不开」，不回答「连哪个 ST」。
+ *    连接参数（stUrl / stDataDir / partition / 超时）全部住在 shared/bridge.ts 的
+ *    BRIDGE_DEFAULT_CONFIG 里 —— 那是部署事实，不是用户偏好。
+ *    把两者混进 Settings 的后果很具体：换端口要改「开关」所在的同一份配置，
+ *    而用户手滑清空地址就会让「打开开关」变成「连到空地址」，失败点在桥接内部而不在设置页。
+ *    设置页只在 F-07 的健康度里**只读显示**当前生效的连接参数。
+ */
+export interface BridgeSettings {
+  /** 故事模式是否走 ST 桥接。缺省 false（老配置升级零行为变化） */
+  enabled: boolean
+}
+
 /** 主题模式：light 浅色 / dark 深色 / system 跟随系统 */
 export type ThemeMode = 'light' | 'dark' | 'system'
 
@@ -232,6 +254,12 @@ export interface Settings {
    * 行为与改动前完全一致（三端共用类型只做加法，A43）。
    */
   chatTools?: ChatToolsSettings
+  /**
+   * ST 桥接开关（P6 / F-01）。**可选**：老配置无此字段时按「关」处理 ——
+   * 这是 J-06 三条件与的第三个条件，缺省 false 保证「升级即零行为变化」。
+   * 缺省值由 settingsStore.normalizeBridge 补齐（两个调用点：load 与 save）。
+   */
+  bridge?: BridgeSettings
   /**
    * 渠道会话的工具工作区根（P3 / M21）。
    *
@@ -375,14 +403,32 @@ export interface MemoryEntry {
 }
 
 /** 记忆库状态，设置页用来展示"模型装没装、库有多大" */
+/** 模型下载进度（主进程 → 渲染进程的事件载荷）。 */
+export interface MemoryModelProgress {
+  /** downloading / verifying / done / failed */
+  phase: 'downloading' | 'verifying' | 'done' | 'failed'
+  /** 当前文件名（相对模型目录） */
+  file: string
+  /** 总进度 0~1（按已下载字节 / 预估总字节） */
+  ratio: number
+  receivedBytes: number
+  totalBytes: number
+  /** 失败原因（phase === 'failed' 时非空） */
+  error?: string
+}
+
 export interface MemoryStatus {
   enabled: boolean
   /** embedding 模型是否可用 */
   modelReady: boolean
+  /** 模型文件是否已在磁盘上（区分「没装」与「装了但本轮还没加载」） */
+  modelInstalled: boolean
   modelId: string
   dimensions: number
   /** 模型目录绝对路径，装不上时告诉用户放哪 */
   modelPath: string
+  /** 一键下载的落盘目录（userData 下的模型根，与 modelPath 可能不同） */
+  downloadDir: string
   entryCount: number
   /** 数据库文件路径 */
   dbPath: string
@@ -547,6 +593,11 @@ export interface ChatDone {
   toolCalls: ToolCallRecord[]
   /** 本轮思考全文；模型没吐思考时为 undefined（不要写成空串） */
   reasoning?: string
+  /**
+   * 本轮告警（P6 / F-06）。没有告警时**字段不出现** —— 与 reasoning 同一写法：
+   * 空数组会让渲染层白画一行空的灰字，也会让 chat-sink 的载荷形状断言无谓变化。
+   */
+  warnings?: string[]
 }
 
 /**

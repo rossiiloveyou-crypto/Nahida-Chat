@@ -62,6 +62,8 @@ interface ChatStore {
    * 失败（比如那条已经不是最后一条了）会把原因重新贴回气泡 + 顶部错误条。
    */
   retry: (messageId: string) => Promise<void>
+  updateMessage: (messageId: string, content: string) => Promise<boolean>
+  resendFrom: (messageId: string, content: string) => Promise<boolean>
   /** 删掉一条消息（失败的气泡可以清掉，不用留着看） */
   removeMessage: (messageId: string) => Promise<void>
   respondApproval: (approved: boolean, remember: boolean) => Promise<void>
@@ -77,6 +79,30 @@ interface ChatStore {
 
 let bootstrap: Promise<void> | null = null
 let wired = false
+
+// 重发的占位 id 由主进程生成；IPC 回来前的事件按原顺序暂存。
+const pendingResends = new Map<string, Array<() => void>>()
+function applyOrQueue(sessionId: string, apply: () => void): void {
+  const pending = pendingResends.get(sessionId)
+  if (pending) pending.push(apply)
+  else apply()
+}
+function flushResend(sessionId: string): void {
+  const pending = pendingResends.get(sessionId) ?? []
+  pendingResends.delete(sessionId)
+  for (const apply of pending) apply()
+}
+
+/**
+ * 丢弃暂存（IPC 拒绝时用）。
+ * 🔴 为什么不回放：这些事件属于一个**从未安装过的占位 id**——主进程根本没起这一轮。
+ *    回放给 store 只是一次「找不到就忽略」的空转，却把「handler 找不到 id 要安全忽略」
+ *    变成一条隐性契约：哪天某个 handler 改成「找不到就新建」，幽灵消息就会凭空长出来。
+ *    拒绝就是没有这一轮，事件一并丢掉。
+ */
+function dropResend(sessionId: string): void {
+  pendingResends.delete(sessionId)
+}
 
 function mapSession(sessions: Session[], sessionId: string, update: (session: Session) => Session): Session[] {
   return sessions.map((session) => (session.id === sessionId ? update(session) : session))
@@ -168,7 +194,10 @@ export function reduceDone(state: ChatBroadcastState, payload: ChatDone): Partia
               toolCalls: payload.toolCalls,
               // done 里的思考是主进程侧的权威全文，覆盖增量拼出来的那份，
               // 避免丢片（与 content 的处理同理）。
-              ...(payload.reasoning !== undefined ? { reasoning: payload.reasoning } : {})
+              ...(payload.reasoning !== undefined ? { reasoning: payload.reasoning } : {}),
+              // P6：告警以 done 为准（主进程在 finally 之后才定稿，含「还原失败」这类
+              // 只在收尾阶段才知道的事）。字段缺省 = 这一轮没有告警，直接清掉旧值。
+              warnings: payload.warnings && payload.warnings.length > 0 ? payload.warnings : undefined
             }
           : message
       )
@@ -214,7 +243,16 @@ export function reduceRetryStart(
       ...session,
       messages: session.messages.map((message) =>
         message.id === payload.messageId
-          ? { ...message, content: '', reasoning: undefined, error: undefined, toolCalls: [], status: 'streaming' as const }
+          ? {
+              ...message,
+              content: '',
+              reasoning: undefined,
+              error: undefined,
+              // 重试是把这一轮重跑一遍：上一轮的告警不该留在新气泡上
+              warnings: undefined,
+              toolCalls: [],
+              status: 'streaming' as const
+            }
           : message
       )
     }))
@@ -245,29 +283,29 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
           wired = true
 
           window.nahida.chat.onDelta((payload) => {
-            set((state) => reduceDelta(state, payload))
+            applyOrQueue(payload.sessionId, () => set((state) => reduceDelta(state, payload)))
           })
 
           window.nahida.chat.onReasoning((payload) => {
-            set((state) => reduceReasoning(state, payload))
+            applyOrQueue(payload.sessionId, () => set((state) => reduceReasoning(state, payload)))
           })
 
           window.nahida.chat.onTool((payload) => {
-            set((state) => ({
+            applyOrQueue(payload.sessionId, () => set((state) => ({
               sessions: mapSession(state.sessions, payload.sessionId, (session) =>
                 mapMessage(session, payload.messageId, (message) => ({ ...message, toolCalls: payload.calls }))
               )
-            }))
+            })))
           })
 
-          window.nahida.chat.onApproval((ticket) => set((state) => reduceApproval(state, ticket)))
+          window.nahida.chat.onApproval((ticket) => applyOrQueue(ticket.sessionId, () => set((state) => reduceApproval(state, ticket))))
 
           window.nahida.chat.onDone((payload: ChatDone) => {
-            set((state) => reduceDone(state, payload))
+            applyOrQueue(payload.sessionId, () => set((state) => reduceDone(state, payload)))
           })
 
           window.nahida.chat.onError((payload: ChatFailure) => {
-            set((state) => reduceError(state, payload))
+            applyOrQueue(payload.sessionId, () => set((state) => reduceError(state, payload)))
           })
         }
 
@@ -384,6 +422,55 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       set((state) => ({ ...reduceError(state, { sessionId, messageId, message }), error: message }))
+    }
+  },
+
+  updateMessage: async (messageId, content) => {
+    const sessionId = get().activeId
+    if (!sessionId) return false
+    try {
+      const updated = await window.nahida.chat.update(sessionId, messageId, content)
+      set((state) => ({
+        error: null,
+        sessions: mapSession(state.sessions, sessionId, (session) => ({
+          ...mapMessage(session, messageId, () => updated),
+          updatedAt: Math.max(Date.now(), session.updatedAt + 1)
+        }))
+      }))
+      return true
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : String(error) })
+      return false
+    }
+  },
+
+  resendFrom: async (messageId, content) => {
+    const { activeId: sessionId, streamingId } = get()
+    if (!sessionId || pendingResends.has(sessionId)) return false
+    if (streamingId === sessionId) {
+      set({ error: '当前会话仍在生成中，先停止再重试' })
+      return false
+    }
+    pendingResends.set(sessionId, [])
+    set({ error: null, streamingId: sessionId, approval: null })
+    try {
+      const placeholder = await window.nahida.chat.resend(sessionId, messageId, content)
+      set((state) => ({
+        sessions: mapSession(state.sessions, sessionId, (session) => {
+          const index = session.messages.findIndex((item) => item.id === messageId)
+          if (index === -1) return session
+          const messages = session.messages.slice(0, index + 1)
+          messages[index] = { ...messages[index], content, error: undefined, warnings: undefined }
+          return { ...session, updatedAt: Math.max(Date.now(), session.updatedAt + 1), messages: [...messages, placeholder] }
+        })
+      }))
+      flushResend(sessionId)
+      return true
+    } catch (error) {
+      // 拒绝＝没有这一轮：暂存事件一并丢弃，不回放（见 dropResend 的注释）。
+      dropResend(sessionId)
+      set({ error: error instanceof Error ? error.message : String(error), streamingId })
+      return false
     }
   },
 

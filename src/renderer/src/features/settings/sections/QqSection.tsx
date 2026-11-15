@@ -389,6 +389,7 @@ export function QqSection() {
               <label className="memory-check" key={name} data-ui-target={'门槛 ' + name}>
                 <span>{'//' + name}</span>
                 <select
+                  className="qq-command-select"
                   value={draft.commandThresholds[name]}
                   onChange={(event) =>
                     patchThreshold(name, event.target.value as CommandPermissionLevel)

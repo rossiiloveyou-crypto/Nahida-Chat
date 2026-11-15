@@ -21,6 +21,7 @@ import { promptStore } from '../prompt/promptStore'
 import { isDirectory, normalizeDir, workspaceLabel } from '../workspace'
 import type {
   AppearanceSettings,
+  BridgeSettings,
   MemorySettings,
   ModelOptions,
   ModelProfile,
@@ -123,7 +124,8 @@ export function defaultSettings(): Settings {
     permission: { mode: 'approve' },
     memory: { ...DEFAULT_MEMORY_SETTINGS },
     summary: { ...DEFAULT_SUMMARY_SETTINGS },
-    appearance: { ...DEFAULT_APPEARANCE }
+    appearance: { ...DEFAULT_APPEARANCE },
+    bridge: { ...DEFAULT_BRIDGE_SETTINGS }
   }
 }
 
@@ -170,6 +172,7 @@ class SettingsStore {
     next.memory = normalizeMemory(next.memory)
     next.summary = normalizeSummary(next.summary)
     next.appearance = normalizeAppearance(next.appearance)
+    next.bridge = normalizeBridge(next.bridge)
     // 档案是唯一真源：任何整体保存都要重新归一化并把镜像字段对齐
     normalizeProfiles(next)
     next.defaultCharacterId = ensureCharacter(next.defaultCharacterId)
@@ -360,7 +363,8 @@ class SettingsStore {
         memory: normalizeMemory(parsed.memory ?? base.memory),
         // 老配置没有这一段 → 补默认值。这是「升级即生效」的唯一入口。
         summary: normalizeSummary(parsed.summary ?? base.summary),
-        appearance: normalizeAppearance(parsed.appearance ?? base.appearance)
+        appearance: normalizeAppearance(parsed.appearance ?? base.appearance),
+        bridge: normalizeBridge(parsed.bridge ?? base.bridge)
       }
       // 工作区清单的迁移：单工作区时代只有一个 workspaceDir，把它变成清单第一条，
       // 用户原本选好的目录不能因为升级就丢掉。
@@ -742,6 +746,30 @@ function normalizeAppearance(input: AppearanceSettings | undefined): AppearanceS
   const theme = input?.theme
   return {
     theme: theme === 'light' || theme === 'dark' || theme === 'system' ? theme : base.theme
+  }
+}
+
+/**
+ * ST 桥接配置的缺省值（P6）。
+ *
+ * 🔴 enabled 缺省 **false**：这是 J-06 三条件与的第三条，也是「老配置升级零行为变化」的
+ *    唯一保证。默认开等于让所有故事会话在升级后突然多一个隐藏窗口 + 依赖 127.0.0.1:8000。
+ */
+const DEFAULT_BRIDGE_SETTINGS: BridgeSettings = { enabled: false }
+
+/**
+ * 桥接配置归一化。范式与 normalizeMemory 一致：逐字段给默认值，非法值落回默认。
+ *
+ * 🔴 两个调用点缺一不可（同 normalizeAppearance 的注释）：load 的合并路径（老配置 undefined）
+ *    与 save 的归一化（用户写了非法值）。只做一处，前者会让老用户读到 undefined 而崩在
+ *    `settings.bridge.enabled` 上，后者会让手改的字符串永久写坏。
+ * 🔴 只归一化 enabled 一个字段：连接参数（stUrl / stDataDir / 超时）属于部署事实，
+ *    住在 shared/bridge.ts 的 BRIDGE_DEFAULT_CONFIG，不由 Settings 承载（理由见 BridgeSettings 注释）。
+ *    这里多补一个字段，就等于把部署值复制成第二份载体，改一处另一处不动时没有任何东西会报错。
+ */
+function normalizeBridge(input: BridgeSettings | undefined): BridgeSettings {
+  return {
+    enabled: typeof input?.enabled === 'boolean' ? input.enabled : DEFAULT_BRIDGE_SETTINGS.enabled
   }
 }
 

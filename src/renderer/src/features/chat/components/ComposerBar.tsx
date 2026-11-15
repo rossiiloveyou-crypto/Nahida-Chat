@@ -11,6 +11,7 @@ interface ComposerBarProps {
   draftProfileId: string | null
   draftModelId: string | null
   onPickModel: (profileId: string, modelId: string) => void
+  modelLocked?: boolean
   /** 当前生效的工作区 id（会话的 > 草稿的 > 活动工作区），由 ChatPage 解析 */
   workspaceId: string | null
   onPickWorkspace: (workspaceId: string) => void
@@ -64,6 +65,7 @@ export function ComposerBar({
   draftProfileId,
   draftModelId,
   onPickModel,
+  modelLocked = false,
   workspaceId,
   onPickWorkspace,
   characterId,
@@ -195,9 +197,10 @@ export function ComposerBar({
         <button
           type="button"
           className={openMenu === 'model' ? 'composer-pick is-open' : 'composer-pick'}
-          onClick={() => setOpenMenu(openMenu === 'model' ? null : 'model')}
-          disabled={locked || catalog.profiles.length === 0}
-          title="选择本次对话使用的模型"
+          onClick={() => { if (!modelLocked && !locked) setOpenMenu(openMenu === 'model' ? null : 'model') }}
+          disabled={locked || modelLocked || catalog.profiles.length === 0}
+          aria-disabled={locked || modelLocked || catalog.profiles.length === 0}
+          title={modelLocked ? '本轮由 ST 桥接生成，模型在 ST 里设置' : '选择本次对话使用的模型'}
           data-ui-target="模型选择"
         >
           <span className="composer-pick__dot" />
@@ -205,7 +208,7 @@ export function ComposerBar({
           <Caret />
         </button>
 
-        {openMenu === 'model' && (
+        {openMenu === 'model' && !modelLocked && !locked && (
           <div className="composer-menu" role="listbox" aria-label="模型列表">
             {catalog.profiles.map((item) => (
               <div className="composer-menu__group" key={item.id}>
@@ -224,7 +227,7 @@ export function ComposerBar({
                       className={selected ? 'composer-menu__item is-active' : 'composer-menu__item'}
                       onClick={() => {
                         setOpenMenu(null)
-                        onPickModel(item.id, id)
+                        if (!modelLocked && !locked) onPickModel(item.id, id)
                       }}
                     >
                       <code>{id}</code>

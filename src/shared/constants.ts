@@ -271,6 +271,22 @@ export const MEMORY_MAX_CHARS = 300
 /** embedding 模型目录（相对应用根）与模型 id */
 export const MEMORY_MODEL_RELATIVE_DIR = 'models'
 export const MEMORY_MODEL_ID = 'Xenova/bge-m3'
+/** 模型必需文件（相对模型目录）。下载器按这张表逐个取，缺一不可。 */
+export const MEMORY_MODEL_FILES = [
+  'config.json',
+  'tokenizer.json',
+  'tokenizer_config.json',
+  'onnx/model_quantized.onnx'
+] as const
+/** 体积下限（字节）：防止把错误页/半截文件当成模型。q8 的 onnx 约 570 MB。 */
+export const MEMORY_MODEL_MIN_BYTES: Record<string, number> = {
+  'config.json': 200,
+  'tokenizer.json': 1000,
+  'tokenizer_config.json': 100,
+  'onnx/model_quantized.onnx': 50 * 1024 * 1024
+}
+/** 下载镜像，按顺序回退。国内直连 huggingface.co 常被墙，hf-mirror 是常用镜像。 */
+export const MEMORY_MODEL_MIRRORS = ['https://hf-mirror.com', 'https://huggingface.co'] as const
 export const MEMORY_MODEL_DIMENSIONS = 1024
 
 /** 默认上下文窗口，仅作展示与将来裁剪判断的初值 */

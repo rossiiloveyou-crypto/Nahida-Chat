@@ -9,6 +9,7 @@ import {
 import type {
   MemoryEntry,
   MemoryRecallHit,
+  MemoryModelProgress,
   MemoryStatus,
   PersonaHistoryEntry,
   SummarySettings,
@@ -34,7 +35,32 @@ import { WipeDialog } from './WipeDialog'
  */
 export function MemorySection() {
   const { settings, loading, saving, error, save } = useSettings()
+
+  /**
+   * 一键安装模型。
+   * 失败原因原样显示（镜像/网络/磁盘），不吞成"未知错误"——用户要能据此判断
+   * 是网络问题还是磁盘空间问题。装完刷新状态，模型即可用。
+   */
+  const startModelDownload = useCallback(async (): Promise<void> => {
+    setDownloadError(null)
+    setDownloading({ phase: 'downloading', file: '', ratio: 0, receivedBytes: 0, totalBytes: 0 })
+    const unsubscribe = window.nahida.memory.onModelProgress((progress) => {
+      setDownloading(progress.phase === 'done' || progress.phase === 'failed' ? null : progress)
+    })
+    try {
+      const result = await window.nahida.memory.downloadModel()
+      if (!result.ok) throw new Error(result.error ?? '下载失败')
+      setStatus(result.status)
+    } catch (cause) {
+      setDownloadError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      unsubscribe()
+      setDownloading(null)
+    }
+  }, [])
   const [status, setStatus] = useState<MemoryStatus | null>(null)
+  const [downloading, setDownloading] = useState<MemoryModelProgress | null>(null)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
   const [summaryStatus, setSummaryStatus] = useState<SummaryStatus | null>(null)
   const [users, setUsers] = useState<MemoryUserRow[]>([])
   const [selected, setSelected] = useState<MemoryUserDetail | null>(null)
@@ -504,6 +530,15 @@ export function MemorySection() {
         <div className="settings-actions">
           <button
             type="button"
+            className="btn-primary"
+            data-ui-target="下载 RAG 模型"
+            disabled={downloading !== null || Boolean(status?.modelInstalled)}
+            onClick={() => void startModelDownload()}
+          >
+            {status?.modelInstalled ? '向量模型已安装' : downloading ? '下载中…' : '一键下载并配置模型'}
+          </button>
+          <button
+            type="button"
             className="btn-ghost"
             onClick={() => void window.nahida.memory.openModelDir()}
           >
@@ -513,10 +548,19 @@ export function MemorySection() {
             刷新状态
           </button>
         </div>
+        {downloading && (
+          <p className="hint-text" data-ui-target="下载进度">
+            {downloading.phase === 'verifying' ? '校验中' : downloading.file || '准备中'} ·{' '}
+            {Math.round(downloading.ratio * 100)}%（{(downloading.receivedBytes / 1048576).toFixed(1)} /{' '}
+            {(downloading.totalBytes / 1048576).toFixed(1)} MB）
+          </p>
+        )}
+        {downloadError && <p className="hint-text hint-text--error">{downloadError}</p>}
         {status && !status.modelReady && (
           <p className="hint-text">
-            模型目录应放 <code>Xenova/bge-m3/</code>，包含 config.json、tokenizer.json 与
-            onnx/model_quantized.onnx。缺文件时记忆会退化为纯关键词检索。
+            点「一键下载并配置模型」即可，无需手动放文件；下载到{' '}
+            <code>{status.downloadDir}</code>，装完自动生效。
+            缺文件时记忆会退化为纯关键词检索。
           </p>
         )}
       </section>

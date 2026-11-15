@@ -1,0 +1,15 @@
+packages:
+  - .
+
+# pnpm 11 起新增「包发布日期必须早于 N 分钟」的供应链闸门（pnpm 10 没有）。
+# 本项目靠精确版本 + pnpm-lock.yaml + 全量测试管控依赖，闸门只会挡住刚发版的修复包
+# （实测 dompurify@3.4.18 被卡），故显式关闭。
+minimumReleaseAge: 0
+
+# 依赖构建授权（从 package.json#pnpm.onlyBuiltDependencies 迁移）。
+allowBuilds:
+  electron: true
+  electron-winstaller: true
+  esbuild: true
+  onnxruntime-node: true
+  protobufjs: true

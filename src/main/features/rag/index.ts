@@ -15,6 +15,8 @@ import type {
 import { DEFAULT_PERSONA_ID, ROOT_USER_ID } from '@shared/persona'
 import type { PersonaIdentity, UserPersonaRow } from '@shared/persona'
 import { embedder } from './embedder'
+import { installModel, userModelRoot } from './modelInstaller'
+import type { MemoryModelProgress } from '@shared/types'
 import { extractMemories } from './extract'
 import { recall as hybridRecall } from './retriever'
 import { MemoryStore } from './store'
@@ -64,10 +66,12 @@ class MemoryService {
       modelId: MEMORY_MODEL_ID,
       dimensions: info.dimensions || MEMORY_MODEL_DIMENSIONS,
       modelPath: info.modelPath,
+      downloadDir: userModelRoot(),
       // 全库计数（管理视图口径），不是某个租户的条数 —— 与 list() 同属有意保留的不隔离点
       entryCount: this.store.healthy() ? this.store.count() : 0,
       dbPath: this.store.dbFile,
       lastError: info.lastError,
+      modelInstalled: embedder.modelInstalled(),
       personasReady: this.store.healthy()
     }
   }
@@ -75,6 +79,16 @@ class MemoryService {
   /** 模型是否已安装（不加载）——界面用它区分"没装"和"装了但没启用" */
   modelInstalled(): boolean {
     return embedder.modelInstalled()
+  }
+
+  /**
+   * 一键下载并配置向量模型（设置页按钮）。
+   * 下载到 userData/models；装完清掉 embedder 的失败缓存，下一次检索自动加载。
+   */
+  async downloadModel(onProgress: (event: MemoryModelProgress) => void, signal: AbortSignal): Promise<string> {
+    const dir = await installModel(onProgress, signal)
+    embedder.reset()
+    return dir
   }
 
   /**
