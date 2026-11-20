@@ -9,13 +9,13 @@ import { EmptyState } from './components/EmptyState'
 import { MessageList } from './components/MessageList'
 import { useChatStore } from './store'
 import { StoryDrawer } from '../story/StoryDrawer'
+import { NewStoryDialog } from '../story/NewStoryDialog'
 import { useStoryStore } from '../story/store'
 import { useSettings } from '../settings/useSettings'
 import { usePromptLibrary } from '../settings/usePromptLibrary'
 import { useWorkspaces } from '../workspace/useWorkspaces'
 import { useDisplayScripts } from './markdown/useDisplayScripts'
 
-// P4：故事模式只补字典键（角落徽章的文字）。**不是入口** —— 模式滑块仍只列 chat / agent。
 const MODE_LABEL: Record<ConversationMode, string> = { chat: 'Chat', agent: 'Agent', story: '故事' }
 
 export function ChatPage() {
@@ -28,6 +28,8 @@ export function ChatPage() {
   const error = useChatStore((s) => s.error)
   const send = useChatStore((s) => s.send)
   const narrate = useChatStore((s) => s.narrate)
+  const queueMessage = useChatStore((s) => s.queueMessage)
+  const requestReply = useChatStore((s) => s.requestReply)
   const stop = useChatStore((s) => s.stop)
   const createSession = useChatStore((s) => s.createSession)
   const updateSession = useChatStore((s) => s.updateSession)
@@ -57,6 +59,11 @@ export function ChatPage() {
   // P7：检索命中后要滚动并高亮那条消息，2 秒后自动清除（淡出）
   const focusMessageId = useStoryStore((s) => s.focusMessageId)
   const setFocusMessageId = useStoryStore((s) => s.setFocus)
+  const stories = useStoryStore((s) => s.stories)
+  const storyError = useStoryStore((s) => s.error)
+  const refreshStories = useStoryStore((s) => s.refreshStories)
+  const openStory = useStoryStore((s) => s.openStory)
+  const [storyDialogOpen, setStoryDialogOpen] = useState(false)
 
   useEffect(() => {
     void init()
@@ -88,6 +95,9 @@ export function ChatPage() {
   const active = sessions.find((s) => s.id === activeId) ?? null
   const messages = active ? active.messages : []
   const channelReadOnly = Boolean(active && isChannelSessionId(active.id))
+  const storyLanding = !active && draftMode === 'story'
+  const canPreSend = !channelReadOnly && !storyLanding
+  const preSend = canPreSend && active?.preSend === true
   const modelLocked = Boolean(active && settings && bridgeEligible(active, settings))
   const streaming = streamingId !== null && streamingId === activeId
   const pendingApproval = approval && approval.sessionId === activeId ? approval : null
@@ -121,6 +131,9 @@ export function ChatPage() {
   const activeWorkspace = workspaceCatalog.workspaces.find((item) => item.id === workspaceId) ?? null
 
   const activeMode: ConversationMode = active ? active.mode : draftMode
+  useEffect(() => {
+    if (storyLanding) void refreshStories()
+  }, [storyLanding, refreshStories])
   /**
    * P6 G3：Agent 模式下一个工作区都没有时必须拦住输入。
    *
@@ -149,7 +162,7 @@ export function ChatPage() {
 
   // 没有会话时发第一条消息：先按首页选中的模式建会话，再发
   const handleSend = async (text: string): Promise<void> => {
-    if (editing || channelReadOnly) return
+    if (editing || channelReadOnly || storyLanding) return
     if (!active) {
       await createSession({
         mode: draftMode,
@@ -163,7 +176,22 @@ export function ChatPage() {
       await useChatStore.getState().send(text)
       return
     }
-    await send(text)
+    if (preSend) await queueMessage(text)
+    else await send(text)
+  }
+
+  const handlePreSendChange = async (enabled: boolean): Promise<void> => {
+    if (!canPreSend || streaming || editing) return
+    try {
+      if (!active) {
+        await createSession({ mode: draftMode, workspaceId,
+          modelProfileId: draftModel?.profileId ?? null, modelId: draftModel?.modelId ?? null,
+          ...(characterId ? { characterId } : {}) })
+      }
+      await useChatStore.getState().updateSession({ preSend: enabled })
+    } catch (error) {
+      fail(error instanceof Error ? error.message : String(error))
+    }
   }
 
   // 旁白只在故事会话出现，所以这里不做“无会话先建区”的分支
@@ -235,7 +263,13 @@ export function ChatPage() {
 
   // 空会话才允许切模式；有消息就只能新建对话
   const handleModeChange = async (mode: ConversationMode): Promise<void> => {
+    if (streaming || active?.storyId || messages.length > 0) return
     setDraftMode(mode)
+    // 故事是下一步的创建入口，不把既有空会话改成缺 storyId 的故事会话。
+    if (mode === 'story') {
+      useChatStore.setState({ activeId: null, error: null })
+      return
+    }
     if (!active || messages.length > 0) return
     try {
       await updateSession({ mode })
@@ -302,6 +336,10 @@ export function ChatPage() {
             mode={activeMode}
             onModeChange={(mode) => void handleModeChange(mode)}
             disabled={streaming}
+            stories={[...stories].sort((a, b) => (b.lastActiveAt || b.createdAt) - (a.lastActiveAt || a.createdAt))}
+            storyError={storyError}
+            onNewStory={storyLanding ? () => setStoryDialogOpen(true) : undefined}
+            onOpenStory={(storyId) => void openStory(storyId)}
           />
         ) : (
           <MessageList
@@ -331,12 +369,18 @@ export function ChatPage() {
         </div>
       )}
 
-      <Composer
+      {storyLanding && storyDialogOpen && <NewStoryDialog onClose={() => setStoryDialogOpen(false)} />}
+
+      {!storyLanding && <Composer
         disabled={!ready || editing || channelReadOnly}
         streaming={streaming}
         onSend={(text) => void handleSend(text)}
         onNarrate={(text) => void handleNarrate(text)}
         canNarrate={Boolean(active?.storyId)}
+        canPreSend={canPreSend}
+        preSend={preSend}
+        onPreSendChange={(enabled) => void handlePreSendChange(enabled)}
+        onRequestReply={() => { if (canPreSend && !editing && !streaming) void requestReply() }}
         onStop={() => void stop()}
         draftProfileId={chosenProfileId}
         draftModelId={chosenModelId}
@@ -351,7 +395,7 @@ export function ChatPage() {
         onPickWorkspace={handlePickWorkspace}
         needsWorkspace={needsWorkspace}
         onCreateWorkspace={() => void handleCreateWorkspace()}
-      />
+      />}
     </section>
   )
 }

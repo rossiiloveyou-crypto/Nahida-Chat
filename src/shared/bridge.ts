@@ -39,13 +39,26 @@ export interface BridgeConfig {
    *    `::1` / `127.0.0.1`，写 localhost 会在某些解析下变成公网可路由的地址）。
    */
   stUrl: string
+  /** 用户提供的完整 ST 源码目录 */
+  stRoot: string
+  /** @deprecated 仅保留旧配置字段，不再用于桥接行为。 */
+  cardPath?: string
+  cardName: string
+  /** 已检测并回读确认的 PNG 文件名 */
+  cardAvatar: string
+  port: number
+  dataRootMode: 'data-nc'
+  /** 空串表示 <stRoot>/data-nc/logs/st-bridge.log */
+  logPath: string
+  /** 空串按 PATH node → Electron Node 依次选择 */
+  nodePath: string
   /**
-   * ST 的数据目录。桥接只**读**它（当前预设里的正则脚本、只读巡检），永不写。
-   * 缺省值与总蓝图 §一 拓扑 3 一致；这里硬编码的是**路径**，不是凭据。
+   * ST 的数据目录；托管进程时派生为 <stRoot>/data-nc/default-user。
+   * 未选择 ST 目录时为空；托管启动后由配置派生，不复制原有数据。
    */
   stDataDir: string
   /**
-   * 隐藏窗口的 Electron 分区。
+   * ST 窗口的 Electron 分区。
    * 独立 profile 是硬要求：共默认 profile 时，被强杀的前一实例会把这个实例卡在 ready 之前
    * （P0 完成报告 §三 第 5 条）。
    */
@@ -64,10 +77,20 @@ export interface BridgeConfig {
   minIntervalMs: number
 }
 
+/** 单轮生成上限的允许区间（10 秒 ~ 1 小时）。用户在设置页按「秒」填，落盘按毫秒存。 */
+export const BRIDGE_GENERATE_TIMEOUT_RANGE = { minMs: 10_000, maxMs: 3_600_000 } as const
+
 /** 缺省配置。改这里 = 改所有调用方的默认行为，非必要不动。 */
 export const BRIDGE_DEFAULT_CONFIG: BridgeConfig = {
   stUrl: 'http://127.0.0.1:8000',
-  stDataDir: 'D:/ST/SillyTavern/data/default-user',
+  stRoot: '',
+  cardName: '',
+  cardAvatar: '',
+  port: 8000,
+  dataRootMode: 'data-nc',
+  logPath: '',
+  nodePath: '',
+  stDataDir: '',
   partition: 'persist:nc-bridge',
   readyTimeoutMs: 60000,
   connectTimeoutMs: 45000,
@@ -122,6 +145,8 @@ export interface BridgeTurnInput {
   sessionId: string
   /** 已按 NC 口径裁好的历史（含本轮用户输入） */
   messages: BridgeMessage[]
+  /** 同次 historyOf 的原始长度（含尚未过滤的旁白与占位）。 */
+  historyBefore?: number
 }
 
 /** 桥接健康度（P6 的设置面板与探针都用它，不需要另一个字段集） */
@@ -132,14 +157,30 @@ export interface BridgeHealth {
   busy: boolean
   /** 崩溃重建次数（>0 说明发生过 render-process-gone / did-fail-load） */
   rebuilds: number
-  /** 被拦下的写盘请求数（J-07） */
+  stRunning: boolean
+  stPid: number | null
+  port: number
+  logBytes: number
+  orphans: number
+  nodeSource: 'configured' | 'path' | 'electron' | null
+  needsOnboarding: boolean
+  cardAvatar: string
+  cardName: string
+  /** @deprecated P2 起无拦截，兼容旧消费者一版，恒为 0 */
   cancelledWrites: number
-  /** 被拦下的外网请求数（J-07） */
+  /** @deprecated P2 起无拦截，恒为 0 */
   blockedExternal: number
   /** 最近一次失败原因；正常为 null */
   lastError: string | null
   /** 当前生效的配置（设置页要能显示 ST 地址与分区） */
   config: BridgeConfig
+}
+
+export interface BridgeOverrideState {
+  text: string
+  active: boolean
+  truncated: boolean
+  warning: string | null
 }
 
 /**
@@ -152,6 +193,11 @@ export interface BridgeHealth {
 export const BRIDGE_IPC = {
   turn: 'bridge:turn',
   health: 'bridge:health',
+  openSt: 'bridge:open-st',
+  stopSt: 'bridge:stop-st',
+  openLog: 'bridge:open-log',
+  overrideGet: 'bridge:override-get',
+  overrideSave: 'bridge:override-save',
   event: 'bridge:event'
 } as const
 

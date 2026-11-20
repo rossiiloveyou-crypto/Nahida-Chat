@@ -265,8 +265,24 @@ export const MEMORY_TOP_K_RANGE = { min: 1, max: 50 } as const
 export const MEMORY_VECTOR_WEIGHT = 0.7
 export const MEMORY_KEYWORD_WEIGHT = 0.3
 
-/** 单条记忆最大长度（字符）。超长说明抽取跑偏了，直接截断。 */
-export const MEMORY_MAX_CHARS = 300
+/** 事实写入截断与事实抽取过滤分别维护，均保留原来的 300 字符语义。 */
+export const MEMORY_STORE_MAX_CHARS = 300
+export const MEMORY_EXTRACT_MAX_CHARS = 300
+/** 故事召回的独立出厂值；纯关键词路径的最高分必须高于 minScore。 */
+export const DEFAULT_STORY_RECALL = {
+  enabled: true,
+  n: 4,
+  // 本地 BGE-M3 q8 实际故事语料：无关查询最高 0.367；纯关键词命中为 0.5。
+  minScore: 0.4,
+  keywordWeight: 0.5,
+  budgetTokens: 8000,
+  candidateMultiplier: 4,
+  recheckDepth: 32
+} as const
+
+/** 故事原文切片的独立参数（UTF-16 code units），不复用事实限制。 */
+export const STORY_CHUNK_CHARS = 1200
+export const STORY_CHUNK_OVERLAP = 160
 
 /** embedding 模型目录（相对应用根）与模型 id */
 export const MEMORY_MODEL_RELATIVE_DIR = 'models'

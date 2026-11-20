@@ -1,8 +1,9 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { IPC } from '@shared/ipc'
+import type { RequestReplyInput } from '@shared/api'
 import { isChannelSessionId } from '@shared/channels'
 import { BRIDGE_IPC } from '@shared/bridge'
-import type { BridgeHealth } from '@shared/bridge'
+import type { BridgeConfig, BridgeHealth, BridgeOverrideState } from '@shared/bridge'
 import type {
   AppInfo,
   CreateSessionInput,
@@ -36,9 +37,12 @@ import { registerMemoryIpcHandlers } from './memory'
 import { registerWipeIpcHandlers } from './wipe'
 import { registerRegexIpcHandlers } from './regex'
 import { bridgeHost } from '../features/bridge/host'
+import { ensureOverrideFile, getOverride, saveOverride } from '../features/bridge/override'
 
 /** 所有 IPC handler 在这里集中注册，渲染进程能做的事一目了然。 */
 export function registerIpcHandlers(): void {
+  ensureOverrideFile()
+  promptStore.ensureUserRoot()
   ipcMain.handle(IPC.appInfo, (): AppInfo => ({
     name: app.getName(),
     version: app.getVersion(),
@@ -47,7 +51,7 @@ export function registerIpcHandlers(): void {
     node: process.versions.node,
     platform: process.platform,
     userDataPath: app.getPath('userData'),
-    promptRoot: promptStore.root()
+    promptRoot: promptStore.userRoot()
   }))
 
   ipcMain.handle(IPC.settingsGet, () => settingsStore.get())
@@ -62,6 +66,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC.promptLibrary, () => promptStore.library())
   ipcMain.handle(IPC.promptOpen, () => promptStore.openLibrary())
+  ipcMain.handle(IPC.promptOpenUserRoot, () => promptStore.openUserRoot())
   ipcMain.handle(IPC.promptOpenCharacter, (_event, characterId: string) => promptStore.openCharacter(characterId))
 
   // 记忆：每个 handler 都带上当前设置，保证改设置立即生效、无需重启
@@ -147,11 +152,22 @@ export function registerIpcHandlers(): void {
   // 显示层正则（P3）：只读 ST 的 regex_scripts；读盘失败返回空数组，绝不抛
   registerRegexIpcHandlers()
 
-  // 桥接健康度（P6 / F-07）：**只读**一条通道，走 shared/bridge.ts 自己的命名空间
-  // （不并进 shared/ipc.ts 的理由见 BRIDGE_IPC 的注释）。
-  // 🔴 只读：这里不提供「启一轮」「重建窗口」「改配置」—— 桥接的驱动由 chatService 那一处触发，
-  //    多一条写通道就等于多一个能绕过 bridgeEligible 三条件与的入口（J-06 单点）。
+  // P2：进程与日志入口；配置校验和 userData/nc-bridge/config.json 持久化由 host 负责。
+  // 打开 ST 只管理进程和可见窗口，生成仍由 chatService 的 bridgeEligible 路由触发。
   ipcMain.handle(BRIDGE_IPC.health, (): BridgeHealth => bridgeHost.health())
+  ipcMain.handle(BRIDGE_IPC.openSt, (_event, config?: Partial<BridgeConfig>): Promise<BridgeHealth> =>
+    bridgeHost.openSt(config === undefined ? undefined : {
+      stRoot: config.stRoot,
+      cardName: config.cardName,
+      port: config.port,
+      nodePath: config.nodePath,
+      generateTimeoutMs: config.generateTimeoutMs
+    })
+  )
+  ipcMain.handle(BRIDGE_IPC.stopSt, (): Promise<BridgeHealth> => bridgeHost.stopSt())
+  ipcMain.handle(BRIDGE_IPC.openLog, (): Promise<void> => bridgeHost.openLog())
+  ipcMain.handle(BRIDGE_IPC.overrideGet, (): BridgeOverrideState => getOverride())
+  ipcMain.handle(BRIDGE_IPC.overrideSave, (_event, text: unknown): BridgeOverrideState => saveOverride(text))
 
   // P6：渠道会话（id 形如 qq:<uin>:<type>:<id>）不进侧栏。
   // 它们由 QQ 消息驱动出现，用户没有「新建/删除」动作，出现在侧栏只会制造困惑。
@@ -165,6 +181,14 @@ export function registerIpcHandlers(): void {
     chatService.deleteSession(id)
   })
   ipcMain.handle(IPC.chatSend, (event, input: SendInput) => chatService.send(input, event.sender))
+  ipcMain.handle(IPC.chatQueueMessage, (_event, input: SendInput) => {
+    if (isChannelSessionId(input.sessionId)) throw new Error('渠道会话不支持预发送')
+    return chatService.queueMessage(input)
+  })
+  ipcMain.handle(IPC.chatRequestReply, (event, input: RequestReplyInput) => {
+    if (isChannelSessionId(input.sessionId)) throw new Error('渠道会话不支持预发送')
+    return chatService.requestReply(input, event.sender)
+  })
   ipcMain.handle(IPC.chatNarrate, (_event, sessionId: string, content: string) =>
     chatService.narrate(sessionId, content)
   )

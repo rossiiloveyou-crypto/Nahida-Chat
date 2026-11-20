@@ -69,6 +69,8 @@ export interface Session {
   createdAt: number
   updatedAt: number
   messages: Message[]
+  /** 预发送：只追加消息，点击「请求回复」才生成；缺省关闭，渠道会话不启用。 */
+  preSend?: boolean
   /** 这段会话用哪个角色的提示词（Prompt/characters/<id>/） */
   characterId: string
   /** chat / agent，决定注入哪份风格提示词以及是否开放工具 */
@@ -210,6 +212,29 @@ export interface AppearanceSettings {
   theme: ThemeMode
 }
 
+/** 故事原文召回独立参数；N 按轮计数，不复用事实记忆开关。 */
+/** 只读归档统计；最近召回尚未采集时保持 null，不伪造观测。 */
+export interface StoryRecallStatus {
+  archivedRounds: number
+  vectorRounds: number
+  vectorReady: boolean
+  modelInstalled: boolean
+  lastError: string | null
+  databaseErrors: string[]
+  lastRecall: { hitRounds: number; budgetLimited: boolean } | null
+}
+
+export interface StoryRecallConfig {
+  enabled: boolean
+  n: number
+  minScore: number
+  keywordWeight: number
+  budgetTokens: number
+  candidateMultiplier: number
+  /** 每个命中轮最多检查多少个较新轮；0 关闭补查。 */
+  recheckDepth: number
+}
+
 export interface Settings {
   /** 模型来源；mock = 本地离线回显，用于验证链路。始终镜像默认档案。 */
   provider: ProviderId
@@ -242,6 +267,8 @@ export interface Settings {
   permission: PermissionSettings
   /** 长期记忆检索（RAG）配置 */
   memory: MemorySettings
+  /** 故事原文召回；老配置缺省时由 normalizeStoryRecall 补齐。 */
+  storyRecall?: StoryRecallConfig
   /**
    * 对话摘要配置（窗口外对话的滚动压缩）。
    * 老配置没有这一段时由 normalizeSummary 补齐默认值，升级无损。
@@ -501,6 +528,10 @@ export interface PromptCharFile {
 export interface PromptCharacter {
   id: string
   name: string
+  origin: 'builtin' | 'user'
+  /** 当前生效角色目录与世界书目录，由主进程解析。 */
+  dir: string
+  worldbookDir: string
   files: PromptCharFile[]
   /** soul 文件是否存在；缺了就不算一个可用角色 */
   complete: boolean
@@ -517,8 +548,10 @@ export interface PromptSharedFile {
 }
 
 export interface PromptLibrary {
-  /** Prompt/ 的绝对路径，设置页用来展示"改哪个文件" */
+  /** 兼容字段：等于 userRoot。 */
   root: string
+  userRoot: string
+  builtinRoot: string
   exists: boolean
   characters: PromptCharacter[]
   /** 顺序即注入顺序 */
@@ -569,6 +602,7 @@ export interface CreateSessionInput {
 }
 
 export interface UpdateSessionInput {
+  preSend?: boolean
   mode?: ConversationMode
   characterId?: string
   /** 换绑工作区；null 表示回到「跟随活动工作区」 */

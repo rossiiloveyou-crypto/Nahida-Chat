@@ -9,6 +9,9 @@ import type {
   MemoryEntry,
   MemoryRecallHit,
   MemorySettings,
+  Message,
+  Session,
+  StoryRecallConfig,
   MemoryStatus,
   PersonaHistoryEntry
 } from '@shared/types'
@@ -18,8 +21,10 @@ import { embedder } from './embedder'
 import { installModel, userModelRoot } from './modelInstaller'
 import type { MemoryModelProgress } from '@shared/types'
 import { extractMemories } from './extract'
-import { recall as hybridRecall } from './retriever'
+import { recall as hybridRecall, recallStory, formatStoryRecall, normalizeStoryRecall } from './retriever'
 import { MemoryStore } from './store'
+import type { StoryRoundRow } from './store'
+import { splitRounds, contentVersion, storyArchiveService } from './storyArchive'
 import { estimateTokens } from './tokenize'
 
 /**
@@ -29,6 +34,30 @@ import { estimateTokens } from './tokenize'
  * 一条铁律：这个模块的任何失败都必须是「静默降级」，绝不是「抛出去」。
  * 记忆是增强功能，不能因为它坏了就让用户聊不了天。
  */
+export interface StoryContextOptions {
+  storyId: string
+  branchId: string
+  tenants: PersonaIdentity[]
+  /** 必须使用 branchVisibility 返回的 bounds，不使用旧 memories 的兼容放行。 */
+  bounds: Map<string, number | null>
+  recentMessageIds: Set<string>
+}
+
+/** 当前输入优先，辅以前两轮原文；旁白队列也有 query，总长不超过 1200 UTF-16 字符。 */
+export function buildStoryQuery(messages: Message[]): string {
+  const { rounds, trailing } = splitRounds(messages.filter((message) =>
+    message.role !== 'assistant' || (message.status !== 'streaming' && message.status !== 'error')))
+  const readable = (message: Message): boolean =>
+    (message.role === 'user' || message.role === 'narration' || message.role === 'assistant') &&
+    message.status !== 'error' && message.status !== 'streaming' && !!message.content.trim()
+  const input = trailing.filter(readable).map((message) => message.content).join('\n').slice(-600)
+  const context = rounds.slice(-2).flatMap((round) => round.messages).filter(readable)
+    .map((message) => message.content).join('\n')
+  if (!input) return context.slice(-1200)
+  const background = context.slice(-Math.max(0, 1199 - input.length))
+  return background ? background + '\n' + input : input
+}
+
 class MemoryService {
   /**
    * 注入 store 是为了故事区（P4 / M11）：每个故事区一个**物理**库，
@@ -234,6 +263,107 @@ class MemoryService {
       return [header, ...lines, footer].join('\n')
     } catch (error) {
       console.warn('[memory] 召回失败，本轮不注入记忆', error)
+      return ''
+    }
+  }
+
+  /** P4.8：故事原文与事实记忆并列；缺元数据时只关闭新路径。 */
+  async buildStoryContextBlock(
+    session: Pick<Session, 'id' | 'storyId' | 'mode' | 'messages'>,
+    settings: Partial<StoryRecallConfig> | undefined,
+    options: StoryContextOptions
+  ): Promise<string> {
+    const config = normalizeStoryRecall(settings)
+    if (!config.enabled || session.mode !== 'story' || !options.storyId ||
+        session.storyId !== options.storyId || session.id !== options.branchId ||
+        !options.branchId?.trim() || !tenantListUsable(options.tenants) ||
+        !options.bounds.has(options.branchId)) return ''
+    try {
+      if (storyArchiveService.isForgotten(options.storyId)) return ''
+      const snapshot = contentVersion(session.messages)
+      const split = splitRounds(session.messages)
+      const positions = new Map(session.messages.map((message, index) => [message.id, index]))
+      const liveRounds = new Map(split.rounds.map((round) => [round.index, round]))
+      const stored = this.store.listStoryRounds(options.storyId, options.tenants, [...options.bounds.keys()])
+      const sourceMessages = (messages: Message[]): Message[] => messages.map((message) => ({
+        ...message, id: message.copiedFromMessageId ?? message.id
+      }))
+      const inBound = (branchId: string, index: number): boolean => {
+        if (!branchId || !options.bounds.has(branchId)) return false
+        const bound = options.bounds.get(branchId)
+        return bound === null || (Number.isSafeInteger(bound) && index <= (bound ?? -1) && (bound ?? -1) >= 0)
+      }
+      // 真正的 deriveBranch 会生成新 ID；版本哈希包含 ID，必须按来源身份重算。
+      // copiedFrom 只保存一跳；来源证据缺失时关闭该轮，不拿「done」冒充完成回执。
+      const interrupted = (message: Message): boolean => {
+        const index = positions.get(message.id)
+        if (index === undefined) return true
+        const local = this.store.getStoryMessageState(options.branchId, message.id, contentVersion([message]))
+        if (local !== null) return local
+        let completed = false
+        const source = { ...message, id: message.copiedFromMessageId ?? message.id }
+        for (const [branchId] of options.bounds) {
+          if (!inBound(branchId, index)) continue
+          const state = this.store.getStoryMessageState(branchId, source.id, contentVersion([source]))
+          if (state === true) return true
+          if (state === false) completed = true
+        }
+        if (!message.copiedFromMessageId) return false
+        if (completed) return false
+        const round = split.rounds.find((round) => round.messages.includes(message))
+        if (!round) return true
+        const sourceVersion = contentVersion(sourceMessages(round.messages))
+        return !stored.some((row) => row.branch_id !== options.branchId && inBound(row.branch_id, index) &&
+          row.round_index === round.index && row.content_version === sourceVersion)
+      }
+      // 原语第一层先限定库内租户/分支/valid；中止及版本闸在任何切片读取之前。
+      const current = (row: StoryRoundRow): boolean => {
+        if (storyArchiveService.isForgotten(options.storyId)) return false
+        if (!row.branch_id || !row.first_message_id || !row.last_message_id ||
+            !options.bounds.has(row.branch_id)) return false
+        const bound = options.bounds.get(row.branch_id)
+        if (bound !== null && (!Number.isSafeInteger(bound) || (bound ?? -1) < 0)) return false
+        const position = (id: string): number | undefined => positions.get(id) ??
+          session.messages.findIndex((message) => message.copiedFromMessageId === id)
+        const first = position(row.first_message_id)
+        const last = position(row.last_message_id)
+        if (first === undefined || last === undefined || first < 0 || last < first ||
+            (bound !== null && last > (bound ?? -1))) return false
+        // 派生的前缀已经拷贝到当前分支；即使父分支删除，也按当前快照验证。
+        const round = liveRounds.get(row.round_index)
+        if (!round) return false
+        const identities = row.branch_id === options.branchId ? round.messages : sourceMessages(round.messages)
+        if (identities[0]?.id !== row.first_message_id || identities.at(-1)?.id !== row.last_message_id) return false
+        if (round.messages.some((message) => !message.id ||
+            (message.role === 'assistant' && (message.status !== 'done' ||
+              interrupted(message))))) return false
+        return row.content_version === contentVersion(identities)
+      }
+      const candidates = stored
+        .filter(current)
+        // 只要一条轮内消息已经下发，整个轮都不重复注入（包括中间旁白）。
+        .filter((row) => !liveRounds.get(row.round_index)!.messages.some((message) =>
+          options.recentMessageIds.has(message.id)))
+      // 祖先与本分支可有同一份复制前缀，按稳定消息身份去重，N 才仍表示剧情轮。
+      const unique = new Map<string, StoryRoundRow>()
+      for (const row of candidates) {
+        const key = String(row.round_index)
+        if (!unique.has(key) || row.branch_id === options.branchId) unique.set(key, row)
+      }
+      const rounds = [...unique.values()]
+      const query = buildStoryQuery(session.messages.filter((message) => message.role !== 'assistant' ||
+        !interrupted(message)))
+      const hits = await recallStory(this.store, query, {
+        config, rounds, recentMessageIds: options.recentMessageIds,
+        isCurrent: (row) => contentVersion(session.messages) === snapshot && current(row)
+      })
+      if (storyArchiveService.isForgotten(options.storyId) || contentVersion(session.messages) !== snapshot) return ''
+      // 访问只排队；SQLite / 切片写入在 setImmediate 后，聊天同步编辑路径不写库。
+      const tenant = options.tenants[0]
+      storyArchiveService.schedule(session, { storyId: options.storyId }, tenant)
+      return formatStoryRecall(hits, config.budgetTokens)
+    } catch (error) {
+      console.warn('[story-recall] 召回失败，本轮不注入故事回顾', error)
       return ''
     }
   }

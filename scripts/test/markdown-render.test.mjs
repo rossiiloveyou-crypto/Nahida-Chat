@@ -156,6 +156,47 @@ check(
   p3
 )
 
+// ── SUPPLEMENT-01 · 剧情与对话分离（保留以上原断言） ─────────────────────
+const { wrapQuotes } = await import(pathToFileURL(path.join(projectRoot, 'src/renderer/src/features/chat/markdown/quotes.ts')).href)
+const dialogueRender = (source) => renderMarkdown(source, purify, wrapQuotes)
+const fragment = (html) => JSDOM.fragment(html)
+for (const quoted of ['"a"', '“a”', '«a»', '「a」', '『a』', '＂a＂']) {
+  const doc = fragment(dialogueRender(quoted))
+  check('S-01 · 六对分隔符 ' + quoted, doc.querySelectorAll('q').length === 1 && doc.querySelector('q').textContent === quoted)
+}
+const nested = fragment(dialogueRender('《他说「走吧」》'))
+check('S-02 · 书名号不包裹，内部对话只包一层', nested.querySelectorAll('q').length === 1 && !nested.querySelector('q q') && nested.textContent.trim() === '《他说「走吧」》')
+for (const source of ['`"code"`', '```js\nconst a = "code"\n```']) {
+  const doc = fragment(dialogueRender(source))
+  check('S-03 · 代码引号不包装 ' + source.slice(0, 8), doc.querySelector('code') && !doc.querySelector('q') && doc.querySelector('code').textContent.includes('"code"'))
+}
+const quotedLink = fragment(dialogueRender('[text](http://a/"b")')).querySelector('a')
+check('S-04 · 链接目标保持原文', quotedLink?.getAttribute('href') === 'http://a/%22b%22' && !quotedLink.querySelector('q'))
+const titledLink = fragment(dialogueRender("[text](https://a/ 'say \"hi\"')")).querySelector('a')
+check('S-04 · 链接 title 保持原文', titledLink?.getAttribute('title') === 'say "hi"' && !titledLink.querySelector('q'))
+const span = fragment(dialogueRender('<span title="x">y</span>'))
+check('S-05 · HTML 属性不包装', span.querySelector('span')?.getAttribute('title') === 'x' && !span.querySelector('q'))
+check('S-06 · 动作仍为 em', dialogueRender('*她低头*').includes('<em>她低头</em>'))
+check('S-07 · renderMarkdown 默认行为保持无自动引号', !fragment(render('「默认」')).querySelector('q'))
+const { bundleModule } = await import('./qq-test-util.mjs')
+const displayModule = await bundleModule('supp01-display', 'export { displayOf, displayPartsOf } from ' + JSON.stringify(path.join(projectRoot, 'src/renderer/src/features/chat/markdown/display.ts').replaceAll('\\', '/')))
+const defaultDisplay = displayModule.displayOf('她说「走吧」', [], undefined, purify)
+check('S-08 · displayOf 默认开启', fragment(defaultDisplay).querySelector('q')?.textContent === '「走吧」', defaultDisplay)
+check('S-08 · 显式 false 仍可关闭', !fragment(displayModule.displayOf('「关闭」', [], undefined, purify, false)).querySelector('q'))
+check('S-08 · 结构化文本链同样开启', fragment(displayModule.displayPartsOf('「结构化」', [], undefined, purify)[0].html).querySelector('q')?.textContent === '「结构化」')
+
+const { readFileSync } = await import('node:fs')
+const css = readFileSync(path.join(projectRoot, 'src/renderer/src/styles/global.css'), 'utf8')
+const styleDom = new JSDOM('<style>' + css + '</style><div class="bubble__md"><font color="red" style="color: red"><em>动作</em><i>斜体</i><u>下划线</u><q>对话</q></font></div>')
+const styledAction = styleDom.window.document.querySelector('em')
+check('F-03 · 动作显式斜体并使用独立次级色令牌', styleDom.window.getComputedStyle(styledAction).fontStyle === 'italic' && /\.bubble__md em\s*\{[^}]*color:\s*var\(--nc-action\)/.test(css))
+for (const tag of ['em', 'i', 'u', 'q']) {
+  check('F-04 · font[color] 下 ' + tag + ' 自动色让位', styleDom.window.getComputedStyle(styleDom.window.document.querySelector(tag)).color === 'rgb(255, 0, 0)')
+}
+const sanitizedFont = fragment(dialogueRender('<font color="red">「对话」</font>'))
+check('F-04 · 既有净化边界保持（font/color 仍剥除，生产显式色支持未闭合）', !sanitizedFont.querySelector('font') && !sanitizedFont.querySelector('[color]'))
+styleDom.window.close()
+
 // ── 汇总 ────────────────────────────────────────────────────────────────
 let failed = 0
 for (const item of checks) {

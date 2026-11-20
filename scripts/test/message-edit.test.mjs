@@ -56,8 +56,11 @@ main.summaryService.stateOf(session.id)
 const summaryFile = path.join(dir, 'summaries.json')
 const summaryBytes = fs.readFileSync(summaryFile, 'utf8')
 await test('delete removes only target and preserves remaining order', () => { service.deleteMessage(session.id, 'a'); assert.deepEqual(row().messages.map(m => m.id), ['u', 'n', 'later']); assert.deepEqual(disk().messages.map(m => m.id), ['u', 'n', 'later']) })
-await test('historyOf omits deleted message and falls back after anchor drift', () => { const history = main.summaryService.historyOf(row()); assert.deepEqual(history.map(m => m.id), ['u', 'n', 'later']) })
-await test('delete and history healing leave summary file untouched', () => assert.equal(fs.readFileSync(summaryFile, 'utf8'), summaryBytes))
+await test('delete alone leaves summary storage untouched', () => assert.equal(fs.readFileSync(summaryFile, 'utf8'), summaryBytes))
+await test('S2 historyOf omits deleted message and heals shifted anchor', () => { const history = main.summaryService.historyOf(row()); assert.deepEqual(history.map(m => m.id), ['u', 'n', 'later']); assert.equal(main.summaryService.stateOf(session.id).coveredCount, 3); assert.equal(main.summaryService.stateOf(session.id).anchorMessageId, 'later') })
+await test('S2 history healing persists only coordinates and diagnostic', () => { const healed = new main.SummaryStore(() => dir).load().get(main.summaryKeyOf(session.id, summary.personaId)); assert.equal(healed.coveredCount, 3); assert.equal(healed.anchorMessageId, 'later'); assert.deepEqual(healed.sections, summary.sections); assert.equal(healed.updatedAt, summary.updatedAt); assert.ok(healed.lastError.includes('重挂')) })
+const healedSummaryBytes = fs.readFileSync(summaryFile, 'utf8')
+await test('S2 repeated history read is idempotent on disk', () => { main.summaryService.historyOf(row()); assert.equal(fs.readFileSync(summaryFile, 'utf8'), healedSummaryBytes) })
 
 let release
 service.runStream = (_session, _message, _sink, controller) => {
@@ -69,7 +72,7 @@ const priorCalls = calls
 const placeholder = service.resendFrom(session.id, 'n', raw, sender)
 await test('resend truncates suffix and appends exactly one assistant placeholder', () => { assert.deepEqual(row().messages.map(m => m.id), ['u', 'n', placeholder.id]); assert.equal(placeholder.role, 'assistant'); assert.equal(placeholder.status, 'streaming'); assert.equal(placeholder.content, ''); assert.deepEqual(placeholder.toolCalls, []) })
 await test('resend invokes stream once, with exact persisted narration', () => { assert.equal(calls, priorCalls + 1); assert.equal(disk().messages[1].content, raw); assert.equal(service.isGenerating(session.id), true) })
-await test('resend leaves summary storage unchanged', () => assert.equal(fs.readFileSync(summaryFile, 'utf8'), summaryBytes))
+await test('resend leaves healed summary storage unchanged', () => assert.equal(fs.readFileSync(summaryFile, 'utf8'), healedSummaryBytes))
 await test('inflight update/resend share exact restartTurn error', async () => {
   let expected
   try { await service.retry(session.id, placeholder.id, sender) } catch (e) { expected = e.message }
@@ -207,8 +210,11 @@ await test('a rejection leaves no stuck buffer for the next attempt', async () =
 })
 const storeSrc = fs.readFileSync(p('src/renderer/src/features/chat/store.ts'), 'utf8')
 await test('rejection path drops the queue instead of flushing it', () => {
- assert.equal((storeSrc.match(/flushResend\(sessionId\)/g) || []).length, 1)
- assert.ok(storeSrc.includes('dropResend(sessionId)'))
+ // SUP-02 的 requestReply 也复用缓冲；本断言只约束 resendFrom 的成功/失败分支。
+ const resendSrc = storeSrc.slice(storeSrc.indexOf('  resendFrom: async '), storeSrc.indexOf('  removeMessage: async '))
+ assert.ok(resendSrc.length > 0)
+ assert.equal((resendSrc.match(/flushResend\(sessionId\)/g) || []).length, 1)
+ assert.ok(resendSrc.includes('dropResend(sessionId)'))
 })
 resetStore()
 await test('save-only store updates exact content without generation', async () => { assert.equal(await store.getState().updateMessage('ui-n', raw), true); assert.equal(store.getState().sessions[0].messages[1].content, raw); assert.equal(store.getState().sessions[0].messages.length, 3); assert.equal(store.getState().streamingId, null) })

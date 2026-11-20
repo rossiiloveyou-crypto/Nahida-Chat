@@ -1,5 +1,6 @@
 import { dialog, ipcMain } from 'electron'
 import { IPC } from '@shared/ipc'
+import { storyRecallStatus } from '../features/story/recallStatus'
 import type { MemoryEntry, Session } from '@shared/types'
 import type {
   StoryBranch,
@@ -41,6 +42,7 @@ import {
  * 现在不写它，等于留下一条「一次 IPC 调用删掉全部剧情」的通道（C10）。
  */
 export function registerStoryIpcHandlers(): void {
+  ipcMain.handle(IPC.storyRecallStatus, () => storyRecallStatus())
   ipcMain.handle(IPC.storyList, (): StorySummary[] => listStories())
   ipcMain.handle(IPC.storyCreate, (_event, draft: StoryDraft) => createStory(draft))
   ipcMain.handle(IPC.storyGet, (_event, storyId: string): StoryMeta | null => getStory(storyId))

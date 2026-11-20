@@ -31,6 +31,8 @@ function argValue(name, fallback) {
 
 const projectRoot = path.resolve(argValue('project', path.resolve(__dirname, '../..')))
 const outDir = path.resolve(argValue('out', path.join(projectRoot, 'docs', 'ui')))
+// Isolated builds avoid cleaning occupied host artifacts under out/.
+const buildRoot = path.resolve(argValue('build', path.join(projectRoot, 'out')))
 const sizeRaw = argValue('size', '1280x860')
 const [viewWidth, viewHeight] = sizeRaw.split('x').map((value) => Number(value))
 const theme = argValue('theme', 'light') === 'dark' ? 'dark' : 'light'
@@ -43,6 +45,16 @@ fs.rmSync(userData, { recursive: true, force: true })
 fs.mkdirSync(userData, { recursive: true })
 fs.mkdirSync(outDir, { recursive: true })
 seedObserveFiles()
+
+// M27：可选隔离夹具，让来源徽标同时出现；绝不触碰真实 userData。
+const promptCheck = process.argv.includes('--verify-prompt-roots')
+const promptOpened = []
+if (promptCheck) {
+  const custom = path.join(userData, 'prompt', 'characters', 'test-a')
+  fs.mkdirSync(custom, { recursive: true })
+  fs.writeFileSync(path.join(custom, 'soul.md'), '# 自定义示例\n\n仅用于提示词库定位图。\n')
+  require('electron').shell.openPath = async (target) => { promptOpened.push(target); return '' }
+}
 
 // 深色出图：必须在 rmSync **之后**写预置配置，否则会被上面那行删掉。
 // 只往隔离目录写，绝不碰用户真实的 %APPDATA%/nahida-chat/settings.json。
@@ -125,9 +137,9 @@ function seedObserveFiles() {
 /** 入口探测：不同 Electron 脚手架产物路径不同，这里按常见位置找。 */
 function resolveMainEntry() {
   const candidates = [
-    path.join(projectRoot, 'out', 'main', 'index.js'),
+    path.join(buildRoot, 'main', 'index.js'),
     path.join(projectRoot, 'dist', 'main', 'index.js'),
-    path.join(projectRoot, 'out', 'main', 'index.cjs'),
+    path.join(buildRoot, 'main', 'index.cjs'),
     path.join(projectRoot, 'dist', 'main', 'index.cjs')
   ]
   const found = candidates.find((item) => fs.existsSync(item))
@@ -146,6 +158,7 @@ require(resolveMainEntry())
  */
 const DEFAULT_VIEWS = [
   { hash: '/chat', name: 'chat-empty', primary: true },
+  { hash: '/chat', name: 'chat-dialogue', seedPreSend: true, click: '[data-ui-target="故事卡片 预发送演示"]' },
   // P6 起首页首帧是 Chat 模式，侧栏**有意**不渲染工作区段 —— 于是 A2 区域会整块从图上消失。
   // 补两个 Agent 态视图，把「工作区列表」和「零工作区门禁态」重新变成可定位的：
   //   click            = 开拍前先点这个元素（用来切到 Agent 模式）
@@ -176,16 +189,19 @@ const DEFAULT_VIEWS = [
   { hash: '/chat', name: 'chat-failed-turn', seedFailure: true },
   { hash: '/settings/models', name: 'settings-models' },
   { hash: '/settings/prompts', name: 'settings-prompts' },
+  { hash: '/settings/prompts', name: 'settings-prompts-roles', scrollY: 390 },
   // P9：世界书编写器弹层（列表默认 8 条 + 展开按钮 + 新增表单）。
   // 点「打开世界书编辑器」后弹层自己会拉 knownDirs 并落到默认角色的 worldbook 目录。
   { hash: '/settings/prompts', name: 'worldbook-editor', click: '[data-ui-target="世界书编辑器入口"]' },
   // P7：故事区三视图（主界面双分区 / 抽屉展开 / 设置·故事区）
-  { hash: '/chat', name: 'chat-stories', seedStory: true },
+  { hash: '/chat', name: 'chat-stories', seedStory: true, click: '[data-ui-target="故事"]' },
   { hash: '/chat', name: 'chat-story-drawer', seedStory: true, click: '[data-ui-target="故事卡片 时钟之谜"]' },
   { hash: '/settings/stories', name: 'settings-stories', seedStory: true },
   // P8：新建故事区表单（含「背景与剧本设定」与「开场消息」两栏）
-  { hash: '/chat', name: 'new-story-dialog', click: '[data-ui-target="新建故事"]' },
+  { hash: '/chat', name: 'new-story-dialog', click: ['[data-ui-target="故事"]', '[data-ui-target="新建故事"]'] },
   { hash: '/settings/memory', name: 'settings-memory' },
+  { hash: '/settings/memory', name: 'settings-story-recall', scrollY: 740 },
+  { hash: '/settings/memory', name: 'settings-memory-facts', scrollY: 1580, click: '[data-ui-target="普通聊天事实记忆"] summary' },
   // P5：按人聚合面板在页面下半部分（对话摘要之后），补一张下滚视图让新表格可定位
   { hash: '/settings/memory', name: 'settings-memory-lower', scrollY: 1080 },
   // P7（H-25）：危险区在页面最末（top ≈ 2000+），上面两张都够不到。
@@ -213,8 +229,12 @@ const DEFAULT_VIEWS = [
   },
   { hash: '/settings/qq', name: 'settings-qq' },
   { hash: '/settings/qq', name: 'settings-qq-lower', scrollY: 520 },
+  { hash: '/settings/qq', name: 'settings-qq-threshold', scrollY: 1400 },
   { hash: '/settings/qq', name: 'settings-qq-events', scrollY: 1350 },
   { hash: '/settings/tools', name: 'settings-tools' },
+  { hash: '/settings/bridge', name: 'settings-bridge' },
+  { hash: '/settings/bridge', name: 'settings-bridge-lower', scrollY: 650 },
+  { hash: '/settings/bridge', name: 'settings-bridge-status', scrollY: 1200 },
   { hash: '/settings/appearance', name: 'settings-appearance' },
   { hash: '/settings/about', name: 'settings-about' }
 ]
@@ -289,7 +309,7 @@ app.whenReady().then(async () => {
   clearHover()
 
   const indexHtml = [
-    path.join(projectRoot, 'out', 'renderer', 'index.html'),
+    path.join(buildRoot, 'renderer', 'index.html'),
     path.join(projectRoot, 'dist', 'renderer', 'index.html'),
     path.join(projectRoot, 'dist', 'index.html')
   ].find((item) => fs.existsSync(item))
@@ -371,6 +391,30 @@ app.whenReady().then(async () => {
     await win.webContents.executeJavaScript(
       "document.querySelector('.ui-grid')?.classList.remove('ui-grid--hidden')"
     ).catch(() => {})
+
+    if (promptCheck && view.name === 'settings-prompts') {
+      const observed = await win.webContents.executeJavaScript(`
+        (async () => {
+          const deadline = Date.now() + 10000
+          while (!document.querySelector('[data-ui-target="添加自定义角色"]')) {
+            if (Date.now() > deadline) throw new Error('M27 添加入口未出现')
+            await new Promise((r) => requestAnimationFrame(r))
+          }
+          const library = await window.nahida.prompts.library()
+          document.querySelector('[data-ui-target="添加自定义角色"]').click()
+          await new Promise((r) => setTimeout(r, 100))
+          return { library, badges: [...document.querySelectorAll('[data-ui-target="角色来源"]')].map((e) => e.textContent) }
+        })()
+      `)
+      const assert = require('node:assert/strict')
+      const target = path.join(userData, 'prompt', 'characters')
+      assert.equal(promptOpened.at(-1), target)
+      assert.ok(fs.statSync(target).isDirectory())
+      assert.ok(observed.library.characters.some((c) => c.id === 'test-a' && c.origin === 'user'))
+      for (const id of ['nahida', 'dania']) assert.ok(observed.library.characters.some((c) => c.id === id && c.origin === 'builtin'))
+      assert.ok(observed.badges.includes('内置') && observed.badges.includes('自定义'))
+      console.log('PASS M27 live renderer→preload→IPC→shell.openPath ' + JSON.stringify({ target, badges: observed.badges }))
+    }
 
     // 视图级点击已移到播种之后（P7）：seedStory / seedChat 会整页重载，
     // 必须在其之后再点，否则点击打开的抽屉会被 loadFile 冲掉（出图实测）。
@@ -456,6 +500,31 @@ app.whenReady().then(async () => {
       ).catch(() => {})
       await win.webContents.executeJavaScript("window.dispatchEvent(new Event('scroll'))")
       console.log('  已播种故事区 ' + seeded.storyId)
+    }
+
+    // SUP-02：只走真实 preload/IPC 写入队列，截图保留未请求回复状态。
+    if (view.seedPreSend) {
+      const seeded = await win.webContents.executeJavaScript(`
+        (async () => {
+          const created = await window.nahida.story.create({
+            title: '预发送演示', characterId: 'nahida',
+            synopsis: '两段对话和一段旁白，等待一次明确的请求回复。'
+          })
+          const session = await window.nahida.story.session(created.meta.storyId)
+          if (!session) throw new Error('预发送样本会话不存在')
+          await window.nahida.chat.updateSession(session.id, { preSend: true })
+          await window.nahida.chat.queueMessage({ sessionId: session.id, content: '先别回答，我想分两段说。' })
+          await window.nahida.chat.queueMessage({ sessionId: session.id, content: '等我按请求回复，再一起接着说。' })
+          await window.nahida.chat.narrate(session.id, '窗外的雨停了，房间安静下来。')
+          const saved = await window.nahida.story.session(created.meta.storyId)
+          if (!saved.preSend || saved.messages.length !== 3 || saved.messages.some(m => m.role === 'assistant')) {
+            throw new Error('预发送样本不是三条无助手的待回复消息')
+          }
+          return { id: session.id, preSend: saved.preSend, roles: saved.messages.map(m => m.role) }
+        })()
+      `)
+      console.log('PASS SUP-02 real IPC queued snapshot ' + JSON.stringify(seeded))
+      await win.loadFile(indexHtml, { hash: view.hash, query: { grid: '1', v: String(viewIndex), seed: String(Date.now()) } })
     }
 
     if (Array.isArray(view.seedChat) && view.seedChat.length > 0) {
@@ -748,6 +817,87 @@ app.whenReady().then(async () => {
 
     report.views[view.name] = geometry
     console.log('已生成', view.name, '区域', geometry.regions.length, '元素', geometry.targets.length)
+
+    if (process.argv.includes('--verify-p49')) {
+      const assert = require('node:assert/strict')
+      const required = {
+        'chat-empty': ['Chat', 'Agent', '故事'],
+        'chat-stories': ['故事', '新建故事'],
+        'new-story-dialog': ['故事画像输入'],
+        'settings-memory': ['对话摘要参数'],
+        'settings-story-recall': ['故事召回开关', '故事召回轮数', '故事召回预算', '故事召回阈值', '故事关键词权重', '故事补查深度', '保存故事召回设置'],
+        'settings-memory-facts': ['检索参数', '试召回输入', '按人列表'],
+        'settings-qq-threshold': ['门槛组']
+      }[view.name] || []
+      for (const label of required) {
+        const target = geometry.targets.find(item => item.label === label)
+        assert.ok(target && target.width > 0 && target.height > 0, label + ' 不可见')
+        assert.ok(target.left >= 0 && target.top >= 0 && target.left + target.width <= geometry.viewport.width + 1 && target.top + target.height <= geometry.viewport.height + 1, label + ' 超出视口')
+      }
+      assert.equal(geometry.pngSha256, sha(gridFile))
+      const image = require('electron').nativeImage.createFromPath(gridFile)
+      const scale = await win.webContents.executeJavaScript('window.devicePixelRatio')
+      const pixels = image.getSize()
+      assert.ok(Math.abs(pixels.width - geometry.viewport.width * scale) <= 2 && Math.abs(pixels.height - geometry.viewport.height * scale) <= 2, 'PNG 物理像素尺寸与视口/DPI不一致')
+      console.log('PASS P4.9 grid hash/controls/bounds ' + view.name)
+    }
+
+    if (view.seedPreSend && process.argv.includes('--verify-presend')) {
+      const assert = require('node:assert/strict')
+      const targets = ['预发送开关', '请求回复', '输入框']
+      for (const label of targets) {
+        const target = geometry.targets.find(item => item.label === label)
+        assert.ok(target && target.width > 0 && target.height > 0, label + ' 不可见')
+        assert.ok(target.left >= 0 && target.top >= 0 && target.left + target.width <= geometry.viewport.width + 1 && target.top + target.height <= geometry.viewport.height + 1, label + ' 超出视口')
+      }
+      assert.equal(geometry.pngSha256, sha(gridFile))
+      console.log('PASS SUP-02 targeted grid hash/controls/bounds')
+      const snapshot = () => win.webContents.executeJavaScript(`(async () => {
+        const stories = await window.nahida.story.list()
+        return window.nahida.story.session(stories.find(s => s.title === '预发送演示').storyId)
+      })()`)
+      const waitUntil = async (label, read) => {
+        const deadline = Date.now() + 15000
+        for (;;) {
+          const result = await read()
+          if (result) return result
+          if (Date.now() > deadline) throw new Error(label + ' 超时')
+          await new Promise(resolve => setTimeout(resolve, 30))
+        }
+      }
+      const enterText = async (text, enter = true) => {
+        await win.webContents.executeJavaScript("document.querySelector('.composer__input').focus()")
+        await win.webContents.insertText(text)
+        if (enter) {
+          win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Return' })
+          win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Return' })
+        }
+      }
+      assert.deepEqual((await snapshot()).messages.map(m => m.role), ['user', 'user', 'narration'])
+      await enterText('再补一句：请把前面三段一起接住。')
+      await waitUntil('Enter 入队', async () => (await snapshot()).messages.length === 4)
+      assert.equal((await snapshot()).messages.filter(m => m.role === 'assistant').length, 0)
+      await enterText('这段仍是草稿，不随请求回复发送。', false)
+      await win.webContents.executeJavaScript(`(() => {
+        const button = document.querySelector('[data-ui-target="请求回复"]')
+        button.click(); button.click()
+      })()`)
+      await waitUntil('流式禁用', () => win.webContents.executeJavaScript(`(() => {
+        const request = document.querySelector('[data-ui-target="请求回复"]')
+        const toggle = document.querySelector('[data-ui-target="预发送开关"]')
+        return request?.disabled && toggle?.disabled && Boolean(document.querySelector('.composer__action--stop'))
+      })()`))
+      await waitUntil('请求完成', async () => {
+        const session = await snapshot()
+        return session.messages.length === 5 && session.messages.at(-1).status === 'done'
+      })
+      assert.equal((await snapshot()).messages.filter(m => m.role === 'assistant').length, 1)
+      assert.equal(await win.webContents.executeJavaScript("document.querySelector('.composer__input').value"), '这段仍是草稿，不随请求回复发送。')
+      await win.webContents.executeJavaScript("document.querySelector('[data-ui-target=\"请求回复\"]').click()")
+      await waitUntil('空队列提示', () => win.webContents.executeJavaScript("document.body.textContent.includes('还没有待回复的内容')"))
+      assert.equal((await snapshot()).messages.length, 5)
+      console.log('PASS SUP-02 live Enter queues / double click replies once / streaming locks / draft retained / empty queue rejected')
+    }
   }
 
   // 出图后自检：深色出图必须真的落在深色上，不能因为配置没生效而静默出一套浅色图

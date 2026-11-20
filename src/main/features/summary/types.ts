@@ -40,7 +40,7 @@ export interface SessionSummary {
    *    所以必须配 anchorMessageId 一起校验（见 service 的提交前复核）。
    */
   coveredCount: number
-  /** 最后一条被覆盖消息的 id。对不上 = 历史被改过 = 整份摘要作废，回落全量历史 */
+  /** 最后一条被覆盖消息的 id；漂移时按 id 重挂，丢失时重挂到末尾窗口起点，保留四段记忆 */
   anchorMessageId: string | null
   sections: SummarySections
   updatedAt: number

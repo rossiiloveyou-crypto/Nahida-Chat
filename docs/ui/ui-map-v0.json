@@ -175,7 +175,8 @@
           "height": 28
         }
       ],
-      "pngSha256": "e64f66ab8d14001d394ba133fb4bff81632df5c13d1cbbfe5355c27f9ec2d881"
+      "pngSha256": "e64f66ab8d14001d394ba133fb4bff81632df5c13d1cbbfe5355c27f9ec2d881",
+      "imageVersion": "0"
     },
     "chat-agent": {
       "viewport": {
@@ -370,7 +371,8 @@
           "height": 28
         }
       ],
-      "pngSha256": "c1b9577d99d6772201958112aba00bdcb3d6d391cf77fc23480d75b8d2067d86"
+      "pngSha256": "c1b9577d99d6772201958112aba00bdcb3d6d391cf77fc23480d75b8d2067d86",
+      "imageVersion": "0"
     },
     "chat-agent-gated": {
       "viewport": {
@@ -565,7 +567,8 @@
           "height": 28
         }
       ],
-      "pngSha256": "d6e2a0637ca00b447a872b6840108bc4bb565455ce6019f79e6c509c8f7602af"
+      "pngSha256": "d6e2a0637ca00b447a872b6840108bc4bb565455ce6019f79e6c509c8f7602af",
+      "imageVersion": "0"
     },
     "chat-conversation": {
       "viewport": {
@@ -800,7 +803,8 @@
           "height": 28
         }
       ],
-      "pngSha256": "85def7de060d0b866610c442bed58e6dd26ac498cf53fea9e1cd04eb06c97096"
+      "pngSha256": "85def7de060d0b866610c442bed58e6dd26ac498cf53fea9e1cd04eb06c97096",
+      "imageVersion": "0"
     },
     "chat-character-menu": {
       "viewport": {
@@ -1035,7 +1039,8 @@
           "height": 28
         }
       ],
-      "pngSha256": "f25f3eb7bba7386ec343c90910cc205b9e3f2cb7efee43ed2d7b555519532fc0"
+      "pngSha256": "f25f3eb7bba7386ec343c90910cc205b9e3f2cb7efee43ed2d7b555519532fc0",
+      "imageVersion": "0"
     },
     "chat-failed-turn": {
       "viewport": {
@@ -1243,7 +1248,8 @@
           "height": 28
         }
       ],
-      "pngSha256": "4d49a05e0996224debe659d5e23029b1d98d62193a303a0c8f0ecf7594f5fb7d"
+      "pngSha256": "4d49a05e0996224debe659d5e23029b1d98d62193a303a0c8f0ecf7594f5fb7d",
+      "imageVersion": "0"
     },
     "settings-models": {
       "viewport": {
@@ -1329,7 +1335,8 @@
           "height": 36
         }
       ],
-      "pngSha256": "3f6e1bc3488b626669aeba463499b789b828c685c1c8fb18d502ff6f498c5184"
+      "pngSha256": "3f6e1bc3488b626669aeba463499b789b828c685c1c8fb18d502ff6f498c5184",
+      "imageVersion": "0"
     },
     "settings-prompts": {
       "viewport": {
@@ -1444,7 +1451,8 @@
           "height": 36
         }
       ],
-      "pngSha256": "3a00149cc8b3de7eb86875e310054bfc556e713a6cba10df48837e8b18328b12"
+      "pngSha256": "3a00149cc8b3de7eb86875e310054bfc556e713a6cba10df48837e8b18328b12",
+      "imageVersion": "0"
     },
     "worldbook-editor": {
       "viewport": {
@@ -1719,7 +1727,8 @@
           "height": 33
         }
       ],
-      "pngSha256": "5d8fa7fa3ad3b27adcda338553c19add0b8ed900743e0579a61b33241bd8eec3"
+      "pngSha256": "5d8fa7fa3ad3b27adcda338553c19add0b8ed900743e0579a61b33241bd8eec3",
+      "imageVersion": "0"
     },
     "chat-stories": {
       "viewport": {
@@ -1963,7 +1972,8 @@
           "height": 28
         }
       ],
-      "pngSha256": "d82382bfd8101e8a629bfbf3ec1c9265bbf18039c130c728a911e8c6379b4f49"
+      "pngSha256": "d82382bfd8101e8a629bfbf3ec1c9265bbf18039c130c728a911e8c6379b4f49",
+      "imageVersion": "0"
     },
     "chat-story-drawer": {
       "viewport": {
@@ -2451,7 +2461,8 @@
           "height": 28
         }
       ],
-      "pngSha256": "ba990467684e0f9ea8d07af56df5077ef20ab79b57b8f6298c4a0ba036354cb5"
+      "pngSha256": "ba990467684e0f9ea8d07af56df5077ef20ab79b57b8f6298c4a0ba036354cb5",
+      "imageVersion": "0"
     },
     "settings-stories": {
       "viewport": {
@@ -2627,7 +2638,8 @@
           "height": 33
         }
       ],
-      "pngSha256": "ac4bc5d53d9becf4b50d4b4ad901bbf8082052804e68d10edf5f6190d6f2cdfa"
+      "pngSha256": "ac4bc5d53d9becf4b50d4b4ad901bbf8082052804e68d10edf5f6190d6f2cdfa",
+      "imageVersion": "0"
     },
     "new-story-dialog": {
       "viewport": {
@@ -2932,7 +2944,8 @@
           "height": 28
         }
       ],
-      "pngSha256": "9afca1cbd32e12dfd815729230ac09ec1f98bb0a676ac8bdcf5548cf05898f65"
+      "pngSha256": "9afca1cbd32e12dfd815729230ac09ec1f98bb0a676ac8bdcf5548cf05898f65",
+      "imageVersion": "0"
     },
     "settings-memory": {
       "viewport": {
@@ -3065,7 +3078,8 @@
           "height": 36
         }
       ],
-      "pngSha256": "67b208288a8308c1fba678a3c2e8000f5a3dc47532eebb0e2ba728f8eeec7eb3"
+      "pngSha256": "67b208288a8308c1fba678a3c2e8000f5a3dc47532eebb0e2ba728f8eeec7eb3",
+      "imageVersion": "0"
     },
     "settings-memory-lower": {
       "viewport": {
@@ -3198,7 +3212,8 @@
           "height": 36
         }
       ],
-      "pngSha256": "a32652ae5ba3f6f1cb1856d4f824dae9acd81163acceb54b858f18397d6d0645"
+      "pngSha256": "a32652ae5ba3f6f1cb1856d4f824dae9acd81163acceb54b858f18397d6d0645",
+      "imageVersion": "0"
     },
     "settings-memory-danger": {
       "viewport": {
@@ -3331,7 +3346,8 @@
           "height": 36
         }
       ],
-      "pngSha256": "493e113e85e7e9d438c0a65fa869b0b6ae9645d3366c87fc670400f03ccc7c9d"
+      "pngSha256": "493e113e85e7e9d438c0a65fa869b0b6ae9645d3366c87fc670400f03ccc7c9d",
+      "imageVersion": "0"
     },
     "settings-memory-wipe-dialog": {
       "viewport": {
@@ -3500,7 +3516,8 @@
           "height": 36
         }
       ],
-      "pngSha256": "0b66e04d567beec08b53ea07e14fa620358bcb6638e484e1b2215b3723ffd035"
+      "pngSha256": "0b66e04d567beec08b53ea07e14fa620358bcb6638e484e1b2215b3723ffd035",
+      "imageVersion": "0"
     },
     "settings-channels": {
       "viewport": {
@@ -3743,7 +3760,8 @@
           "height": 36
         }
       ],
-      "pngSha256": "687cbbc8ef940f97028fa5adf8dda9ac232b020d8c86124f94301d42b1a175f6"
+      "pngSha256": "687cbbc8ef940f97028fa5adf8dda9ac232b020d8c86124f94301d42b1a175f6",
+      "imageVersion": "0"
     },
     "settings-channels-lower": {
       "viewport": {
@@ -3986,7 +4004,8 @@
           "height": 36
         }
       ],
-      "pngSha256": "f01bd5624b684b6698b13fb412e2a241f2192bb773e4a1a5b36b14446301c5ca"
+      "pngSha256": "f01bd5624b684b6698b13fb412e2a241f2192bb773e4a1a5b36b14446301c5ca",
+      "imageVersion": "0"
     },
     "settings-channels-observe": {
       "viewport": {
@@ -4265,7 +4284,8 @@
           "height": 36
         }
       ],
-      "pngSha256": "befe386dedf4ba44c570bdae4d0da540639413beea86d0435f46407f805427c0"
+      "pngSha256": "befe386dedf4ba44c570bdae4d0da540639413beea86d0435f46407f805427c0",
+      "imageVersion": "0"
     },
     "settings-channels-observe-groups": {
       "viewport": {
@@ -4571,7 +4591,8 @@
           "height": 260
         }
       ],
-      "pngSha256": "e7a87811f8693750c9e9234eb4e0967696637d4d12aa136d1282f80212dff33d"
+      "pngSha256": "e7a87811f8693750c9e9234eb4e0967696637d4d12aa136d1282f80212dff33d",
+      "imageVersion": "0"
     },
     "settings-qq": {
       "viewport": {
@@ -4766,7 +4787,8 @@
           "height": 43
         }
       ],
-      "pngSha256": "7c22a7c61f244f34b6b74abeddbc9debca1d0fee7cb1e41207d3ff7897a0a29b"
+      "pngSha256": "7c22a7c61f244f34b6b74abeddbc9debca1d0fee7cb1e41207d3ff7897a0a29b",
+      "imageVersion": "0"
     },
     "settings-qq-lower": {
       "viewport": {
@@ -4961,7 +4983,8 @@
           "height": 43
         }
       ],
-      "pngSha256": "321871ccd7a207060a442a6ed7a25dd70d902c184e882e97a347d32258ff4c09"
+      "pngSha256": "321871ccd7a207060a442a6ed7a25dd70d902c184e882e97a347d32258ff4c09",
+      "imageVersion": "0"
     },
     "settings-qq-events": {
       "viewport": {
@@ -5156,7 +5179,8 @@
           "height": 43
         }
       ],
-      "pngSha256": "dcc9fdcd698cf3ad14a46d7fae8bc5001093fc2029018bd870ccbf5cf4e9bc3c"
+      "pngSha256": "dcc9fdcd698cf3ad14a46d7fae8bc5001093fc2029018bd870ccbf5cf4e9bc3c",
+      "imageVersion": "0"
     },
     "settings-tools": {
       "viewport": {
@@ -5278,7 +5302,8 @@
           "height": 36
         }
       ],
-      "pngSha256": "315928f700a2e11a18a73e81876cc31c3ae4b12b0ea76c38bea28ba057314a2a"
+      "pngSha256": "315928f700a2e11a18a73e81876cc31c3ae4b12b0ea76c38bea28ba057314a2a",
+      "imageVersion": "0"
     },
     "settings-appearance": {
       "viewport": {
@@ -5391,7 +5416,8 @@
           "height": 28
         }
       ],
-      "pngSha256": "57f294db1ae2785ae1969b573b02ff9125ce645aab8a8736072f3607825688a0"
+      "pngSha256": "57f294db1ae2785ae1969b573b02ff9125ce645aab8a8736072f3607825688a0",
+      "imageVersion": "0"
     },
     "settings-about": {
       "viewport": {
@@ -5452,7 +5478,318 @@
           "height": 190
         }
       ],
-      "pngSha256": "3bbe917b946efd98e120a9eea108ddd893b8084345a8076dae814c07cdf63992"
+      "pngSha256": "3bbe917b946efd98e120a9eea108ddd893b8084345a8076dae814c07cdf63992",
+      "imageVersion": "0"
+    },
+    "settings-bridge": {
+      "viewport": {
+        "width": 1281,
+        "height": 861
+      },
+      "regions": [
+        {
+          "label": "A 设置导航",
+          "top": 10,
+          "left": 10,
+          "width": 236,
+          "height": 842
+        },
+        {
+          "label": "B 设置内容",
+          "top": 16,
+          "left": 252,
+          "width": 1016,
+          "height": 830
+        },
+        {
+          "label": "桥接开关",
+          "top": 129,
+          "left": 395,
+          "width": 720,
+          "height": 142
+        },
+        {
+          "label": "桥接进程配置",
+          "top": 297,
+          "left": 395,
+          "width": 720,
+          "height": 355
+        },
+        {
+          "label": "桥接健康度",
+          "top": 678,
+          "left": 395,
+          "width": 720,
+          "height": 515
+        }
+      ],
+      "targets": [
+        {
+          "index": 1,
+          "label": "返回对话",
+          "tag": "button",
+          "top": 68,
+          "left": 22,
+          "width": 212,
+          "height": 34
+        },
+        {
+          "index": 2,
+          "label": "导航条目",
+          "tag": "nav",
+          "top": 116,
+          "left": 20,
+          "width": 216,
+          "height": 686
+        },
+        {
+          "index": 3,
+          "label": "页头",
+          "tag": "div",
+          "top": 46,
+          "left": 395,
+          "width": 720,
+          "height": 57
+        },
+        {
+          "index": 4,
+          "label": "桥接开关",
+          "tag": "label",
+          "top": 230,
+          "left": 416,
+          "width": 142,
+          "height": 18
+        },
+        {
+          "index": 5,
+          "label": "ST 目录",
+          "tag": "input",
+          "top": 422,
+          "left": 416,
+          "width": 678,
+          "height": 36
+        },
+        {
+          "index": 6,
+          "label": "ST 端口",
+          "tag": "input",
+          "top": 498,
+          "left": 416,
+          "width": 333,
+          "height": 36
+        },
+        {
+          "index": 7,
+          "label": "ST Node 路径",
+          "tag": "input",
+          "top": 498,
+          "left": 761,
+          "width": 333,
+          "height": 36
+        },
+        {
+          "index": 8,
+          "label": "打开 ST",
+          "tag": "button",
+          "top": 548,
+          "left": 416,
+          "width": 86,
+          "height": 40
+        },
+        {
+          "index": 9,
+          "label": "停止 ST",
+          "tag": "button",
+          "top": 548,
+          "left": 513,
+          "width": 86,
+          "height": 40
+        },
+        {
+          "index": 10,
+          "label": "打开日志",
+          "tag": "button",
+          "top": 548,
+          "left": 611,
+          "width": 93,
+          "height": 40
+        },
+        {
+          "index": 11,
+          "label": "桥接状态",
+          "tag": "dl",
+          "top": 732,
+          "left": 416,
+          "width": 678,
+          "height": 387
+        },
+        {
+          "index": 12,
+          "label": "刷新桥接状态",
+          "tag": "button",
+          "top": 1132,
+          "left": 416,
+          "width": 93,
+          "height": 40
+        }
+      ],
+      "pngSha256": "b4fc5dbd63a0dc1ee2cd43af78c9d489d4b90161365c41c2687b0ebc5a9a3702",
+      "imageVersion": "1"
+    },
+    "settings-bridge-lower": {
+      "viewport": {
+        "width": 1281,
+        "height": 861
+      },
+      "regions": [
+        {
+          "label": "A 设置导航",
+          "top": 10,
+          "left": 10,
+          "width": 236,
+          "height": 842
+        },
+        {
+          "label": "B 设置内容",
+          "top": 16,
+          "left": 252,
+          "width": 1016,
+          "height": 830
+        },
+        {
+          "label": "桥接开关",
+          "top": -258,
+          "left": 395,
+          "width": 720,
+          "height": 142
+        },
+        {
+          "label": "桥接进程配置",
+          "top": -91,
+          "left": 395,
+          "width": 720,
+          "height": 355
+        },
+        {
+          "label": "桥接健康度",
+          "top": 291,
+          "left": 395,
+          "width": 720,
+          "height": 515
+        }
+      ],
+      "targets": [
+        {
+          "index": 1,
+          "label": "返回对话",
+          "tag": "button",
+          "top": 68,
+          "left": 22,
+          "width": 212,
+          "height": 34
+        },
+        {
+          "index": 2,
+          "label": "导航条目",
+          "tag": "nav",
+          "top": 116,
+          "left": 20,
+          "width": 216,
+          "height": 686
+        },
+        {
+          "index": 3,
+          "label": "页头",
+          "tag": "div",
+          "top": -342,
+          "left": 395,
+          "width": 720,
+          "height": 57
+        },
+        {
+          "index": 4,
+          "label": "桥接开关",
+          "tag": "label",
+          "top": -158,
+          "left": 416,
+          "width": 142,
+          "height": 18
+        },
+        {
+          "index": 5,
+          "label": "ST 目录",
+          "tag": "input",
+          "top": 34,
+          "left": 416,
+          "width": 678,
+          "height": 36
+        },
+        {
+          "index": 6,
+          "label": "ST 端口",
+          "tag": "input",
+          "top": 110,
+          "left": 416,
+          "width": 333,
+          "height": 36
+        },
+        {
+          "index": 7,
+          "label": "ST Node 路径",
+          "tag": "input",
+          "top": 110,
+          "left": 761,
+          "width": 333,
+          "height": 36
+        },
+        {
+          "index": 8,
+          "label": "打开 ST",
+          "tag": "button",
+          "top": 160,
+          "left": 416,
+          "width": 86,
+          "height": 40
+        },
+        {
+          "index": 9,
+          "label": "停止 ST",
+          "tag": "button",
+          "top": 160,
+          "left": 513,
+          "width": 86,
+          "height": 40
+        },
+        {
+          "index": 10,
+          "label": "打开日志",
+          "tag": "button",
+          "top": 160,
+          "left": 611,
+          "width": 93,
+          "height": 40
+        },
+        {
+          "index": 11,
+          "label": "桥接状态",
+          "tag": "dl",
+          "top": 345,
+          "left": 416,
+          "width": 678,
+          "height": 387
+        },
+        {
+          "index": 12,
+          "label": "刷新桥接状态",
+          "tag": "button",
+          "top": 744,
+          "left": 416,
+          "width": 93,
+          "height": 40
+        }
+      ],
+      "pngSha256": "5df2981b5687eb02b4345ef3c97615b0b49d71c9f26715c4f59f71f3f4e42c95",
+      "imageVersion": "1"
     }
   },
   "observedTheme": {

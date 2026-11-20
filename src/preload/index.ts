@@ -47,15 +47,23 @@ const api: NahidaApi = {
   prompts: {
     library: () => ipcRenderer.invoke(IPC.promptLibrary),
     openLibrary: () => ipcRenderer.invoke(IPC.promptOpen),
+    openUserRoot: () => ipcRenderer.invoke(IPC.promptOpenUserRoot),
     openCharacter: (characterId) => ipcRenderer.invoke(IPC.promptOpenCharacter, characterId)
   },
   // 显示层正则（P3）：**只读**转发。渲染层拿不到 fs，脚本清单只能从这里来。
   regex: {
     listScripts: (request) => ipcRenderer.invoke(IPC.regexListScripts, request)
   },
-  // 桥接健康度（P6 / F-07）：只读转发，走 shared/bridge.ts 自己的频道名
+  // P2：只转发桥接进程与日志操作，Node 能力留在主进程。
   bridge: {
-    health: () => ipcRenderer.invoke(BRIDGE_IPC.health)
+    health: () => ipcRenderer.invoke(BRIDGE_IPC.health),
+    openSt: (config) => ipcRenderer.invoke(BRIDGE_IPC.openSt, config),
+    stopSt: () => ipcRenderer.invoke(BRIDGE_IPC.stopSt),
+    openLog: () => ipcRenderer.invoke(BRIDGE_IPC.openLog),
+    override: {
+      get: () => ipcRenderer.invoke(BRIDGE_IPC.overrideGet),
+      save: (text) => ipcRenderer.invoke(BRIDGE_IPC.overrideSave, text)
+    }
   },
   tools: {
     list: () => ipcRenderer.invoke(IPC.toolList),
@@ -102,6 +110,8 @@ const api: NahidaApi = {
     updateSession: (id, patch) => ipcRenderer.invoke(IPC.chatUpdate, id, patch),
     deleteSession: (id) => ipcRenderer.invoke(IPC.chatDelete, id),
     send: (input) => ipcRenderer.invoke(IPC.chatSend, input),
+    queueMessage: (input) => ipcRenderer.invoke(IPC.chatQueueMessage, input),
+    requestReply: (input) => ipcRenderer.invoke(IPC.chatRequestReply, input),
     narrate: (sessionId, content) => ipcRenderer.invoke(IPC.chatNarrate, sessionId, content),
     stop: (sessionId) => ipcRenderer.invoke(IPC.chatStop, sessionId),
     retry: (sessionId, messageId) => ipcRenderer.invoke(IPC.chatRetry, sessionId, messageId),
@@ -143,6 +153,7 @@ const api: NahidaApi = {
   // P8：旁听库只有这四个只读入口。**没有** clear / delete —— 见 PHASE-8 §4.6。
   // P4：故事区。四个入口都是 invoke；删除的确认参数由调用方显式给。
   story: {
+    recallStatus: () => ipcRenderer.invoke(IPC.storyRecallStatus),
     list: () => ipcRenderer.invoke(IPC.storyList),
     create: (draft) => ipcRenderer.invoke(IPC.storyCreate, draft),
     get: (storyId) => ipcRenderer.invoke(IPC.storyGet, storyId),

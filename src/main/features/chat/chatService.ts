@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import type { RequestReplyInput } from '@shared/api'
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
@@ -32,6 +33,7 @@ import { clockNotice } from '../tools/clock'
 import { promptStore } from '../prompt/promptStore'
 import { memoryService } from '../rag'
 import { summaryService } from '../summary/service'
+import { storyArchiveService } from '../rag/storyArchive'
 import { DEFAULT_PERSONA_ID, ROOT_USER_ID } from '@shared/persona'
 import type { PersonaIdentity } from '@shared/persona'
 import { storyMemory } from '../story/memory'
@@ -306,6 +308,12 @@ class ChatService {
     if (!session) throw new Error('会话不存在')
     if (this.inflight.has(id)) throw new Error('当前会话正在生成，先停止再改')
 
+    if (patch.preSend !== undefined) {
+      if (isChannelSessionId(id)) throw new Error('渠道会话不支持预发送')
+      if (this.turns.has(id)) throw new Error('当前会话仍在生成中')
+      if (typeof patch.preSend !== 'boolean') throw new Error('预发送状态必须为布尔值')
+      session.preSend = patch.preSend
+    }
     if (patch.mode !== undefined) {
       if (session.messages.length > 0) throw new Error('已有消息的会话不能切换模式，请新建对话')
       session.mode = normalizeMode(patch.mode)
@@ -427,9 +435,16 @@ class ChatService {
     const message = session.messages[index]
     if (message.role !== 'assistant') throw new Error('只有回复能重试')
     if (index !== session.messages.length - 1) throw new Error('只能重试最后一条回复')
-    // 故事开场那种「没有提问的回答」重跑没有意义：模型会拿到一段没有 user 的上下文
+    // 故事开场仍不可重试；预发送的纯旁白轮有真实输入，允许复用原助手占位。
     const hasUser = session.messages.some((item) => item.role === 'user')
-    if (!hasUser) throw new Error('这段对话还没有用户发言，没有可重试的一轮')
+    if (!hasUser) {
+      let previousAssistant = index - 1
+      while (previousAssistant >= 0 && session.messages[previousAssistant].role !== 'assistant') previousAssistant -= 1
+      const hasNarration = session.mode === 'story' && Boolean(session.storyId) && !isChannelSessionId(session.id)
+        && session.messages.slice(previousAssistant + 1, index).some((item) => item.role === 'narration' && item.content.trim())
+      if (!hasNarration) throw new Error('这段对话还没有用户发言，没有可重试的一轮')
+      if (this.turns.has(session.id)) throw new Error('当前会话仍在生成中，先停止再重试')
+    }
 
     message.content = ''
     message.toolCalls = []
@@ -470,6 +485,7 @@ class ChatService {
   updateMessage(sessionId: string, messageId: string, content: string): Message {
     const { session, message } = this.editableMessage(sessionId, messageId, content)
     message.content = content
+    storyArchiveService.invalidate(session)
     session.updatedAt = Math.max(Date.now(), session.updatedAt + 1)
     this.persist()
     return cloneMessage(message)
@@ -482,6 +498,7 @@ class ChatService {
     delete message.error
     delete message.warnings
     session.messages.length = index + 1
+    storyArchiveService.invalidate(session)
     const now = Date.now()
     const placeholder: Message = {
       id: randomUUID(), role: 'assistant', content: '', createdAt: now,
@@ -500,9 +517,8 @@ class ChatService {
   /**
    * 删掉一条消息（用户 2026-11-14：失败的气泡要能清掉，不能只能留着看）。
    *
-   * 只做「从数组里拿掉 + 落盘」：摘要游标不在这里清 —— historyOf 的锚点漂移检查
-   * 一旦发现 covered 那条不是当初的 anchorMessageId，就会整份摘要不用（它自己的注释写着
-   * 「撤回 / 重新生成 / 删消息」这三种情况正是为此写的）。
+   * 只做「从数组里拿掉 + 落盘」：摘要游标由 historyOf 自愈。
+   * 锚点仍在则按 id 重挂；锚点丢失则重挂到末尾窗口起点，保留四段记忆。
    */
   deleteMessage(sessionId: string, messageId: string): void {
     this.ensureLoaded()
@@ -512,6 +528,7 @@ class ChatService {
     const index = session.messages.findIndex((item) => item.id === messageId)
     if (index === -1) throw new Error('这条消息不存在（可能已经被删掉了）')
     session.messages.splice(index, 1)
+    storyArchiveService.invalidate(session)
     session.updatedAt = Date.now()
     this.persist()
   }
@@ -541,18 +558,58 @@ class ChatService {
     return this.turns.has(sessionId)
   }
 
+  /** 只追加用户消息。旁白继续复用 narrate，不创建助手占位或调用 provider。 */
+  queueMessage(input: SendInput): Message {
+    this.ensureLoaded()
+    if (isChannelSessionId(input.sessionId)) throw new Error('渠道会话不支持预发送')
+    const session = this.sessions.find((item) => item.id === input.sessionId)
+    if (!session) throw new Error('会话不存在')
+    if (this.inflight.has(session.id) || this.turns.has(session.id)) throw new Error('当前会话仍在生成中')
+    const content = typeof input.content === 'string' ? input.content.trim() : ''
+    if (!content) throw new Error('消息内容为空')
+    const message: Message = { id: randomUUID(), role: 'user', content, createdAt: Date.now(), status: 'done' }
+    session.messages.push(message)
+    session.updatedAt = message.createdAt
+    if (session.title === DEFAULT_SESSION_TITLE) session.title = deriveTitle(content)
+    this.persist()
+    return cloneMessage(message)
+  }
+
+  /** 待回复队列是最后一条助手消息之后的普通 user / narration，无额外消息状态。 */
+  async requestReply(input: RequestReplyInput, sender: WindowLike): Promise<Message> {
+    if (isChannelSessionId(input.sessionId)) throw new Error('渠道会话不支持预发送')
+    return (await this.begin({ sessionId: input.sessionId, content: '' }, windowSink(sender), true)).result
+  }
+
   /** send / sendAwait 的共用实现：校验、造消息、起一轮，返回「立即结果」与「整轮 promise」。 */
   private async begin(
+    input: SendInput, sink: ChatSink, skipUserAppend?: false
+  ): Promise<{ result: SendResult; turn: Promise<ChatTurnOutcome> }>
+  private async begin(
+    input: SendInput, sink: ChatSink, skipUserAppend: true
+  ): Promise<{ result: Message; turn: Promise<ChatTurnOutcome> }>
+  private async begin(
     input: SendInput,
-    sink: ChatSink
-  ): Promise<{ result: SendResult; turn: Promise<ChatTurnOutcome> }> {
+    sink: ChatSink,
+    skipUserAppend = false
+  ): Promise<{ result: SendResult | Message; turn: Promise<ChatTurnOutcome> }> {
     this.ensureLoaded()
     const content = input.content.trim()
-    if (!content) throw new Error('消息内容为空')
+    if (!skipUserAppend && !content) throw new Error('消息内容为空')
 
     const session = this.sessions.find((s) => s.id === input.sessionId)
     if (!session) throw new Error('会话不存在')
     if (this.inflight.has(session.id)) throw new Error('当前会话仍在生成中')
+
+    if (skipUserAppend) {
+      if (isChannelSessionId(session.id)) throw new Error('渠道会话不支持预发送')
+      if (this.turns.has(session.id)) throw new Error('当前会话仍在生成中')
+      const lastAssistant = session.messages.findLastIndex((item) => item.role === 'assistant')
+      const pending = session.messages.slice(lastAssistant + 1)
+      if (!pending.some((item) => (item.role === 'user' || item.role === 'narration') && item.content.trim())) {
+        throw new Error('还没有待回复的内容')
+      }
+    }
 
     const now = Date.now()
     const userMessage: Message = {
@@ -571,9 +628,10 @@ class ChatService {
       toolCalls: []
     }
 
-    session.messages.push(userMessage, assistantMessage)
+    if (skipUserAppend) session.messages.push(assistantMessage)
+    else session.messages.push(userMessage, assistantMessage)
     session.updatedAt = now
-    if (session.title === DEFAULT_SESSION_TITLE) session.title = deriveTitle(content)
+    if (!skipUserAppend && session.title === DEFAULT_SESSION_TITLE) session.title = deriveTitle(content)
     this.persist()
 
     const controller = new AbortController()
@@ -583,7 +641,9 @@ class ChatService {
     this.turns.set(session.id, turn)
 
     return {
-      result: { userMessage: { ...userMessage }, assistantMessage: cloneMessage(assistantMessage) },
+      result: skipUserAppend
+        ? cloneMessage(assistantMessage)
+        : { userMessage: { ...userMessage }, assistantMessage: cloneMessage(assistantMessage) },
       turn
     }
   }
@@ -633,7 +693,7 @@ class ChatService {
       ? branchVisibility(memoryRoute.storyId, session.id).visible
       : undefined
     const memoryBlock =
-      memoryTenants.length === 0
+      !userText.trim() || memoryTenants.length === 0
         ? ''
         : await this
             .recallMemory(userText, stored.memory, memoryRoute, memoryTenants, visible)
@@ -663,13 +723,17 @@ class ChatService {
       for (let turn = 0; turn < MAX_TOOL_TURNS; turn += 1) {
         if (controller.signal.aborted) break
 
-        const payload = this.buildPayload(
+        const useBridge = bridgeEligible(session, stored)
+        const history = summaryService.historyOf(session, memoryTenant.personaId)
+        const payload = await this.buildPayload(
           session,
           memoryBlock,
           clockBlock,
           definitions.length > 0,
           storyPrompt,
-          memoryTenant.personaId
+          memoryTenant.personaId,
+          useBridge,
+          history
         )
         const calls: ToolCallRecord[] = []
 
@@ -677,12 +741,12 @@ class ChatService {
         //    bridgeEligible 是 J-06 的单点，停止条件 2 盯着「别处再出现 mode === 'story' + 开关」。
         //    🔴 桥接分支与 provider.stream 同形状（都是 AsyncGenerator<{type:'text'}>），
         //    所以下面的循环、落库、收尾、abort 一行都不需要分叉 —— 关掉开关即逐字回到旧路径。
-        const useBridge = bridgeEligible(session, stored)
         let bridgeFinal: string | null = null
         const streamSource = useBridge
           ? bridgeStream({
               sessionId: session.id,
               messages: toBridgeMessages(payload),
+              historyBefore: history.length,
               systemPrompts: toBridgeSystemPrompts(payload),
               signal: controller.signal,
               // F-06：告警先进这一轮的 message，再由 done 广播带出去（不拼进 content，M5）
@@ -817,6 +881,7 @@ class ChatService {
       // 放在 finally 里而不是 try 末尾：出错的那一轮也该把已发生的对话记进摘要，
       // 否则一次网络失败会让这段对话永远进不了窗口外的记忆。
       summaryService.schedule(session, memoryTenant.personaId, provider, settings)
+      storyArchiveService.schedule(session, memoryRoute, memoryTenant, { messageId: message.id, interrupted: controller.signal.aborted })
     }
 
     return outcome
@@ -1063,18 +1128,26 @@ class ChatService {
     this.emitTool(sink, session, message)
   }
 
-  private buildPayload(
+  private async buildPayload(
     session: Session,
     memoryBlock: string,
     clockBlock: string,
     toolsEnabled: boolean,
     story: StoryPrompt | null,
-    personaId: string
-  ): LlmMessage[] {
+    personaId: string,
+    contextOnly = false,
+    history = summaryService.historyOf(session, personaId)
+  ): Promise<LlmMessage[]> {
     const payload: LlmMessage[] = []
 
+    // P3：桥接静态资产由 ST 卡负责；仅保留本故事背景和用户画像等事实。
+    if (contextOnly) {
+      if (story?.background?.trim()) payload.push({ role: 'system', content: '【本故事背景与剧本设定】\n' + story.background.trim() })
+      if (story?.profile?.trim()) payload.push({ role: 'system', content: story.profile.trim() })
+    }
+
     // 提示词按角色 + 模式现场拼：shared/base -> soul -> worldbook -> styles/<mode>
-    try {
+    if (!contextOnly) try {
       // toolsEnabled 显式透传（C22）：不挂到 session 上——buildPayload 在工具循环里每轮
       // 都调用，隐式状态会漂；挂 session 还会污染三端契约。
       const system = promptStore.compose(session.characterId, session.mode, {
@@ -1098,6 +1171,18 @@ class ChatService {
     // 和可撤销性完全不同——用户删掉一条记忆，不该动到人格文件。
     if (memoryBlock) payload.push({ role: 'system', content: memoryBlock })
 
+    // P4.8：唯一新增注入，事实 → 故事原文 → 摘要 → 原历史；普通会话不触库。
+    if (session.mode === 'story' && session.storyId) try {
+      const visibility = branchVisibility(session.storyId, session.id)
+      const storyBlock = await storyMemory(session.storyId).buildStoryContextBlock(
+        session, settingsStore.get().storyRecall, {
+          storyId: session.storyId, branchId: session.id,
+          tenants: [{ userId: ROOT_USER_ID, personaId }], bounds: visibility.bounds,
+          recentMessageIds: new Set(history.map((message) => message.id))
+        })
+      if (storyBlock) payload.push({ role: 'system', content: storyBlock })
+    } catch { /* 回顾增强失败不影响同一条生成链路。 */ }
+
     // 对话层记忆：把窗口外的对话压成四段文本，作为最后一段 system。
     // 顺序是刻意的 —— 人格 → 时间 → RAG 事实 → 对话摘要 → 历史。
     // 越靠后越贴近这次回答：记忆回答「用户是谁」，摘要回答「刚才聊到哪」，
@@ -1107,7 +1192,7 @@ class ChatService {
 
     // 历史只下发窗口内的部分：游标之前的内容已经在摘要里了。
     // historyOf 返回的是 session.messages 的切片，不复制、不改原数组。
-    payload.push(...sessionHistoryToLlm({ messages: summaryService.historyOf(session, personaId) }))
+    payload.push(...sessionHistoryToLlm({ messages: history }))
     return payload
   }
 
@@ -1162,6 +1247,8 @@ class ChatService {
   private latestUserText(session: Session): string {
     for (let i = session.messages.length - 1; i >= 0; i -= 1) {
       const message = session.messages[i]
+      // 跳过本轮末尾的空助手占位；遇到已存在的上一轮助手便到达队列边界。
+      if (message.role === 'assistant' && i < session.messages.length - 1) return ''
       if (message.role === 'user' && message.content.trim()) return message.content
     }
     return ''
@@ -1364,15 +1451,15 @@ function cloneCalls(calls: ToolCallRecord[] | undefined): ToolCallRecord[] {
 /**
  * 会话历史 → 模型消息（纯函数）。
  *
- * 旁白在这里必须转成 system，且保留时间顺序；若当成 user 发出去，模型会把舞台说明
- * 误认成用户台词。system 历史消息继续跳过（它们由 buildPayload 的动态段负责重拼）。
+ * 旁白作为 assistant 历史保留时间顺序，以「系统旁白：」区分舞台说明与角色台词。
+ * system 历史消息继续跳过（它们由 buildPayload 的动态段负责重拼）。
  */
 export function sessionHistoryToLlm(session: Pick<Session, 'messages'>): LlmMessage[] {
   const messages: LlmMessage[] = []
   for (const message of session.messages) {
     if (message.role === 'system') continue
     if (message.role === 'narration') {
-      if (message.content.trim()) messages.push({ role: 'system', content: '系统旁白：' + message.content.trim() })
+      if (message.content.trim()) messages.push({ role: 'assistant', content: '系统旁白：' + message.content.trim() })
       continue
     }
 

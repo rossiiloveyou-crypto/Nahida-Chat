@@ -1,6 +1,6 @@
 import { app, shell } from 'electron'
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
-import { join, relative, resolve, sep } from 'node:path'
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync } from 'node:fs'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { STORY_WORLDBOOK_MODE_DEFAULT } from '@shared/story'
 import type { StoryWorldbookMode } from '@shared/story'
 import type {
@@ -72,36 +72,92 @@ class PromptStore {
     return join(app.getAppPath(), 'Prompt')
   }
 
+  /** 只解析路径；不在模块加载时读取 userData，也不复制任何内置资产。 */
+  userRoot(): string {
+    return join(app.getPath('userData'), 'prompt')
+  }
+
+  roots(): { user: string; builtin: string } {
+    return { user: this.userRoot(), builtin: this.root() }
+  }
+
+  /** 由 whenReady 之后的 IPC 注册入口调用。 */
+  ensureUserRoot(): string {
+    const root = this.userRoot()
+    this.assertWritablePath(join(root, 'characters'))
+    this.assertWritablePath(join(root, 'shared'))
+    mkdirSync(join(root, 'characters'), { recursive: true })
+    mkdirSync(join(root, 'shared'), { recursive: true })
+    return root
+  }
+
+  /** 内置资产始终只读，含目录联接/符号链接和尚未创建的后缀路径。 */
+  assertWritablePath(target: string): void {
+    const builtin = resolve(this.root())
+    const physicalBuiltin = physicalPath(builtin)
+    const absolute = resolve(target)
+    const physical = physicalPath(absolute)
+    for (const [base, candidate] of [[builtin, absolute], [physicalBuiltin, physical]]) {
+      const rel = relative(base, candidate)
+      if (!rel || (!rel.startsWith('..' + sep) && rel !== '..' && !isAbsolute(rel))) {
+        throw new Error('内置提示词为只读资产，请复制完整角色到用户目录后编辑：' + builtin)
+      }
+    }
+  }
+
+  private characterRoot(characterId: string): string {
+    if (!characterId || characterId === '.' || characterId === '..' || /[\\/]/.test(characterId)) {
+      throw new Error('非法角色目录: ' + characterId)
+    }
+    const { user, builtin } = this.roots()
+    const candidate = join(user, 'characters', characterId)
+    return existsSync(candidate) && statSync(candidate).isDirectory() ? user : builtin
+  }
+
+  private sharedPath(file: string): string {
+    const { user, builtin } = this.roots()
+    const candidate = join(user, file)
+    return existsSync(candidate) && statSync(candidate).isFile() ? candidate : join(builtin, file)
+  }
+
   /** 设置页用：有哪些角色、每个角色有哪些文件、缺哪个。 */
   library(): PromptLibrary {
-    const root = this.root()
-    const entries = existsSync(join(root, 'characters'))
-      ? readdirSync(join(root, 'characters'), { withFileTypes: true })
-      : []
-
-    const characters: PromptCharacter[] = []
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue
-      const dir = join(root, 'characters', entry.name)
-      const name = readCharacterName(dir, entry.name)
-      characters.push({
-        id: entry.name,
-        name,
-        files: describeCharacterFiles(root, entry.name),
-        complete: existsSync(join(dir, SOUL_FILES[0])) || existsSync(join(dir, SOUL_FILES[1]))
-      })
+    const { user, builtin } = this.roots()
+    const merged = new Map<string, PromptCharacter>()
+    // 先内置、再用户：同 id 整体替换，不混合角色内部文件。
+    for (const [root, origin] of [[builtin, 'builtin'], [user, 'user']] as const) {
+      const base = join(root, 'characters')
+      const entries = existsSync(base) ? readdirSync(base, { withFileTypes: true }) : []
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue
+        const dir = join(base, entry.name)
+        const key = process.platform === 'win32' ? entry.name.toLowerCase() : entry.name
+        const canonicalId = merged.get(key)?.id ?? entry.name
+        merged.set(key, {
+          id: canonicalId,
+          name: readCharacterName(dir, entry.name),
+          origin,
+          dir,
+          worldbookDir: join(dir, 'worldbook'),
+          files: describeCharacterFiles(root, entry.name),
+          complete: SOUL_FILES.some((file) => existsSync(join(dir, file)))
+        })
+      }
     }
+    const characters = [...merged.values()]
 
     return {
-      root,
-      exists: existsSync(root),
+      root: user,
+      userRoot: user,
+      builtinRoot: builtin,
+      exists: existsSync(user) || existsSync(builtin),
       characters: characters.sort((a, b) => a.id.localeCompare(b.id)),
       sharedFiles: SHARED_SPEC.map((item) => ({
         id: item.id,
         label: item.label,
         relativePath: item.id,
         scope: item.scope,
-        exists: existsSync(join(root, item.id))
+        exists: existsSync(this.sharedPath(item.id))
       }))
     }
   }
@@ -143,13 +199,12 @@ class PromptStore {
       }
     }
   ): string {
-    const root = this.root()
     const sections: string[] = []
 
-    push(sections, readIfExists(join(root, SHARED_BASE)))
-    push(sections, readIfExists(join(root, SHARED_TONE)))
+    push(sections, readIfExists(this.sharedPath(SHARED_BASE)))
+    push(sections, readIfExists(this.sharedPath(SHARED_TONE)))
 
-    const dir = join(root, 'characters', characterId)
+    const dir = join(this.characterRoot(characterId), 'characters', characterId)
 
     // 🔴 这里**不套 existsSync(dir) 守卫**（P5 复核 ★.4 / J-26 的修复）。
     //    下面每个读取都已经是 fail-safe 的：readIfExists 对不存在的文件返回空串，
@@ -203,7 +258,7 @@ class PromptStore {
     // agent 恒有工具（P1 的 capability.ts 保证），chat 由调用方按本轮 definitions 告知。
     const wantsToolRules = mode === 'agent' || (mode === 'chat' && opts?.toolsEnabled === true)
     if (wantsToolRules) {
-      push(sections, readIfExists(join(root, SHARED_TOOL_USAGE)))
+      push(sections, readIfExists(this.sharedPath(SHARED_TOOL_USAGE)))
     }
 
     return sections.join('\n\n---\n\n')
@@ -211,17 +266,24 @@ class PromptStore {
 
   /** 打开提示词库目录（交给系统文件管理器）。 */
   async openLibrary(): Promise<string> {
-    const root = this.root()
+    const root = this.ensureUserRoot()
     const error = await shell.openPath(root)
     return error
   }
 
   /** 打开某个角色的目录。 */
   async openCharacter(characterId: string): Promise<string> {
-    const dir = resolve(this.root(), 'characters', characterId)
-    const base = resolve(this.root(), 'characters')
+    this.characterRoot(characterId)
+    const base = resolve(this.ensureUserRoot(), 'characters')
+    const dir = resolve(base, characterId)
     if (!dir.startsWith(base + sep)) throw new Error('非法角色目录: ' + characterId)
-    return shell.openPath(dir)
+    // 不建空的同 id 目录：空目录也会整体遮蔽内置角色。
+    return shell.openPath(existsSync(dir) ? dir : base)
+  }
+
+  /** 添加角色入口：打开用户层 characters，而不是内置安装目录。 */
+  async openUserRoot(): Promise<string> {
+    return shell.openPath(join(this.ensureUserRoot(), 'characters'))
   }
 
   /**
@@ -235,7 +297,7 @@ class PromptStore {
   hasCharacter(characterId: string): boolean {
     const id = typeof characterId === 'string' ? characterId.trim() : ''
     if (!id) return false
-    return this.library().characters.some((item) => item.id === id)
+    return this.library().characters.some((item) => process.platform === 'win32' ? item.id.toLowerCase() === id.toLowerCase() : item.id === id)
   }
 
   /** 默认角色：第一个带 soul.md 的目录，找不到就 nahida。 */
@@ -379,6 +441,29 @@ function safeRealpath(target: string): string | null {
     return realpathSync(target)
   } catch {
     return null
+  }
+}
+
+/** 解析最近存在的祖先，保留未创建的路径后缀。 */
+function physicalPath(target: string, links = 0): string {
+  if (links > 40) throw new Error('提示词写入路径含循环链接')
+  let parent = resolve(target)
+  const suffix: string[] = []
+  for (;;) {
+    try {
+      // existsSync 会把悬空链接当成「不存在」，必须先检查链接本身。
+      const info = lstatSync(parent)
+      if (info.isSymbolicLink()) {
+        return physicalPath(resolve(dirname(parent), readlinkSync(parent), ...suffix), links + 1)
+      }
+      return resolve(realpathSync(parent), ...suffix)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      const next = dirname(parent)
+      if (next === parent) return resolve(target)
+      suffix.unshift(basename(parent))
+      parent = next
+    }
   }
 }
 

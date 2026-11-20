@@ -99,6 +99,7 @@ export function assertMarkdownInDir(dir: string, file: string): string {
  * 备份失败就**不替换**，宁可报错也不留下「没备份的新内容」。
  */
 function writeAtomic(file: string, text: string): void {
+  for (const target of [file, file + '.tmp', file + '.bak']) promptStore.assertWritablePath(target)
   const tmp = file + '.tmp'
   try {
     writeFileSync(tmp, text, 'utf8')
@@ -171,6 +172,7 @@ export function listWorldbook(target: string): WorldbookListing {
 /** 新增条目（A-02 / A-03 / A-15 / A-18）。目标文件不存在时**新建**它。 */
 export function addEntry(dir: string, file: string, draft: WorldbookEntryDraft): WorldbookListing {
   const target = assertMarkdownInDir(dir, file)
+  promptStore.assertWritablePath(target)
   if (!isDirectory(resolve(dir))) throw new Error('世界书目录不存在：' + resolve(dir))
   const text = readText(target)
   const taken = parseWorldbookFile(target, text).map((entry) => entry.id).filter(Boolean)
@@ -194,6 +196,7 @@ export function updateEntry(
   fallbackTitle?: string
 ): WorldbookListing {
   const target = assertMarkdownInDir(dir, file)
+  promptStore.assertWritablePath(target)
   const text = readText(target)
   const entries = parseWorldbookFile(target, text)
   // 缺 id 的条目：句柄是标题，落盘时要给它一个真 id（与同文件既有 id 不冲突）
@@ -223,6 +226,7 @@ export function removeEntry(
   fallbackTitle?: string
 ): WorldbookListing {
   const target = assertMarkdownInDir(dir, file)
+  promptStore.assertWritablePath(target)
   const text = readText(target)
   const next = removeEntryBlock(text, id, fallbackTitle)
   if (next === null) throw new Error('条目不存在：' + String(id || fallbackTitle))
@@ -247,8 +251,12 @@ export function findDuplicates(
 
 /** 新建世界书目录（A-09）：目录 + README.md + 首个 world.md。已存在的文件不覆盖。 */
 export function createWorldbook(dir: string): WorldbookListing {
-  const root = resolve(typeof dir === 'string' ? dir.trim() : '')
-  if (!root) throw new Error('缺少目录路径')
+  const raw = typeof dir === 'string' ? dir.trim() : ''
+  if (!raw) throw new Error('缺少目录路径')
+  const root = resolve(raw)
+  for (const target of [root, join(root, WORLDBOOK_INDEX_FILE), join(root, 'world.md')]) {
+    promptStore.assertWritablePath(target)
+  }
   mkdirSync(root, { recursive: true })
   const readme = join(root, WORLDBOOK_INDEX_FILE)
   if (!existsSync(readme)) writeFileSync(readme, readmeTemplate(basename(root)), 'utf8')
@@ -259,7 +267,7 @@ export function createWorldbook(dir: string): WorldbookListing {
 
 /**
  * 已知世界书目录（A-10 / T5 的下拉）：
- *  - 每个角色的 `Prompt/characters/<id>/worldbook`（存在时）
+ *  - 用户层角色的 `prompt/characters/<id>/worldbook`（存在时）
  *  - 每个故事区配了的剧本世界书目录（存在时）
  *
  * 🔴 「某个故事区不在列表里」= 它没配 `worldbookDir`，**不算缺陷**（§6.6 ①）。
@@ -267,7 +275,7 @@ export function createWorldbook(dir: string): WorldbookListing {
 export function knownDirs(): WorldbookDirInfo[] {
   const result: WorldbookDirInfo[] = []
   try {
-    const root = promptStore.root()
+    const root = promptStore.userRoot()
     for (const character of promptStore.library().characters) {
       const dir = join(root, 'characters', character.id, 'worldbook')
       if (!isDirectory(dir)) continue

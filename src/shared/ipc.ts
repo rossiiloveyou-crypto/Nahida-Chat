@@ -17,6 +17,7 @@ export const IPC = {
 
   promptLibrary: 'prompt:library',
   promptOpen: 'prompt:open',
+  promptOpenUserRoot: 'prompt:open-user-root',
   promptOpenCharacter: 'prompt:open-character',
 
   toolList: 'tool:list',
@@ -65,6 +66,8 @@ export const IPC = {
   chatUpdate: 'chat:update',
   chatDelete: 'chat:delete',
   chatSend: 'chat:send',
+  chatQueueMessage: 'chat:queue-message',
+  chatRequestReply: 'chat:request-reply',
   chatNarrate: 'chat:narrate',
   chatStop: 'chat:stop',
   /** 重跑刚才那一轮（复用失败那条回复的 id，不新增用户消息） */
@@ -113,6 +116,7 @@ export const IPC = {
   observeOpenDir: 'observe:open-dir',
 
   // 故事区（P4 / M14 允许新开通道）：建区 / 列区 / 读区 / 删区
+  storyRecallStatus: 'story:recall-status',
   storyList: 'story:list',
   storyCreate: 'story:create',
   storyGet: 'story:get',

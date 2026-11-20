@@ -13,13 +13,22 @@ import { storyDbPath } from './paths'
  * 🔴 唯一的关闭入口是 closeStoryMemory / closeAllStoryMemory，删区必须先调（§4.11）。
  */
 const handles = new Map<string, MemoryService>()
+const stores = new Map<string, MemoryStore>()
 
 export function storyMemory(storyId: string): MemoryService {
   const exists = handles.get(storyId)
   if (exists) return exists
-  const created = new MemoryService(new MemoryStore(storyDbPath(storyId)))
+  const store = new MemoryStore(storyDbPath(storyId))
+  const created = new MemoryService(store)
+  stores.set(storyId, store)
   handles.set(storyId, created)
   return created
+}
+
+/** 归档复用事实记忆已持有的连接，不开第二个 SQLite handle。 */
+export function storyArchiveStore(storyId: string): MemoryStore {
+  storyMemory(storyId)
+  return stores.get(storyId)!
 }
 
 /** 关掉这个区的句柄（§2.2 C：任何一个没关，删目录都会 EPERM） */
@@ -28,6 +37,7 @@ export function closeStoryMemory(storyId: string): void {
   if (!handle) return
   handle.dispose()
   handles.delete(storyId)
+  stores.delete(storyId)
 }
 
 export function closeAllStoryMemory(): void {

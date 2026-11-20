@@ -20,6 +20,7 @@ import { useChatStore } from '../../chat/store'
 import { useSettings } from '../useSettings'
 import { NumberField } from '../../../components/NumberField'
 import { WipeDialog } from './WipeDialog'
+import { StoryRecallPanel } from './StoryRecallPanel'
 
 /**
  * 长期记忆设置分区。
@@ -496,6 +497,10 @@ export function MemorySection() {
         </p>
       </section>
 
+      {settings && <StoryRecallPanel settings={settings} saving={saving} save={save} />}
+
+      <details data-ui-target="普通聊天事实记忆">
+        <summary>事实记忆（普通聊天使用）</summary>
       <section className="setting-group">
         <h3 className="setting-group__title">运行状态</h3>
         <p className="setting-group__desc">
@@ -884,6 +889,8 @@ export function MemorySection() {
           </>
         )}
       </section>
+
+      </details>
 
       {/* D-1：危险区**与 selected 无关**，永远渲染在页面最末。
           「清空全部数据」清的是所有人，把它挂在某个人的详情下发等于「先随便点一个人才能清全部」——

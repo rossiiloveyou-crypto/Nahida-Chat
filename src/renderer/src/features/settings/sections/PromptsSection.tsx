@@ -57,11 +57,13 @@ export function PromptsSection() {
     void loadLibrary()
   }, [loadLibrary])
 
-  const open = async (target?: string): Promise<void> => {
+  const open = async (target?: string, userCharacters = false): Promise<void> => {
     setBusy(true)
     setStatus(null)
     try {
-      const failure = target
+      const failure = userCharacters
+        ? await window.nahida.prompts.openUserRoot()
+        : target
         ? await window.nahida.prompts.openCharacter(target)
         : await window.nahida.prompts.openLibrary()
       setStatus(failure ? '打开失败：' + failure : null)
@@ -78,14 +80,12 @@ export function PromptsSection() {
   }
 
   /**
-   * 默认世界书目录 = 默认角色的 characters/<id>/worldbook。
-   * 🔴 只拼路径不判存在（渲染层没有 fs）；目录不存在时弹层自己会回落/报错。
+   * 使用主进程给出的生效角色路径；内置世界书可读，写入由主进程保护。
    */
   const defaultWorldbookDir = (): string => {
-    const root = library?.root ?? ''
-    const id = settings?.defaultCharacterId || library?.characters[0]?.id || ''
-    if (!root || !id) return ''
-    return root + '\\characters\\' + id + '\\worldbook'
+    const character = library?.characters.find((item) => item.id === settings?.defaultCharacterId)
+      ?? library?.characters[0]
+    return character?.worldbookDir ?? ''
   }
 
   /** 打开**已存在**的世界书：先列一次，目录不在就直接报错（不静默打开一个空弹层）。 */
@@ -163,7 +163,7 @@ export function PromptsSection() {
       <section className="setting-group">
         <h3 className="setting-group__title">注入顺序 = 改哪个文件</h3>
         <p className="setting-group__desc">
-          越靠后离这次回答越近。模式规则管「该做什么」，表达风格管「怎么说话」，分开写才不会互相牵制。
+          shared/ 按文件优先读用户覆盖，缺失时读内置；角色同 id 按整目录覆盖。正文请在用户目录编辑。
         </p>
         <ol className="prompt-order" data-ui-target="注入顺序">
           {INJECTION_ORDER.map((item, index) => (
@@ -178,7 +178,7 @@ export function PromptsSection() {
             </li>
           ))}
         </ol>
-        {library && <p className="prompt-path">{library.root}</p>}
+        {library && <p className="prompt-path" title={library.userRoot}>自定义：{library.userRoot}</p>}
         {library && !library.exists && (
           <p className="hint-text hint-text--error">提示词目录不存在，检查安装是否完整。</p>
         )}
@@ -189,8 +189,11 @@ export function PromptsSection() {
       <section className="setting-group">
         <h3 className="setting-group__title">角色</h3>
         <p className="setting-group__desc">
-          新增角色 = 在 characters/ 下新建一个文件夹，这里会自动出现。
+          自定义角色保存在用户目录，升级保留；同名目录整体覆盖内置角色。
         </p>
+        <button className="btn-ghost btn-ghost--sm" data-ui-target="添加自定义角色" disabled={busy} onClick={() => void open(undefined, true)}>
+          添加自定义角色
+        </button>
         <div className="prompt-characters" data-ui-target="角色列表">
           {(library?.characters ?? []).map((character) => {
             const isDefault = settings?.defaultCharacterId === character.id
@@ -199,10 +202,11 @@ export function PromptsSection() {
                 <div className="prompt-character__head">
                   <strong>{character.name}</strong>
                   <code>{character.id}</code>
+                  <span className="prompt-scope" data-ui-target="角色来源">{character.origin === 'user' ? '自定义' : '内置'}</span>
                   {isDefault && <span className="tag-default">默认</span>}
                   <div className="prompt-character__actions">
                     <button className="btn-ghost btn-ghost--sm" disabled={busy} onClick={() => void open(character.id)}>
-                      打开目录
+                      自定义目录
                     </button>
                     {!isDefault && (
                       <button

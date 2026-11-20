@@ -52,6 +52,8 @@ export interface StoryDraft {
    * 非空时，建区的最后一步把它写成故事会话的**首条 assistant 消息**（M14 允许的口子）。
    */
   openingText?: string
+  /** 用户在故事中的设定；原文写入既有 profile.md，空白则不建文件 */
+  profile?: string
 }
 
 /** 列表 / 卡片用的一行（P7 会用，本 Phase 只提供数据） */

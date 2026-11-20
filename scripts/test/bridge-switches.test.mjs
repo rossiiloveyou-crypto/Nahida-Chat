@@ -1,14 +1,14 @@
 /**
- * 桥接 P5 —— 失败信号与开关锁的机器判据（PHASE-5 §3 A1–A5）。
+ * 桥接 P4 落盘口径 —— 失败信号与开关锁的机器判据（PHASE-5 §3 A1–A5）。
  *
  * 跑法：node scripts/test/bridge-switches.test.mjs
  *
  * 这一套**只测六件事**，全部可机器判定（本 Phase 无 M 档人工验证点）：
- * 1. 空回复（`''` 与全空白）各自判 error，且文案含「空回复」（A2）；
+ * 1. 稳定落盘空回复（`''` 与全空白）各自判 error，且文案含「空回复」（A2）；
  * 2. 四类失败——reject / 空串 / 超时 / 中止——各自产出确定的 status（A3/A4）；
  * 3. `auto_continue` / `auto_swipe` 被临时置 false，调用后**必定还原**（A5）；
  * 4. 页面没有 `powerUserSettings` 时不崩、不臆造字段，只带一条告警；
- * 5. finally 的顺序是 **先还原开关 → 再 reset 会话**（蓝图 §1 第 4 行）；
+ * 5. finally 的顺序是 **先还原开关 → 还原 chat 名 → 再 reset 会话**（蓝图 §1 第 4 行）；
  * 6. 结果契约恒含 `warnings` 数组（F-03），失败时至少一条非空人话。
  *
  * 假宿主不"假装成功"：它**解析 driver 真正生成的表达式**，把
@@ -91,6 +91,13 @@ function runExpr(world, expr) {
 
 function createFakeGateway(script = {}) {
   const calls = []
+  let diskContent
+  const disk = {
+    target: (_root, name, avatar) => ({ name, avatar, file: name + ".jsonl", directory: "/fixture/chats/card", path: "/fixture/chats/card/" + name + ".jsonl" }),
+    wait: async (target, injected) => ({ content: script.diskContent ?? diskContent, actualLines: injected + 2, expectedLines: injected + 2, file: target.file, waitMs: 50 }),
+    remove: async () => true,
+    backups: async () => []
+  }
   const world = createPageWorld(script.powerUserSettings ?? {})
   /** 每次 switch:mute / switch:restore 的时刻（用来验证 finally 的顺序） */
   const order = []
@@ -100,6 +107,14 @@ function createFakeGateway(script = {}) {
     async eval(expr, label) {
       calls.push(label)
       switch (label) {
+        case 'character:assert':
+          return { name: '妲妮娅', avatar: '妲妮娅.png' }
+        case 'chat:prepare':
+          return { index: 0, avatar: '妲妮娅.png', previous: 'original', hadChat: true }
+        case 'chat:drain':
+          return true
+        case 'chat:restore':
+          return true
         case 'exposure':
           return { missing: [], characters: 3, chat: 0, metadata: 0, prompts: 0 }
         case 'clear':
@@ -119,8 +134,11 @@ function createFakeGateway(script = {}) {
           order.push('restore')
           return runExpr(world, expr)
         }
-        case 'generate':
-          return await (script.generate ? script.generate() : Promise.resolve(okOutcome('灯下有人。')))
+        case 'generate': {
+          const outcome = await (script.generate ? script.generate() : Promise.resolve(okOutcome('灯下有人。')))
+          diskContent = outcome.value
+          return outcome
+        }
         case 'stop':
           return true
         default:
@@ -130,7 +148,7 @@ function createFakeGateway(script = {}) {
   }
 
   return {
-    gateway: { ensure: async () => page, onEvent: () => () => {} },
+    gateway: { disk, ensure: async () => page, onEvent: () => () => {} },
     calls,
     order,
     world,
@@ -150,7 +168,7 @@ function okOutcome(value) {
 }
 
 function newDriver(gateway, overrides = {}) {
-  return new BridgeDriver({ gateway, config: { ...BRIDGE_DEFAULT_CONFIG, minIntervalMs: 0, ...overrides } })
+  return new BridgeDriver({ gateway, disk: gateway.disk, config: { ...BRIDGE_DEFAULT_CONFIG, minIntervalMs: 0, ...overrides } })
 }
 
 const HISTORY = [
@@ -165,7 +183,7 @@ const HISTORY = [
   const fake = createFakeGateway({ generate: () => Promise.resolve(okOutcome('')) })
   const detail = await newDriver(fake.gateway).runTurn({ sessionId: 'empty', messages: HISTORY })
   check(
-    "1 · resolve 空串 '' → status=error 且文案含「空回复」",
+    "1 · 稳定落盘空串 '' → status=error 且文案含「空回复」",
     detail.result.status === 'error' &&
       detail.result.content === '' &&
       detail.result.raw === '' &&

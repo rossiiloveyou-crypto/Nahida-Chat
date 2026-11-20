@@ -82,11 +82,11 @@ check(
   diskSession ? JSON.stringify(diskSession.messages.map((message) => message.role)) : 'missing'
 )
 
-/* ── A-05 / A-06：下一次 payload 里旁白是独立 system ───────── */
+/* ── A-05 / A-06：下一次 payload 里旁白是带前缀的 assistant 历史 ───────── */
 const payload = sessionHistoryToLlm(chatService.listSessions().find((item) => item.id === sessionId))
-const narrationMessages = payload.filter((message) => message.role === 'system' && message.content === '系统旁白：夜色沉下来。')
+const narrationMessages = payload.filter((message) => message.role === 'assistant' && message.content === '系统旁白：夜色沉下来。')
 check(
-  'A-05 buildPayload 把旁白转成 system，并加「系统旁白：」前缀',
+  'A-05 buildPayload 把旁白转成 assistant，并加「系统旁白：」前缀',
   narrationMessages.length === 1,
   JSON.stringify(payload.filter((message) => message.content.includes('夜色沉下来')))
 )

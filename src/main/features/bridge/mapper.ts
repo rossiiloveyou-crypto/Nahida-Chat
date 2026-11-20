@@ -9,7 +9,7 @@
  * |------------|----------------------------------------|--------|
  * | user       | `is_user:true`                          | 用户的台词 |
  * | assistant  | `is_user:false`                         | 角色台词 |
- * | narration  | `is_user:false, is_system:true`         | 旁白是**故事内容**，要进上下文，但不能冒充任何一方发言 |
+ * | narration  | `is_user:false, is_system:false`         | 旁白是**故事内容**，要进上下文，但不能冒充任何一方发言 |
  * | system     | **丢弃**                                | 人设/时间/记忆由 ST 的 `extensionPrompt` 承担（P6 再做；蓝图 §1 第 4 行原话） |
  * | tool       | **丢弃**                                | M3：故事模式恒无工具，历史上不该有；出现就是上游用错，不往 ST 塞 |
  *
@@ -90,7 +90,7 @@ export function mapMessages(messages: BridgeMessage[], options: MapOptions = {})
       message.role === 'user'
         ? { is_user: true, mes: content, name: userName, is_system: false }
         : message.role === 'narration'
-          ? { is_user: false, mes: content, name: systemName, is_system: true }
+          ? { is_user: false, mes: content, name: systemName, is_system: false, extra: { ncBridgeNarration: true } }
           : { is_user: false, mes: content, name: assistantName, is_system: false }
     // send_date 按行号递增 1s：ST 的排序/时间显示不依赖它，但同值会让「时间线」看起来是假的
     row.send_date = new Date(base + chat.length * 1000).toISOString()
@@ -115,7 +115,7 @@ export function fromStChat(chat: StChatMessage[]): BridgeMessage[] {
   const out: BridgeMessage[] = []
   for (const row of Array.isArray(chat) ? chat : []) {
     const content = typeof row?.mes === 'string' ? row.mes : ''
-    if (row?.is_system === true) out.push({ role: 'narration', content })
+    if (row?.extra?.ncBridgeNarration === true || row?.is_system === true) out.push({ role: 'narration', content })
     else if (row?.is_user === true) out.push({ role: 'user', content })
     else out.push({ role: 'assistant', content })
   }

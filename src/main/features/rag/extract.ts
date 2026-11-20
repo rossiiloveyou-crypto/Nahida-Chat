@@ -1,4 +1,4 @@
-import { MEMORY_MAX_CHARS } from '@shared/constants'
+import { MEMORY_EXTRACT_MAX_CHARS } from '@shared/constants'
 import type { LlmMessage, LlmProvider } from '../llm'
 import type { Settings } from '@shared/types'
 
@@ -45,7 +45,7 @@ export function parseExtractResult(text: string): string[] {
     return parsed.memories
       .filter((item): item is string => typeof item === 'string')
       .map((item) => item.trim().replace(/\s+/g, ' '))
-      .filter((item) => item.length >= 4 && item.length <= MEMORY_MAX_CHARS)
+      .filter((item) => item.length >= 4 && item.length <= MEMORY_EXTRACT_MAX_CHARS)
       .slice(0, 3)
   } catch {
     return []

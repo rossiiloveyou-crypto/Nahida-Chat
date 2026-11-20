@@ -5,9 +5,9 @@
  *
  * 这一套测的不是「我自己写的假 SQL」那种自证，测的是三条真实边界：
  * 1. **映射**：`LlmMessage[] ⇄ ST chat[]` 双向往返逐字一致（F-04），含空白、换行、标签、emoji；
- * 2. **顺序**：一轮的步骤序列必须是 ensure → exposure → clear → inject → generate → clear，
+ * 2. **顺序**：一轮的步骤序列必须含 prepare → inject → generate → disk stable → restore → clear → delete，
  *    失败/取消/超时也都必须以 clear 收尾（F-02：ST 零残留）；空历史时**一次页面调用都不许有**；
- * 3. **拦截判据**：J-07 的写盘面与外网面逐条命中，本地读放行（F-03 的静态那半边）。
+ * 3. **P2 开放判据**：写盘/外网/导航/弹窗/权限拦截移除，可见窗口保留独立分区。
  *
  * 页面是**假宿主**（真实 `BrowserWindow` 在真机探针里跑，见 scripts/probe/bridge-rounds.probe.mjs），
  * 但假宿主会**解析** driver 真正塞进页面的注入表达式、并记录每次调用的标签，
@@ -27,7 +27,7 @@ const mod = await bundleModule(
     "export { mapMessages, toStChat, fromStChat, roundTripDiff } from '" + p('src/main/features/bridge/mapper.ts') + "'",
     "export { BridgeDriver, generateExpr, STOP_EXPR } from '" + p('src/main/features/bridge/driver.ts') + "'",
     "export { CLEAR_EXPR, EXPOSURE_EXPR } from '" + p('src/main/features/bridge/session.ts') + "'",
-    "export { CANCEL_PATTERNS, classifyRequest, READY_EXPR } from '" + p('src/main/features/bridge/host.ts') + "'",
+    "export { READY_EXPR } from '" + p('src/main/features/bridge/host.ts') + "'",
     "export { readPresetRegexScripts, mergeRegexScripts, isPresetName } from '" + p('src/main/features/bridge/presetRegex.ts') + "'",
     "export { BRIDGE_DEFAULT_CONFIG, BRIDGE_IPC, BRIDGE_EVENT } from '" + p('src/shared/bridge.ts') + "'"
   ].join('\n')
@@ -42,7 +42,6 @@ const {
   generateExpr,
   CLEAR_EXPR,
   EXPOSURE_EXPR,
-  classifyRequest,
   readPresetRegexScripts,
   mergeRegexScripts,
   isPresetName,
@@ -77,6 +76,18 @@ function parseSwitchItems(expr) {
 
 function createFakeGateway(script = {}) {
   const calls = []
+  let eventListener
+  let diskContent
+  const disk = {
+    target: (_root, name, avatar) => ({ name, avatar, file: name + ".jsonl", directory: "/fixture/chats/card", path: "/fixture/chats/card/" + name + ".jsonl" }),
+    wait: async (target, injected) => {
+      script.beforeDisk?.()
+      if (script.diskError) throw script.diskError
+      return ({ content: script.diskContent ?? diskContent, actualLines: injected + 2, expectedLines: injected + 2, file: target.file, waitMs: 50 })
+    },
+    remove: async () => true,
+    backups: async () => []
+  }
   const injected = []
   let concurrent = 0
   let maxConcurrent = 0
@@ -87,6 +98,15 @@ function createFakeGateway(script = {}) {
       calls.push(label)
       switch (label) {
         case 'ready':
+          return true
+        case 'character:assert':
+          if (script.characterMismatch) throw new Error('ST 角色不符')
+          return { name: '妲妮娅', avatar: '妲妮娅.png' }
+        case 'chat:prepare':
+          return { index: 0, avatar: '妲妮娅.png', previous: 'original', hadChat: true }
+        case 'chat:drain':
+          return true
+        case 'chat:restore':
           return true
         case 'exposure':
           return script.exposure ?? { missing: [], characters: 3, chat: 0, metadata: 0, prompts: 0 }
@@ -142,7 +162,10 @@ function createFakeGateway(script = {}) {
           concurrent += 1
           maxConcurrent = Math.max(maxConcurrent, concurrent)
           try {
-            return await (script.generate ? script.generate() : Promise.resolve(okOutcome('好的。')))
+            eventListener?.({ name: BRIDGE_EVENT.streamToken, payload: { text: '未落盘流片段' } })
+            const outcome = await (script.generate ? script.generate() : Promise.resolve(okOutcome('好的。')))
+            diskContent = outcome.value
+            return outcome
           } finally {
             concurrent -= 1
           }
@@ -157,8 +180,9 @@ function createFakeGateway(script = {}) {
 
   return {
     gateway: {
+      disk,
       ensure: async () => page,
-      onEvent: () => () => {}
+      onEvent: (listener) => { eventListener = listener; return () => { eventListener = undefined } }
     },
     calls,
     injected,
@@ -173,6 +197,7 @@ function okOutcome(value) {
 function newDriver(gateway, overrides = {}) {
   return new BridgeDriver({
     gateway,
+    disk: gateway.disk,
     config: { ...BRIDGE_DEFAULT_CONFIG, ...overrides }
   })
 }
@@ -195,8 +220,8 @@ check(
   JSON.stringify(chat.slice(0, 2).map((r) => [r.is_user, r.is_system]))
 )
 check(
-  '3 · narration → 角色侧的 system 行（不冒充任何一方）',
-  chat[2].is_user === false && chat[2].is_system === true,
+  '3 · narration → 保留旁白标记的非 system 历史行',
+  chat[2].is_user === false && chat[2].is_system === false && chat[2].extra?.ncBridgeNarration === true,
   JSON.stringify([chat[2].is_user, chat[2].is_system])
 )
 check(
@@ -243,18 +268,18 @@ check(
   const fake = createFakeGateway({ generate: () => Promise.resolve(okOutcome('  原稿带前后空格  ')) })
   const driver = newDriver(fake.gateway)
   const detail = await driver.runTurn({ sessionId: 's1', messages: HISTORY })
-  check('9 · 成功：status=done 且 content 逐字等于 resolve 值（不 trim）', detail.result.status === 'done' && detail.result.content === '  原稿带前后空格  ', JSON.stringify(detail.result.content))
+  check('9 · 成功：status=done 且 content 逐字等于稳定落盘值（不 trim）', detail.result.status === 'done' && detail.result.content === '  原稿带前后空格  ', JSON.stringify(detail.result.content))
   check(
     '10 · 成功：结果只有契约里的字段（P5 起含 warnings）',
     Object.keys(detail.result).sort().join(',') === 'content,error,ms,raw,status,warnings',
     Object.keys(detail.result).join(',')
   )
   check(
-    '11 · 步骤顺序：ensure → exposure → clear → inject → generate → clear（P5 在 clear 后插 switch:mute）',
+    '11 · P4 页面步骤逐项匹配，prepare 在注入前、restore 在末次 clear 前',
     // 🔴 P5 有意插入一格：开关必须在**清场之后、注入之前**压制（先清场是为了让 ST 的
     //    自动续写没有可续的 chat；先于注入是为了抢在 generate 之前）。断言跟着改，判据没放宽：
     //    「注入前必须已就绪、generate 后必须清场」这两条仍然逐字成立。
-    fake.calls.join(' > ') === 'exposure > clear > switch:mute > inject > generate > clear',
+    fake.calls.join(' > ') === 'exposure > character:assert > clear > switch:mute > chat:prepare > inject > character:assert > generate > chat:drain > chat:drain > chat:restore > clear',
     fake.calls.join(' > ')
   )
   check('12 · 注入到页面的是 4 条（system 已剔）且逐字一致', fake.injected.length === 4 && fake.injected[1].mes === HISTORY[1].content, JSON.stringify(fake.injected.map((r) => r.mes)))
@@ -266,7 +291,7 @@ check(
   const driver = newDriver(fake.gateway)
   const detail = await driver.runTurn({ sessionId: 's2', messages: HISTORY })
   check(
-    '14 · resolve 空串 = 失败（不许当成功写进分支）',
+    '14 · 稳定落盘空串 = 失败（不许当成功写进分支）',
     detail.result.status === 'error' && detail.result.content === '' && /空串/.test(String(detail.result.error)),
     String(detail.result.error)
   )
@@ -377,6 +402,7 @@ check(
   let clock = 1000
   const driver = new BridgeDriver({
     gateway: fake.gateway,
+    disk: fake.gateway.disk,
     config: { ...BRIDGE_DEFAULT_CONFIG, minIntervalMs: 800 },
     now: () => clock,
     sleep: async (ms) => {
@@ -395,7 +421,7 @@ check(
   const sleeps2 = []
   let clock2 = 5000
   const driver2 = new BridgeDriver({
-    gateway: createFakeGateway().gateway,
+    ...(() => { const gateway = createFakeGateway().gateway; return { gateway, disk: gateway.disk } })(),
     config: { ...BRIDGE_DEFAULT_CONFIG, minIntervalMs: 800 },
     now: () => clock2,
     sleep: async (ms) => {
@@ -410,26 +436,10 @@ check(
 
 /* ─────────────────── 26–30 · 拦截判据（J-07）与 preload 契约 ─────────────────── */
 
-check('26 · 写盘面全部命中 write（J-07 七条）', [
-  'http://127.0.0.1:8000/api/chats/save',
-  'http://127.0.0.1:8000/api/chats/delete',
-  'http://127.0.0.1:8000/api/chats/rename',
-  'http://127.0.0.1:8000/api/chats/import',
-  'http://127.0.0.1:8000/api/backups/chat/a.jsonl',
-  'http://127.0.0.1:8000/api/settings/save',
-  'http://127.0.0.1:8000/api/quick-replies/save'
-].every((url) => classifyRequest(url) === 'write'), 'seven write endpoints')
-check('27 · 带查询串也算（save?avatar=1）', classifyRequest('http://127.0.0.1:8000/api/chats/save?is_group=false') === 'write', 'query')
-check(
-  '28 · 外网一律 external，本地读一律放行',
-  classifyRequest('https://testingcf.jsdelivr.net/npm/x.js') === 'external' &&
-    classifyRequest('https://gitlab.com/a/b') === 'external' &&
-    classifyRequest('http://127.0.0.1:8000/api/characters/all') === null &&
-    classifyRequest('http://localhost:8000/script.js') === null &&
-    classifyRequest('data:text/html,x') === null &&
-    classifyRequest('file:///D:/ST/x.js') === null,
-  'external/local/data/file'
-)
+const hostSource = fs.readFileSync(p('src/main/features/bridge/host.ts'), 'utf8')
+check('26 · P2 写盘与外网拦截链已移除', !/CANCEL_PATTERNS|classifyRequest|wireInterception|onBeforeRequest/.test(hostSource))
+check('27 · P2 导航、弹窗与权限恒拒已移除', !/will-navigate|setWindowOpenHandler|setPermission(Request|Check)Handler/.test(hostSource))
+check('28 · P2 可见窗口保留独立分区与无 Node 页面', /show: true/.test(hostSource) && /electronSession.fromPartition\(this.config.partition\)/.test(hostSource) && /nodeIntegration: false/.test(hostSource) && fs.readFileSync(p('src/main/index.ts'), 'utf8').includes('contents.session === electronSession.fromPartition(BRIDGE_DEFAULT_CONFIG.partition)'))
 check(
   '29 · 桥接频道名与 ST 事件名与共享契约一致（preload 打的就是这条）',
   BRIDGE_IPC.event === 'bridge:event' && BRIDGE_EVENT.streamToken === 'stream_token_received' && CLEAR_EXPR.includes('ctx.chat.length = 0') && EXPOSURE_EXPR.includes('setExtensionPrompt'),
@@ -485,5 +495,39 @@ check(
   readPresetRegexScripts(path.join(stDir, 'nope')).length === 0 && readPresetRegexScripts('D:/definitely-not-here').length === 0,
   'fail-soft'
 )
+
+{
+  const fake = createFakeGateway({ diskContent: '  磁盘权威正文 🌱  ', generate: async () => okOutcome('generate 非权威正文') })
+  const detail = await newDriver(fake.gateway).runTurn({ sessionId: 'disk-authority', messages: HISTORY })
+  check('35 · P4 正文只认 disk，generate 与 disk 不同仍逐字保留磁盘正文', detail.result.status === 'done' && detail.result.content === '  磁盘权威正文 🌱  ' && detail.result.raw === detail.result.content)
+  check('36 · P4 finally 严格 restore → clear → delete', detail.trace.steps.slice(-3).join('>') === 'chat:restore>clear:after>chat:delete' && detail.trace.disk.deleted === true)
+}
+{
+  const fake = createFakeGateway({ diskContent: '', powerUserSettings: { auto_continue: true }, generate: async () => okOutcome('generate 看似成功') })
+  const detail = await newDriver(fake.gateway).runTurn({ sessionId: 'disk-empty-hard', messages: HISTORY })
+  check('37 · P4 disk 空正文是硬失败，generate 非空也不得救回', detail.result.status === 'error' && detail.result.content === '' && /空回复/.test(detail.result.error))
+  check('38 · 硬失败 finally 仍严格 switch restore → chat restore → clear → delete', detail.trace.steps.slice(-4).join('>') === 'switch:restore>chat:restore>clear:after>chat:delete' && detail.trace.disk.deleted === true)
+}
+
+{
+  const fake = createFakeGateway({ diskError: Object.assign(new Error('落盘行数不符'), { actualLines: 8, expectedLines: 6 }) })
+  const detail = await newDriver(fake.gateway).runTurn({ sessionId: 'disk-count-hard', messages: HISTORY })
+  check('39 · P4 行数硬失败仍记录 injected/expected/actual，不丢真实错误证据', detail.result.status === 'error' && detail.trace.disk.injected === 4 && detail.trace.disk.expectedLines === 6 && detail.trace.disk.actualLines === 8, JSON.stringify(detail.trace.disk))
+  check('40 · 行数硬失败仍 restore → clear → delete', detail.trace.steps.slice(-3).join('>') === 'chat:restore>clear:after>chat:delete' && detail.trace.disk.deleted === true)
+}
+
+{
+  const tokens = []
+  let beforeDiskEmpty = false
+  const fake = createFakeGateway({ diskContent: '最终落盘正文', beforeDisk: () => { beforeDiskEmpty = tokens.length === 0 } })
+  const detail = await newDriver(fake.gateway).runTurn({ sessionId: 'disk-stream-gate', messages: HISTORY, onToken: text => tokens.push(text) })
+  check('41 · M20 流片段仅计数，稳定落盘前零正文，成功后仅回调磁盘raw一次', beforeDiskEmpty && detail.trace.tokens === 1 && tokens.length === 1 && tokens[0] === '最终落盘正文')
+}
+{
+  const tokens = []
+  const fake = createFakeGateway({ diskError: Object.assign(new Error('落盘行数不符'), { actualLines: 0 }) })
+  const detail = await newDriver(fake.gateway).runTurn({ sessionId: 'disk-stream-hard', messages: HISTORY, onToken: text => tokens.push(text) })
+  check('42 · M20 硬失败即使收到原始流也保持零正文回调', detail.result.status === 'error' && detail.trace.tokens === 1 && tokens.length === 0)
+}
 
 done()

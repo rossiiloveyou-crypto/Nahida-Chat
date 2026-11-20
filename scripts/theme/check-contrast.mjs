@@ -47,6 +47,9 @@ const PAIRS = [
   { fg: '--nc-danger', bg: '--nc-canvas' },
   { fg: '--nc-on-accent', bg: '--nc-accent' },
   { fg: '--nc-warning', bg: '--nc-canvas' },
+  // SUPPLEMENT-01：这里比较的是与正文的区分度，不是背景可读性 AA。
+  { fg: '--nc-quote', bg: '--nc-text', threshold: 3 },
+  { fg: '--nc-action', bg: '--nc-text', threshold: 3, hueAgainst: '--nc-quote', minHueDifference: 30 },
 ];
 
 function stripComments(css) {
@@ -140,6 +143,16 @@ function contrast(fg, bg) {
   return (hi + 0.05) / (lo + 0.05);
 }
 
+/** HSL 色相；低饱和绿灰仍保留可计算色相，中性灰返回 null。 */
+function hue({ r, g, b }) {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const delta = max - min;
+  if (!delta) return null;
+  const sector = max === r ? (g - b) / delta : max === g ? (b - r) / delta + 2 : (r - g) / delta + 4;
+  return (sector * 60 + 360) % 360;
+}
+
 // ---------------------------------------------------------------- CLI
 
 const argv = process.argv.slice(2);
@@ -172,7 +185,16 @@ for (const pair of PAIRS) {
   const bg = composite(parseColor(bgRaw, pair.bg), { r: 255, g: 255, b: 255 });
   const fg = composite(parseColor(fgRaw, pair.fg), bg);
   const ratio = Number(contrast(fg, bg).toFixed(2));
-  const threshold = pair.j02 ? AA_SMALL_REGISTERED : AA_NORMAL;
+  const threshold = pair.threshold ?? (pair.j02 ? AA_SMALL_REGISTERED : AA_NORMAL);
+  let hueDifference;
+  if (pair.hueAgainst) {
+    const otherRaw = override.get(pair.hueAgainst) ?? base.get(pair.hueAgainst);
+    const ownHue = hue(fg);
+    const otherHue = hue(parseColor(otherRaw, pair.hueAgainst));
+    const delta = ownHue === null || otherHue === null ? null : Math.abs(ownHue - otherHue);
+    hueDifference = delta === null ? null : Math.min(delta, 360 - delta);
+  }
+  const huePass = !pair.hueAgainst || (hueDifference !== null && hueDifference >= pair.minHueDifference);
   rows.push({
     fg: pair.fg,
     bg: pair.bg,
@@ -180,7 +202,8 @@ for (const pair of PAIRS) {
     bg_value: bgRaw,
     ratio,
     threshold,
-    pass: ratio >= threshold,
+    pass: (pair.threshold ? contrast(fg, bg) : ratio) >= threshold && huePass,
+    ...(pair.hueAgainst ? { hue_against: pair.hueAgainst, hue_difference: hueDifference === null ? null : Number(hueDifference.toFixed(2)), min_hue_difference: pair.minHueDifference } : {}),
     aa_pass: ratio >= AA_NORMAL,
     ...(pair.j02 ? { registered_residual: ratio < AA_NORMAL } : {}),
   });

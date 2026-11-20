@@ -289,8 +289,8 @@ check('A-21 STYLE_FILES 有 story 键', /story: 'styles\/story\.md'/.test(prompt
 check('A-21 MODE_LABEL 有 story 键', /story: '故事'/.test(chatPageSrc))
 check('A-21 MODE_COPY 有 story 键', /story: \{ label: '故事'/.test(emptySrc))
 check(
-  'A-21 首页滑块**不含** story（不能出现点了没反应的第三个按钮）',
-  !/\(\['chat', 'agent'[^\]]*'story'/.test(emptySrc)
+  'A-21 P4.9 首页滑块含 chat/agent/story（故事入口行为另由 p49-story-entry 验证）',
+  /\(\['chat', 'agent'[^\]]*'story'/.test(emptySrc)
 )
 check('A-21 normalizeMode 认 story', /if \(value === 'story'\) return 'story'/.test(readSrc('src/main/features/chat/chatService.ts')))
 check('A-21 IPC 四条通道齐全',

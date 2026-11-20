@@ -13,6 +13,7 @@ import type {
   MemoryEntry,
   MemoryRecallHit,
   MemoryStatus,
+  StoryRecallStatus,
   PersonaHistoryEntry,
   Message,
   ModelDiscoveryRequest,
@@ -32,7 +33,7 @@ import type {
 } from './types'
 import type { ToolApprovalReply, ToolDefinition } from './tools'
 import type { StRegexScript } from './regex'
-import type { BridgeHealth } from './bridge'
+import type { BridgeConfig, BridgeHealth, BridgeOverrideState } from './bridge'
 import type { QqEventFeedItem, QqSettings, QqStatusPayload } from './qq'
 import type { ChannelStatusPayload } from './channels'
 import type { ChannelAccount, ChannelAccessConfig, ChannelGroup } from './channelAccess'
@@ -57,6 +58,11 @@ import type {
   StorySearchHit,
   StorySummary
 } from './story'
+
+/** 请求回复不携带新消息，待回复内容来自会话尾部历史。 */
+export interface RequestReplyInput {
+  sessionId: string
+}
 
 export interface MemoryUserRow {
   userId: string
@@ -182,6 +188,8 @@ export interface NahidaApi {
     library: () => Promise<PromptLibrary>
     /** 用系统文件管理器打开 Prompt/ 根目录，返回空串表示成功 */
     openLibrary: () => Promise<string>
+    /** 打开 userData/prompt/characters，返回空串表示成功。 */
+    openUserRoot: () => Promise<string>
     openCharacter: (characterId: string) => Promise<string>
   }
   tools: {
@@ -198,13 +206,20 @@ export interface NahidaApi {
     listScripts: (request?: { stDir?: string }) => Promise<StRegexScript[]>
   }
   /**
-   * ST 桥接（P6 / F-07）：**只读**健康度。
-   *
-   * 🔴 刻意没有 turn / rebuild / save 之类的方法：桥接的驱动只发生在 chatService 的
-   *    生成位上，多一条写入口就等于多一个能绕过三条件与的通道（J-06 单点）。
+   * ST 桥接：健康度、进程与日志。生成仍只从 chatService 的路由发起。
+   * 运行配置由主进程 host 校验并保存，故事开关仍在 Settings.bridge.enabled。
    */
   bridge: {
     health: () => Promise<BridgeHealth>
+    /** 打开进程与可见窗口；不强制模型连通。可配置 stRoot / port / nodePath。 */
+    openSt: (config?: Partial<BridgeConfig>) => Promise<BridgeHealth>
+    stopSt: () => Promise<BridgeHealth>
+    openLog: () => Promise<void>
+    /** 默认空；仅故事桥接每轮注入。清空并保存后停止注入。 */
+    override: {
+      get: () => Promise<BridgeOverrideState>
+      save: (text: string) => Promise<BridgeOverrideState>
+    }
   }
   /**
    * 工作区清单（多工作区）。
@@ -279,6 +294,8 @@ export interface NahidaApi {
     updateSession: (id: string, patch: UpdateSessionInput) => Promise<Session>
     deleteSession: (id: string) => Promise<void>
     send: (input: SendInput) => Promise<SendResult>
+    queueMessage: (input: SendInput) => Promise<Message>
+    requestReply: (input: RequestReplyInput) => Promise<Message>
     /** 故事区旁白：只追加一条旁白消息并落盘，不调用模型；下次 send 时作为 system 下发 */
     narrate: (sessionId: string, content: string) => Promise<Message>
     stop: (sessionId: string) => Promise<void>
@@ -424,6 +441,8 @@ export interface NahidaApi {
    *    P7 的确认框打开前，这条参数就是唯一那道闸。
    */
   story: {
+    /** 只读统计所有故事归档；不初始化库、不加载或下载模型。 */
+    recallStatus: () => Promise<StoryRecallStatus>
     list: () => Promise<StorySummary[]>
     create: (draft: StoryDraft) => Promise<{ meta: StoryMeta; sessionId: string }>
     get: (storyId: string) => Promise<StoryMeta | null>

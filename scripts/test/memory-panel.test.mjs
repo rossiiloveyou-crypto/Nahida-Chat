@@ -348,10 +348,16 @@ check('MP-21 同一会话下两个人物设的摘要互不覆盖',
 const blockWork = two.systemBlock(SESSION, 'work')
 const blockDefault = two.systemBlock(SESSION, 'default')
 check('MP-22 systemBlock(work) 只含 work 的四段', blockWork.includes('WORK-哨兵') && !blockWork.includes('DEFAULT-哨兵'))
-check('MP-22 systemBlock(default) 只含 default 的四段', blockDefault.includes('DEFAULT-哨兵') && !blockDefault.includes('WORK-哨兵'))
+// P3.7：none 态不注入；有四段正文也不能绕过有效覆盖边界判定。
+check('MP-22 systemBlock(default) 无覆盖锚点时不注入', blockDefault === '')
 const workWindow = two.historyOf(SESSION, 'work').map((item) => item.id).join(',')
 check('MP-25 historyOf(work) 的窗口只由 work 的 coveredCount 决定（m3 起 3 条）', workWindow === 'm3,m4,m5', workWindow)
 check('MP-25 对照：default 的 coveredCount=0 → 全量 5 条', two.historyOf(SESSION, 'default').length === 5, two.historyOf(SESSION, 'default').length)
+// 再给 default 有效边界，仍以真实 systemBlock 验证两个方向都不串四段。
+Object.assign(two.stateOf('S1', 'default'), { coveredCount: 1, anchorMessageId: 'm1' })
+const validDefault = two.systemBlock(SESSION, 'default')
+check('MP-22 有效 default 只注入自己的四段', validDefault.includes('DEFAULT-哨兵') && !validDefault.includes('WORK-哨兵'))
+check('MP-22 default 激活不影响 work 注入', two.systemBlock(SESSION, 'work') === blockWork)
 
 const dirV1 = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-mp-v1-'))
 const v1Sections = { short_term: 'v1-短期', long_term: 'v1-长期', user_info: 'v1-用户', promises: 'v1-约定' }

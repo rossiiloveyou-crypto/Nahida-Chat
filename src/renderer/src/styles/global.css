@@ -733,6 +733,11 @@ select {
 
 .bubble__md q { color: var(--nc-quote); quotes: none; }
 .bubble__md q::before, .bubble__md q::after { content: none; }
+.bubble__md em { font-style: italic; color: var(--nc-action); }
+.bubble__md font[color] em,
+.bubble__md font[color] i,
+.bubble__md font[color] u,
+.bubble__md font[color] q { color: inherit; }
 .bubble__md .bubble-card {
   margin: 8px 0; padding: 8px 12px; background: var(--nc-card-surface);
   border: 1px solid var(--nc-border); border-radius: var(--nc-radius-sm);

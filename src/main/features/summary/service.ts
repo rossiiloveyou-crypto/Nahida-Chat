@@ -26,6 +26,40 @@ const COMPRESS_TIMEOUT_MS = 90_000
 /** 喂给压缩模型的新增对话字符上限，防止一次把整段历史发出去 */
 const MAX_INPUT_CHARS = 24_000
 
+/** 从指定边界向前保留 windowCount 条可读消息；省略边界时从末尾计数。 */
+export function windowStartOf(
+  messages: Message[],
+  windowCount: number,
+  covered = messages.length
+): number {
+  let start = covered
+  let remaining = windowCount
+  while (start > 0 && remaining > 0) {
+    start -= 1
+    if (isReadableMessage(messages[start])) remaining -= 1
+  }
+  return start
+}
+
+/** 唯一的覆盖边界判定点；只读输入，不改摘要与历史。 */
+export function resolveCovered(
+  session: Session,
+  summary: SessionSummary | null | undefined,
+  config: SummaryConfig
+): { state: 'none' | 'ok' | 'shifted' | 'lost'; covered: number } {
+  if (!config.enabled || !summary || summary.coveredCount <= 0 || !summary.anchorMessageId) {
+    return { state: 'none', covered: 0 }
+  }
+  const covered = summary.coveredCount
+  if (session.messages[covered - 1]?.id === summary.anchorMessageId) {
+    return { state: 'ok', covered }
+  }
+  const index = session.messages.findIndex((message) => message.id === summary.anchorMessageId)
+  return index >= 0
+    ? { state: 'shifted', covered: index + 1 }
+    : { state: 'lost', covered: windowStartOf(session.messages, config.windowCount) }
+}
+
 interface SummaryJob {
   sessionId: string
   personaId: string
@@ -59,9 +93,9 @@ interface CompressContext {
  * 我们压的是**对话**（刚才聊到哪），无条件注入。两者并存，注入顺序见 chatService.buildPayload。
  *
  * 三条铁律：
- * 1. 记忆坏了不能影响聊天 —— 这里任何异常都收敛成「本轮不注入 + 记录 lastError」；
+ * 1. 记忆坏了不能影响聊天 —— 自愈写回失败只警告，本轮仍使用修正后的内存边界；
  * 2. 压缩不阻塞回复 —— 触发后 fire-and-forget，本轮仍用旧摘要；
- * 3. 边界只在确认历史没变时才前移 —— 撤回/重新生成/删消息会让锚点消失，届时整份摘要作废。
+ * 3. 压缩提交前复核历史；读历史遇到锚点漂移时重挂坐标，保留四段记忆与重叠窗口。
  */
 export class SummaryService {
   /**
@@ -159,6 +193,7 @@ export class SummaryService {
     const config = this.config()
     if (!config.enabled || !personaId) return ''
     const summary = this.all().get(summaryKeyOf(session.id, personaId))
+    if (resolveCovered(session, summary, config).state === 'none') return ''
     if (!summary || sectionsAreEmpty(summary.sections)) return ''
 
     const limits = config.limits
@@ -194,21 +229,31 @@ export class SummaryService {
     const config = this.config()
     if (!config.enabled || !personaId) return session.messages
     const summary = this.all().get(summaryKeyOf(session.id, personaId))
-    if (!summary || summary.coveredCount <= 0 || !summary.anchorMessageId) return session.messages
+    const resolved = resolveCovered(session, summary, config)
+    if (!summary || resolved.state === 'none') return session.messages
 
-    const covered = summary.coveredCount
-    // 指针越界（清空对话后消息变短）：直接回落全量，别用过期下标去切
-    if (covered > session.messages.length) return session.messages
-    const boundary = session.messages[covered - 1]
-    // 锚点漂移（撤回 / 重新生成 / 删消息）：摘要与历史已经脱节，整份不用
-    if (!boundary || boundary.id !== summary.anchorMessageId) return session.messages
-
-    let start = covered
-    let remaining = config.windowCount
-    while (start > 0 && remaining > 0) {
-      start -= 1
-      if (isReadableMessage(session.messages[start])) remaining -= 1
+    const covered = resolved.covered
+    if (resolved.state === 'shifted' || resolved.state === 'lost') {
+      const anchorMessageId = session.messages[covered - 1]?.id ?? null
+      if (summary.coveredCount !== covered || summary.anchorMessageId !== anchorMessageId) {
+        // 先修正内存，连续读取与写盘失败时都使用同一坐标；内容时间戳保持原样。
+        this.all().set(summaryKeyOf(session.id, personaId), {
+          ...summary,
+          coveredCount: covered,
+          anchorMessageId,
+          lastError: resolved.state === 'shifted'
+            ? '摘要锚点漂移，已按消息 id 重挂覆盖边界'
+            : '摘要锚点丢失，已重挂到当前窗口起点'
+        })
+        try {
+          this.persist()
+        } catch (error) {
+          console.warn('[summary] 锚点自愈写回失败，继续使用内存边界', error)
+        }
+      }
     }
+    // 保留原有覆盖区重叠窗口；重挂前后、重启后的切片规则一致。
+    const start = windowStartOf(session.messages, config.windowCount, covered)
 
     const window = session.messages.slice(start)
     // 🔴 窗口起点可能落在 assistant 上。Anthropic 的 messages 要求首条是 user，
@@ -249,7 +294,7 @@ export class SummaryService {
     const now = Date.now()
     if (current.lastAttemptAt > 0 && now - current.lastAttemptAt < RETRY_COOLDOWN_MS) return
 
-    const from = Math.min(current.coveredCount, session.messages.length)
+    const from = resolveCovered(session, current, config).covered
     const pending = session.messages.slice(from)
     const readable = pending.filter(isReadableMessage)
     if (readable.length < config.triggerCount) return

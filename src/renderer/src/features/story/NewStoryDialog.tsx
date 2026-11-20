@@ -24,6 +24,7 @@ export function NewStoryDialog({ onClose }: NewStoryDialogProps) {
   const [worldbookMode, setWorldbookMode] = useState<StoryWorldbookMode>('default')
   const [background, setBackground] = useState('')
   const [openingText, setOpeningText] = useState('')
+  const [profile, setProfile] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -55,7 +56,8 @@ export function NewStoryDialog({ onClose }: NewStoryDialogProps) {
         worldbookDir: worldbookDir.trim() || undefined,
         worldbookMode,
         background: background.trim() || undefined,
-        openingText: openingText.trim() || undefined
+        openingText: openingText.trim() || undefined,
+        profile
       })
       await refreshStories()
       await openStory(created.meta.storyId)
@@ -155,6 +157,17 @@ export function NewStoryDialog({ onClose }: NewStoryDialogProps) {
             onChange={(event) => setBackground(event.target.value)}
             rows={5}
             placeholder="开场环境与场景介绍（世界长什么样、这一幕从哪开始）。这是【设定】，会作为背景注入，不是第一条消息。"
+          />
+        </label>
+
+        <label className="story-field">
+          <span>你的设定（画像）</span>
+          <textarea
+            data-ui-target="故事画像输入"
+            value={profile}
+            onChange={(event) => setProfile(event.target.value)}
+            rows={4}
+            placeholder="描述你在故事里的身份、外貌、能力或与角色的关系；会作为设定注入每一轮。可留空。"
           />
         </label>
 

@@ -52,6 +52,8 @@ interface ChatStore {
    */
   adoptStorySession: (session: Session) => void
   send: (content: string) => Promise<void>
+  queueMessage: (content: string) => Promise<void>
+  requestReply: () => Promise<void>
   /** 故事区旁白：只追加消息，不触发模型 */
   narrate: (content: string) => Promise<void>
   stop: () => Promise<void>
@@ -383,6 +385,47 @@ export const useChatStore = create<ChatStore>()((set, get) => ({
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       set({ error: message, streamingId: null })
+    }
+  },
+
+  queueMessage: async (content) => {
+    const { activeId: sessionId, streamingId } = get()
+    const text = content.trim()
+    if (!sessionId || !text || streamingId === sessionId) return
+    set({ error: null })
+    try {
+      const message = await window.nahida.chat.queueMessage({ sessionId, content: text })
+      set((state) => ({
+        sessions: mapSession(state.sessions, sessionId, (session) => ({
+          ...session,
+          messages: session.messages.some((item) => item.id === message.id)
+            ? session.messages : [...session.messages, message]
+        }))
+      }))
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : String(error) })
+    }
+  },
+
+  requestReply: async () => {
+    const { activeId: sessionId, streamingId } = get()
+    if (!sessionId || streamingId === sessionId || pendingResends.has(sessionId)) return
+    // 与中间重发共用事件暂存：极快模型的 done 也必须等占位安装后再回放。
+    pendingResends.set(sessionId, [])
+    set({ error: null, streamingId: sessionId, approval: null })
+    try {
+      const message = await window.nahida.chat.requestReply({ sessionId })
+      set((state) => ({
+        sessions: mapSession(state.sessions, sessionId, (session) => ({
+          ...session,
+          messages: session.messages.some((item) => item.id === message.id)
+            ? session.messages : [...session.messages, message]
+        }))
+      }))
+      flushResend(sessionId)
+    } catch (error) {
+      dropResend(sessionId)
+      set({ error: error instanceof Error ? error.message : String(error), streamingId: null })
     }
   },
 

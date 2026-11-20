@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { QqSettings } from '@shared/qq'
 import { COMMAND_NAMES } from '@shared/persona'
@@ -66,10 +66,29 @@ export function QqSection() {
 
   const [draft, setDraft] = useState<QqSettings | null>(null)
   const [logs, setLogs] = useState<{ level: string; line: string }[]>([])
+  const [savingThreshold, setSavingThreshold] = useState<CommandName | null>(null)
+  const [thresholdError, setThresholdError] = useState<{ name: CommandName; message: string } | null>(null)
+  const thresholdSave = useRef<{ settings: QqSettings } | null>(null)
 
   useEffect(() => {
-    if (qq.settings) setDraft(qq.settings)
+    if (!qq.settings) return
+    const next = qq.settings
+    // 门槛补丁的整份回执只同步门槛，保留其它字段尚未点击「保存设置」的草稿。
+    const thresholdOnly = thresholdSave.current !== null
+    setDraft((prev) =>
+      thresholdOnly && prev ? { ...prev, commandThresholds: next.commandThresholds } : next
+    )
   }, [qq.settings])
+
+  useEffect(() => {
+    const pending = thresholdSave.current
+    if (!pending || !savingThreshold || qq.busy) return
+    // useQq 会捕获保存异常，通过 error / settings 回写最终结果。
+    if (!qq.error && qq.settings === pending.settings) return
+    if (qq.error) setThresholdError({ name: savingThreshold, message: qq.error })
+    thresholdSave.current = null
+    setSavingThreshold(null)
+  }, [qq.busy, qq.error, qq.settings, savingThreshold])
 
   const host = qq.status?.host
   const stats = qq.status?.stats
@@ -79,15 +98,15 @@ export function QqSection() {
     setDraft((prev) => (prev ? { ...prev, ...value } : prev))
   }
 
-  /**
-   * P4：改一条指令的门槛。
-   *
-   * 🔴 走**同一条** `patch`（= 同一个「保存设置」按钮）：门槛是 `QqSettings` 的一个字段，
-   *    为它单开一条保存路径就是两处真值（B2），而且会出现「改了但没点保存」的半截状态。
-   */
+  /** 门槛即时保存；只提交门槛补丁，其它行为字段仍由原保存按钮提交。 */
   const patchThreshold = (name: CommandName, value: CommandPermissionLevel): void => {
-    if (!draft) return
-    patch({ commandThresholds: { ...draft.commandThresholds, [name]: value } })
+    if (!qq.settings || qq.busy || thresholdSave.current) return
+    thresholdSave.current = { settings: qq.settings }
+    setSavingThreshold(name)
+    setThresholdError(null)
+    void qq.saveSettings({
+      commandThresholds: { ...qq.settings.commandThresholds, [name]: value }
+    })
   }
 
   const refreshLogs = async (): Promise<void> => {
@@ -377,7 +396,7 @@ export function QqSection() {
         <h3 className="setting-group__title">指令门槛</h3>
         <p className="setting-group__desc">
           每条指令要多少等级才允许使用。账号等级在「渠道控制台 → QQ 号白名单」里逐人设置。
-          等级从低到高：无 &lt; 低 &lt; 中 &lt; 高。
+          等级从低到高：无 &lt; 低 &lt; 中 &lt; 高。选择后立即保存。
           <br />
           指令只在<strong>渠道侧</strong>生效：以 <code>//</code> 开头的一行不会送进模型，
           也不建会话。<code>//list</code> 看人设、<code>//switch</code> 切换、
@@ -391,6 +410,7 @@ export function QqSection() {
                 <select
                   className="qq-command-select"
                   value={draft.commandThresholds[name]}
+                  disabled={qq.busy || savingThreshold !== null}
                   onChange={(event) =>
                     patchThreshold(name, event.target.value as CommandPermissionLevel)
                   }
@@ -401,6 +421,12 @@ export function QqSection() {
                     </option>
                   ))}
                 </select>
+                {savingThreshold === name && <span className="hint-text">保存中…</span>}
+                {thresholdError?.name === name && (
+                  <span className="hint-text hint-text--error" role="alert">
+                    保存失败：{thresholdError.message}
+                  </span>
+                )}
               </label>
             ))}
           </div>

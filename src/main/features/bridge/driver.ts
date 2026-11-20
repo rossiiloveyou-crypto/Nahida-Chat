@@ -8,8 +8,8 @@
  * - Connect 在 generate 前：不点则 `generate` 静默 `resolve(undefined)`（P0 §三 第 4 条）。
  * - 清场在 **finally**：失败/超时/取消都必须清，否则下一轮从一开始就是脏的。
  *
- * 🔴 成败**只认** `await ctx.generate('normal')` 的 resolve / reject（J-03）：
- *    `generation_ended` 有 DOM 守卫，会静默丢失；resolve 空串按失败处理（不许把空回复写进分支）。
+ * P4: generate resolve is prerequisite; stable JSONL with exact counts is the success authority.
+ *    generation_ended is diagnostic only; persisted empty/non-assistant replies are hard failures.
  * 🔴 串行：ST 只有一个页面、一份 chat，两个分支同时跑必然串味。M7 已拍板「串行可接受」，
  *    所以这里用**全局单链**排队；`minIntervalMs` 只负责同会话的轮间间隔。
  */
@@ -17,6 +17,12 @@
 import { BRIDGE_DEFAULT_CONFIG, BRIDGE_EVENT } from '@shared/bridge'
 import type { BridgeConfig, BridgeTurnInput, BridgeTurnResult, BridgeTurnStatus } from '@shared/bridge'
 import { bridgeHost } from './host'
+import { chatDisk, chatName } from './chats'
+import type { ChatDisk, ChatTarget } from './chats'
+import { prepareChat, restoreChat, drainChatSaves } from './session'
+import type { BridgeTraceDisk } from './trace'
+import { appendBridgeTrace } from './trace'
+import type { BridgeTraceRecord } from './trace'
 import type { BridgePage, BridgePageEvent } from './host'
 import {
   assertExposure,
@@ -29,6 +35,9 @@ import {
 } from './session'
 import type { BridgeSwitchState, SessionSnapshot } from './session'
 import { mapMessages } from './mapper'
+import { assertCharacter } from './character'
+import { getOverride } from './override'
+import type { BridgeOverrideState } from '@shared/bridge'
 import type { MapOptions, MapDropped } from './mapper'
 
 /** 生成结果（页面侧返回的形状） */
@@ -51,11 +60,14 @@ export interface BridgeGateway {
 
 export interface BridgeDriverDeps {
   gateway: BridgeGateway
+  disk?: ChatDisk
   config?: Partial<BridgeConfig>
   /** 注入的时间源（单测可替换，别用 jest 那套假时钟） */
   now?: () => number
   sleep?: (ms: number) => Promise<void>
   log?: (message: string) => void
+  writeTrace?: (record: BridgeTraceRecord) => void
+  readOverride?: () => BridgeOverrideState
 }
 
 /** 一次调用的入参：`BridgeTurnInput` + 可选的取消与流式回调 */
@@ -81,6 +93,11 @@ export interface BridgeRunInput extends BridgeTurnInput {
  *    P5/P6 的消费者被迫依赖一堆它们不关心的字段。
  */
 export interface BridgeTurnTrace {
+  disk?: BridgeTraceDisk
+  historyBefore: number
+  historySent: number
+  historyInChat: number
+  historyInPrompt: number
   steps: string[]
   clearedBefore: SessionSnapshot | null
   clearedAfter: SessionSnapshot | null
@@ -196,12 +213,29 @@ export const STOP_EXPR = [
   '})()'
 ].join('\n')
 
+export function overrideExpr(text: string): string {
+  return [
+    '(() => {',
+    '  const ctx = SillyTavern.getContext();',
+    '  const text = ' + JSON.stringify(text) + ';',
+    '  if (!text.trim()) return false;',
+    '  ctx.setExtensionPrompt("nc-bridge:override", text, 1, 0);',
+    '  const prompt = ctx.extensionPrompts["nc-bridge:override"];',
+    '  if (!prompt || prompt.value !== text || prompt.position !== 1 || prompt.depth !== 0 || prompt.role !== 0) throw new Error("最高权重规则注入自检失败");',
+    '  return true;',
+    '})()'
+  ].join('\n')
+}
+
 export class BridgeDriver {
+  private readonly disk: ChatDisk
   private readonly gateway: BridgeGateway
   readonly config: BridgeConfig
   private readonly now: () => number
   private readonly sleep: (ms: number) => Promise<void>
   private readonly log: (message: string) => void
+  private readonly writeTrace: (record: BridgeTraceRecord) => void
+  private readonly readOverride: () => BridgeOverrideState
   /** 全局单链：ST 只有一个页面，跨分支并发必然串味 */
   private chain: Promise<void> = Promise.resolve()
   private readonly lastDoneAt = new Map<string, number>()
@@ -209,10 +243,13 @@ export class BridgeDriver {
 
   constructor(deps: BridgeDriverDeps) {
     this.gateway = deps.gateway
+    this.disk = deps.disk ?? chatDisk
     this.config = { ...BRIDGE_DEFAULT_CONFIG, ...(deps.config ?? {}) }
     this.now = deps.now ?? (() => Date.now())
     this.sleep = deps.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)))
     this.log = deps.log ?? (() => {})
+    this.writeTrace = deps.writeTrace ?? appendBridgeTrace
+    this.readOverride = deps.readOverride ?? (() => getOverride())
   }
 
   /** 上一轮的轨迹（排障用；没有轮次时为 null） */
@@ -244,7 +281,11 @@ export class BridgeDriver {
       switches: [],
       switchesRestored: true,
       warnings: [],
-      promptsWritten: 0
+      promptsWritten: 0,
+      historyBefore: input.historyBefore ?? input.messages.length,
+      historySent: input.messages.length,
+      historyInChat: 0,
+      historyInPrompt: 0
     }
 
     const mapped = mapMessages(Array.isArray(input.messages) ? input.messages : [], input.map)
@@ -255,6 +296,7 @@ export class BridgeDriver {
       const result = fail('没有可注入的历史（system / tool / 空正文被全部丢掉）', 0)
       trace.totalMs = this.now() - startedAt
       this.traceOfLastTurn = trace
+      this.persistTrace(input, trace)
       return { result, trace }
     }
 
@@ -274,13 +316,17 @@ export class BridgeDriver {
       const text = payload && typeof payload.text === 'string' ? payload.text : ''
       if (!text) return
       try {
-        input.onToken?.(text)
+        // Tokens are diagnostic only until the persisted assistant is validated (M20).
       } catch (error) {
         this.log('onToken 回调抛错（已吞掉）：' + messageOf(error))
       }
     })
 
     let page: BridgePage | null = null
+    let target: ChatTarget | null = null
+    let prepared = false
+    let backupsBefore: string[] = []
+    let dataDir = ''
     try {
       page = await this.gateway.ensure()
       trace.steps.push('ensure')
@@ -288,6 +334,9 @@ export class BridgeDriver {
       // 停止条件 1：暴露面缺字段 → 后面所有判据都不可信
       await assertExposure(page)
       trace.steps.push('exposure')
+      const cardConfig = (this.gateway as BridgeGateway & { config?: BridgeConfig }).config ?? this.config
+      await assertCharacter(page, cardConfig.cardName, cardConfig.cardAvatar)
+      trace.steps.push('character:assert')
 
       // 进入先清（M2）
       trace.clearedBefore = await resetSession(page)
@@ -309,6 +358,15 @@ export class BridgeDriver {
         }
       }
 
+      dataDir = cardConfig.stDataDir
+      const name = chatName(input.sessionId)
+      backupsBefore = await this.disk.backups(dataDir)
+      prepared = true
+      const selection = await prepareChat(page, name)
+      target = this.disk.target(dataDir, name, selection.avatar)
+      trace.disk = { injected: 0, expectedLines: 0, actualLines: 0, deleted: false, backupDelta: 0, file: target.file, waitMs: 0 }
+      trace.steps.push('chat:prepare')
+
       // P6：NC 的 system 段灌进 ST 的 extensionPrompt（人格 / 时间 / 记忆 / 摘要）。
       // 🔴 顺序敏感：必须在 chat 注入**之前** —— ST 在 generate 时才组装 prompt，
       //    但 extensionPrompts 与 chat 是两份独立存储，先写哪份都不影响正确性；
@@ -327,6 +385,10 @@ export class BridgeDriver {
 
       const injection = await injectChat(page, mapped.chat)
       trace.steps.push('inject')
+      // metadata 行数要读盘才知道，这里只记「注入 + 回复」的下界，成功后由 persisted 覆盖。
+      if (trace.disk) { trace.disk.injected = injection.length; trace.disk.expectedLines = injection.length + 1 }
+      trace.historyInChat = injection.length
+      trace.historyInPrompt = injection.inPrompt
       if (!injection.equal || !injection.flagsEqual) {
         const result = fail(
           '历史注入自检失败：' +
@@ -339,6 +401,14 @@ export class BridgeDriver {
         return { result, trace }
       }
 
+      const override = this.readOverride()
+      if (override.warning) warnings.push(override.warning)
+      if (override.active) {
+        await page.eval(overrideExpr(override.text), 'override:inject')
+        trace.steps.push('override:inject')
+      }
+      // 生成前再读一次，用户在注入期间切卡也不能静默继续。
+      await assertCharacter(page, cardConfig.cardName, cardConfig.cardAvatar)
       const generated = await this.generate(page, input, trace)
       trace.genMs = generated.ms
       trace.lastMes = generated.lastMes
@@ -358,7 +428,17 @@ export class BridgeDriver {
         return { result: fail(withToast, generated.ms, warnings), trace }
       }
 
-      const raw = typeof generated.value === 'string' ? generated.value : ''
+      // ST can still resolve after TokenBudgetExceeded with only a partial system prompt.
+      if (generated.toasts.some(text => /TokenBudgetExceeded|必要的提示词超过了上下文大小|Not enough free tokens|Insufficient.*token|required prompts.*(exceed|context)/i.test(text))) {
+        return { result: fail('ST 上下文预算不足，角色提示词未完整发送。请在 ST 中提高上下文容量或调整世界书预算后重试；页面提示：' + generated.toasts.join(' / '), generated.ms, warnings), trace }
+      }
+
+      if (!target) throw new Error('Missing owned chat target')
+      await drainChatSaves(page)
+      const persisted = await this.disk.wait(target, trace.historyInChat)
+      trace.disk = { injected: trace.historyInChat, expectedLines: persisted.expectedLines, actualLines: persisted.actualLines, deleted: false, backupDelta: 0, file: persisted.file, waitMs: persisted.waitMs }
+      trace.steps.push('chat:stable')
+      const raw = persisted.content
       // 🔴 P5 缺口 0（依据 J-03）：以 resolve 为准，**trim 后为空**同样不算成功。
       //    位置很关键：必须在 resolve 分支**之后**判，不能被落成「reject 分支的一部分」。
       if (raw.trim() === '') {
@@ -368,11 +448,18 @@ export class BridgeDriver {
         return { result: fail('ST 返回空回复（可能被渠道截断或审查）：' + hole + extra, generated.ms, warnings), trace }
       }
 
+      try { input.onToken?.(raw) } catch (error) { this.log('onToken 回调抛错：' + messageOf(error)) }
       return {
         result: { status: 'done', content: raw, raw, error: null, ms: generated.ms, warnings },
         trace
       }
     } catch (error) {
+      if (trace.disk) {
+        // 失败也要留住「判据算出的期望行数」：metadata 行数要读盘才知道，注入时只能给下界。
+        const evidence = error as { actualLines?: number; expectedLines?: number }
+        if (typeof evidence.actualLines === 'number') trace.disk.actualLines = evidence.actualLines
+        if (typeof evidence.expectedLines === 'number') trace.disk.expectedLines = evidence.expectedLines
+      }
       return { result: fail(messageOf(error), trace.genMs, warnings), trace }
     } finally {
       // 🔴 顺序敏感（蓝图 §1 第 4 行）：**先还原开关 → 再 reset 会话**。
@@ -387,6 +474,13 @@ export class BridgeDriver {
           warnings.push('auto_continue / auto_swipe 还原失败：' + String(restore.error ?? '未知原因'))
         }
       }
+      if (page && prepared) {
+        try {
+          await drainChatSaves(page)
+          if (!await restoreChat(page)) throw new Error('chat name readback mismatch')
+          trace.steps.push('chat:restore')
+        } catch (error) { warnings.push('ST 会话名还原失败：' + messageOf(error)) }
+      }
       if (page) {
         try {
           trace.clearedAfter = await resetSession(page)
@@ -398,11 +492,49 @@ export class BridgeDriver {
           this.log('退出清场失败：' + messageOf(error))
         }
       }
+      if (page && target) {
+        try {
+          const deleted = await this.disk.remove(page, target, input.sessionId)
+          if (trace.disk) trace.disk.deleted = deleted
+          trace.steps.push('chat:delete')
+          if (!deleted) warnings.push('本轮 chat 删除失败，已登记孤儿清单')
+        } catch (error) { warnings.push('本轮 chat 收尾失败：' + messageOf(error)) }
+        try {
+          // ST backups use a 10s leading/trailing throttle. Keep the serial gate until its observation window ends.
+          if (this.disk.backupWindowMs) {
+            await this.sleep(this.disk.backupWindowMs)
+            await drainChatSaves(page)
+            trace.clearedAfter = await resetSession(page)
+            trace.steps.push('clear:settled')
+          }
+          const after = await this.disk.backups(dataDir)
+          if (trace.disk) trace.disk.backupDelta = after.filter(file => !backupsBefore.includes(file)).length
+        } catch (error) { warnings.push('备份计数失败：' + messageOf(error)) }
+      }
       offToken()
       release()
       trace.totalMs = this.now() - startedAt
+      this.persistTrace(input, trace, warnings)
       trace.warnings = warnings.slice()
       this.traceOfLastTurn = { ...trace, steps: trace.steps.slice() }
+    }
+  }
+
+  private persistTrace(input: BridgeRunInput, trace: BridgeTurnTrace, warnings = trace.warnings): void {
+    try {
+      const config = (this.gateway as BridgeGateway & { config?: BridgeConfig }).config ?? this.config
+      this.writeTrace({
+        at: new Date(this.now()).toISOString(), sessionId: input.sessionId,
+        before: trace.historyBefore, sent: trace.historySent,
+        inChat: trace.historyInChat, inPrompt: trace.historyInPrompt,
+        promptsWritten: trace.promptsWritten, cardName: config.cardName,
+        disk: trace.disk,
+        steps: trace.steps.slice()
+      })
+    } catch (error) {
+      const warning = '桥接轨迹落盘失败：' + messageOf(error)
+      warnings.push(warning)
+      this.log(warning)
     }
   }
 

@@ -3,9 +3,9 @@ import { existsSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { app } from 'electron'
-import { MEMORY_MAX_CHARS } from '@shared/constants'
+import { MEMORY_STORE_MAX_CHARS } from '@shared/constants'
 import { DEFAULT_PERSONA_ID } from '@shared/persona'
-import type { UserPersonaRow } from '@shared/persona'
+import type { PersonaIdentity, UserPersonaRow } from '@shared/persona'
 import type { MemoryEntry, PersonaHistoryEntry } from '@shared/types'
 import { fromBlob, toBlob } from './vector'
 import { toIndexText } from './tokenize'
@@ -189,6 +189,93 @@ function tenantClause(tenants: Array<{ userId: string; personaId: string }>, pre
     params.push(tenant.userId, tenant.personaId)
   }
   return { sql: '(' + parts.join(' OR ') + ')', params }
+}
+
+const STORY_ARCHIVE_SCHEMA = [
+  `CREATE TABLE IF NOT EXISTS story_message_owners (
+    story_id TEXT NOT NULL, branch_id TEXT NOT NULL, message_id TEXT NOT NULL,
+    tenant_user TEXT NOT NULL, tenant_persona TEXT NOT NULL,
+    PRIMARY KEY (story_id, branch_id, message_id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS story_rounds (
+    id TEXT PRIMARY KEY,
+    story_id TEXT NOT NULL,
+    branch_id TEXT NOT NULL,
+    round_index INTEGER NOT NULL,
+    tenant_user TEXT NOT NULL,
+    tenant_persona TEXT NOT NULL,
+    first_message_id TEXT NOT NULL,
+    last_message_id TEXT NOT NULL,
+    content_version TEXT NOT NULL,
+    roles TEXT NOT NULL,
+    started_at INTEGER NOT NULL,
+    indexed_at INTEGER NOT NULL,
+    valid INTEGER NOT NULL DEFAULT 1
+  )`,
+  `CREATE TABLE IF NOT EXISTS story_chunks (
+    id TEXT PRIMARY KEY,
+    round_id TEXT NOT NULL REFERENCES story_rounds(id),
+    chunk_index INTEGER NOT NULL,
+    text TEXT NOT NULL,
+    start_offset INTEGER NOT NULL,
+    end_offset INTEGER NOT NULL,
+    embedding BLOB,
+    content_version TEXT NOT NULL,
+    indexed_at INTEGER NOT NULL
+  )`,
+  'CREATE INDEX IF NOT EXISTS idx_story_rounds_branch ON story_rounds(story_id, branch_id, round_index)',
+  'CREATE INDEX IF NOT EXISTS idx_story_chunks_round ON story_chunks(round_id)',
+  // Completion receipts contain no source text. Chat persists stopped replies as done, so status must survive restart.
+  `CREATE TABLE IF NOT EXISTS story_archive_status (
+    branch_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    content_version TEXT NOT NULL,
+    interrupted INTEGER NOT NULL,
+    PRIMARY KEY (branch_id, message_id)
+  )`
+]
+
+export interface StoryRoundInput {
+  storyId: string
+  branchId: string
+  roundIndex: number
+  tenantUser: string
+  tenantPersona: string
+  firstMessageId: string
+  lastMessageId: string
+  messageIds?: string[]
+  contentVersion: string
+  roles: string[]
+  startedAt: number
+  chunks: Array<{ index: number; text: string; startOffset: number; endOffset: number }>
+}
+
+export interface StoryRoundRow {
+  id: string
+  story_id: string
+  branch_id: string
+  round_index: number
+  tenant_user: string
+  tenant_persona: string
+  first_message_id: string
+  last_message_id: string
+  content_version: string
+  roles: string
+  started_at: number
+  indexed_at: number
+  valid: number
+}
+
+export interface StoryChunkRow {
+  id: string
+  round_id: string
+  chunk_index: number
+  text: string
+  start_offset: number
+  end_offset: number
+  embedding: Uint8Array | null
+  content_version: string
+  indexed_at: number
 }
 
 export class MemoryStore {
@@ -458,7 +545,7 @@ export class MemoryStore {
   }): MemoryEntry | null {
     const db = this.open()
     if (!db) return null
-    const content = input.content.trim().slice(0, MEMORY_MAX_CHARS)
+    const content = input.content.trim().slice(0, MEMORY_STORE_MAX_CHARS)
     if (!content) return null
 
     try {
@@ -804,6 +891,151 @@ export class MemoryStore {
     } catch (error) {
       console.warn('[memory] 人设历史读取失败', error)
       return []
+    }
+  }
+
+  /** Archive failures propagate only to the background scheduler, never the chat path. */
+  private archiveDb(): DatabaseSync {
+    // Fact calls retain their original fail-once semantics; an archive attempt may retry next turn.
+    if (!this.db) this.failed = false
+    const db = this.open()
+    if (!db) throw new Error('故事归档数据库不可用')
+    // Lazy and repeatable: main memory.db never gets story tables; old story DBs gain them on first archive.
+    for (const statement of STORY_ARCHIVE_SCHEMA) db.exec(statement)
+    return db
+  }
+
+  setStoryMessageState(branchId: string, messageId: string, version: string, interrupted: boolean): void {
+    this.archiveDb().prepare(`INSERT INTO story_archive_status
+      (branch_id, message_id, content_version, interrupted) VALUES (?, ?, ?, ?)
+      ON CONFLICT(branch_id, message_id) DO UPDATE SET
+        content_version=excluded.content_version, interrupted=excluded.interrupted`)
+      .run(branchId, messageId, version, interrupted ? 1 : 0)
+  }
+
+  getStoryMessageState(branchId: string, messageId: string, version: string): boolean | null {
+    if (!branchId || !messageId || !version) return null
+    const row = this.archiveDb().prepare(`SELECT interrupted FROM story_archive_status
+      WHERE branch_id = ? AND message_id = ? AND content_version = ?`)
+      .get(branchId, messageId, version) as { interrupted: number } | undefined
+    return row ? row.interrupted === 1 : null
+  }
+
+  isStoryMessageInterrupted(branchId: string, messageId: string, version: string): boolean {
+    return this.getStoryMessageState(branchId, messageId, version) === true
+  }
+
+  getStoryRound(storyId: string, branchId: string, roundIndex: number): StoryRoundRow | null {
+    if (!storyId || !branchId) return null
+    return this.archiveDb().prepare(
+      'SELECT * FROM story_rounds WHERE story_id = ? AND branch_id = ? AND round_index = ?'
+    ).get(storyId, branchId, roundIndex) as unknown as StoryRoundRow ?? null
+  }
+
+  /** Stable ownership evidence includes legacy round endpoints; never infer ownership from a round slot. */
+  getStoryMessageOwners(storyId: string, branchId: string, messageIds: string[]):
+    Array<{ message_id: string; tenant_user: string; tenant_persona: string }> {
+    if (!storyId || !branchId || messageIds.length === 0 || messageIds.some((id) => !id)) return []
+    const db = this.archiveDb()
+    const legacy = db.prepare(`SELECT first_message_id AS message_id, tenant_user, tenant_persona
+      FROM story_rounds WHERE story_id = ? AND branch_id = ?
+      UNION SELECT last_message_id AS message_id, tenant_user, tenant_persona
+      FROM story_rounds WHERE story_id = ? AND branch_id = ?`)
+      .all(storyId, branchId, storyId, branchId) as unknown as
+        Array<{ message_id: string; tenant_user: string; tenant_persona: string }>
+    const insert = db.prepare(`INSERT OR IGNORE INTO story_message_owners
+      (story_id, branch_id, message_id, tenant_user, tenant_persona) VALUES (?, ?, ?, ?, ?)`)
+    for (const row of legacy) insert.run(storyId, branchId, row.message_id, row.tenant_user, row.tenant_persona)
+    const owners = db.prepare(`SELECT message_id, tenant_user, tenant_persona FROM story_message_owners
+      WHERE story_id = ? AND branch_id = ?`).all(storyId, branchId) as unknown as typeof legacy
+    const selected = new Set(messageIds)
+    return [...owners, ...legacy].filter((row) => selected.has(row.message_id))
+  }
+
+  /** Metadata only; source text must still be decoded through listStoryChunks. */
+  listStoryRounds(storyId: string, tenants: PersonaIdentity[], branches: string[]): StoryRoundRow[] {
+    if (typeof storyId !== 'string' || !storyId.trim() || !Array.isArray(tenants) ||
+        tenants.length === 0 || !Array.isArray(branches) || branches.length === 0 ||
+        tenants.some((tenant) => !tenant || typeof tenant.userId !== 'string' ||
+          !tenant.userId.trim() || typeof tenant.personaId !== 'string' || !tenant.personaId.trim()) ||
+        branches.some((branch) => typeof branch !== 'string' || !branch.trim())) return []
+    const tenantSql = tenants.map(() => '(tenant_user = ? AND tenant_persona = ?)').join(' OR ')
+    return this.archiveDb().prepare(`SELECT * FROM story_rounds
+      WHERE story_id = ? AND valid = 1 AND (${tenantSql})
+        AND branch_id IN (${branches.map(() => '?').join(',')})
+        AND length(trim(branch_id)) > 0 AND length(trim(first_message_id)) > 0
+        AND length(trim(last_message_id)) > 0 AND length(trim(content_version)) > 0
+        AND round_index >= 0 AND round_index = CAST(round_index AS INTEGER)
+      ORDER BY round_index ASC, branch_id ASC, id ASC`)
+      .all(storyId, ...tenants.flatMap((tenant) => [tenant.userId, tenant.personaId]),
+        ...branches) as unknown as StoryRoundRow[]
+  }
+
+  listStoryChunks(roundId: string): StoryChunkRow[] {
+    const rows = this.archiveDb().prepare(
+      'SELECT * FROM story_chunks WHERE round_id = ? ORDER BY chunk_index'
+    ).all(roundId) as unknown as Array<Omit<StoryChunkRow, 'text'> & { text: string | Uint8Array }>
+    // SQLite TEXT is UTF-8. Only malformed UTF-16 uses its BLOB storage class to avoid U+FFFD replacement.
+    return rows.map((row) => {
+      if (typeof row.text !== 'string') row.text = Buffer.from(row.text).toString('utf16le')
+      return row as StoryChunkRow
+    })
+  }
+
+  /** Unchanged versions are strict no-ops, including timestamps and existing embeddings. */
+  upsertStoryRound(input: StoryRoundInput): boolean {
+    if (!input.storyId.trim() || !input.branchId.trim() || !input.tenantUser.trim() ||
+        !input.tenantPersona.trim() || !input.firstMessageId || !input.lastMessageId ||
+        !Number.isSafeInteger(input.roundIndex) || input.roundIndex < 0 || !input.contentVersion) {
+      throw new Error('故事归档标识缺失或非法')
+    }
+    const db = this.archiveDb()
+    const id = input.storyId + ':' + input.branchId + ':' + input.roundIndex
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const previous = db.prepare('SELECT * FROM story_rounds WHERE id = ?').get(id) as unknown as StoryRoundRow | undefined
+      const messageIds = [...new Set([input.firstMessageId, input.lastMessageId, ...(input.messageIds ?? [])])]
+      const owners = this.getStoryMessageOwners(input.storyId, input.branchId, messageIds)
+      if (owners.some((owner) => owner.tenant_user !== input.tenantUser || owner.tenant_persona !== input.tenantPersona) ||
+          (previous && (previous.tenant_user !== input.tenantUser || previous.tenant_persona !== input.tenantPersona) &&
+            (owners.length === 0 || messageIds.includes(previous.first_message_id) || messageIds.includes(previous.last_message_id)))) {
+        throw new Error('故事归档租户不匹配')
+      }
+      const rememberOwner = db.prepare(`INSERT OR IGNORE INTO story_message_owners
+        (story_id, branch_id, message_id, tenant_user, tenant_persona) VALUES (?, ?, ?, ?, ?)`)
+      for (const messageId of messageIds) {
+        if (!messageId) throw new Error('故事归档消息标识缺失')
+        rememberOwner.run(input.storyId, input.branchId, messageId, input.tenantUser, input.tenantPersona)
+      }
+      if (previous?.content_version === input.contentVersion && previous.valid === 1) {
+        db.exec('COMMIT')
+        return false
+      }
+      db.prepare('DELETE FROM story_chunks WHERE round_id = ?').run(id)
+      const now = Date.now()
+      db.prepare(`INSERT INTO story_rounds
+        (id, story_id, branch_id, round_index, tenant_user, tenant_persona, first_message_id,
+         last_message_id, content_version, roles, started_at, indexed_at, valid)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+        ON CONFLICT(id) DO UPDATE SET tenant_user=excluded.tenant_user, tenant_persona=excluded.tenant_persona,
+          first_message_id=excluded.first_message_id,
+          last_message_id=excluded.last_message_id, content_version=excluded.content_version,
+          roles=excluded.roles, started_at=excluded.started_at, indexed_at=excluded.indexed_at, valid=1`)
+        .run(id, input.storyId, input.branchId, input.roundIndex, input.tenantUser, input.tenantPersona,
+          input.firstMessageId, input.lastMessageId, input.contentVersion, JSON.stringify(input.roles), input.startedAt, now)
+      const insert = db.prepare(`INSERT INTO story_chunks
+        (id, round_id, chunk_index, text, start_offset, end_offset, embedding, content_version, indexed_at)
+        VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)`)
+      for (const chunk of input.chunks) {
+        insert.run(id + ':' + chunk.index, id, chunk.index, Buffer.from(chunk.text, 'utf8').toString('utf8') === chunk.text
+          ? chunk.text : Buffer.from(chunk.text, 'utf16le'), chunk.startOffset,
+          chunk.endOffset, input.contentVersion, now)
+      }
+      db.exec('COMMIT')
+      return true
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
     }
   }
 

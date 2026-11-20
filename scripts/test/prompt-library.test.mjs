@@ -37,7 +37,7 @@ fs.writeFileSync(
   stubPath,
   'module.exports = {' +
     ' app: {' +
-    ' getPath: () => ' + JSON.stringify(workDir) + ',' +
+    ' getPath: () => ' + JSON.stringify(path.join(workDir, 'userdata')) + ',' +
     ' getAppPath: () => ' + JSON.stringify(workDir) + ',' +
     ' isPackaged: false },' +
     ' shell: { openPath: async () => \'\' }' +

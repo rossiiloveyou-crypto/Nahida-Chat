@@ -14,6 +14,10 @@ interface ComposerProps {
   onNarrate: (content: string) => void
   /** 只有故事会话才显示「对话 / 旁白」徽章 */
   canNarrate: boolean
+  canPreSend: boolean
+  preSend: boolean
+  onPreSendChange: (enabled: boolean) => void
+  onRequestReply: () => void
   onStop: () => void
   /** 还没有会话时，选择器改的是"下一句话用什么"，由 ChatPage 暂存 */
   draftProfileId: string | null
@@ -50,6 +54,10 @@ export function Composer({
   onSend,
   onNarrate,
   canNarrate,
+  canPreSend,
+  preSend,
+  onPreSendChange,
+  onRequestReply,
   onStop,
   draftProfileId,
   draftModelId,
@@ -105,6 +113,33 @@ export function Composer({
 
   return (
     <div className="composer" data-ui-region="C 输入区">
+      {canPreSend && (
+        <div className="composer__row" role="group" aria-label="回复方式">
+          <button
+            type="button"
+            className={preSend ? 'composer__mode-btn is-active' : 'composer__mode-btn'}
+            aria-pressed={preSend}
+            data-ui-target="预发送开关"
+            title="开启后，发送和 Enter 只追加消息；点击请求回复才生成"
+            disabled={disabled || streaming || needsWorkspace}
+            onClick={() => onPreSendChange(!preSend)}
+          >
+            {preSend ? '预发送：开' : '预发送：关'}
+          </button>
+          {preSend && (
+            <button
+              type="button"
+              className="btn-primary"
+              data-ui-target="请求回复"
+              disabled={disabled || streaming || needsWorkspace}
+              onClick={onRequestReply}
+              title="仅回复已发送的内容，不会发送输入框草稿"
+            >
+              请求回复
+            </button>
+          )}
+        </div>
+      )}
       <div className="composer__row">
         {canNarrate && (
           <div className="composer__mode" role="group" aria-label="输入类型" data-ui-target="对话旁白切换">
@@ -147,7 +182,9 @@ export function Composer({
           placeholder={
             needsWorkspace
               ? '先创建一个工作区，Agent 才能开始干活'
-              : submittingNarration
+              : preSend
+                ? '预发送：Enter 只追加内容，点击「请求回复」才生成…'
+                : submittingNarration
                 ? '写一段旁白，发送后不会触发模型…（Enter 发送 / Shift + Enter 换行）'
                 : '给' + characterName + '发消息…（Enter 发送 / Shift + Enter 换行）'
           }
@@ -163,7 +200,8 @@ export function Composer({
             className={'composer__action' + (submittingNarration ? ' composer__action--narration' : '')}
             onClick={submit}
             disabled={disabled || needsWorkspace || !value.trim()}
-            title={needsWorkspace ? '先创建一个工作区' : submittingNarration ? '发送旁白' : '发送'}
+            title={needsWorkspace ? '先创建一个工作区' : preSend ? '发送（只追加，不请求回复）' : submittingNarration ? '发送旁白' : '发送'}
+            aria-label={preSend ? '发送（只追加）' : submittingNarration ? '发送旁白' : '发送'}
           >
             {/* 停止按钮仍用 Unicode ■：资产包 55 个文件里没有 stop 图标，
                 硬套发送图标会让人误读成"再发一次"（PHASE-2 §十二 有意保留） */}
@@ -193,7 +231,7 @@ export function Composer({
       />
       <div className="composer__hint">
         <span>
-          {submittingNarration ? '旁白不触发生成，会随下一次对话作为系统提示下发给模型' : '内容仅保存在本机 userData 目录'}
+          {preSend ? 'Enter / 发送：只追加；请求回复：生成一次（不发送草稿）' : submittingNarration ? '旁白不触发生成，会随下一次对话作为系统提示下发给模型' : '内容仅保存在本机 userData 目录'}
         </span>
         <span className={over ? 'composer__count is-over' : 'composer__count'}>
           {value.length.toLocaleString()}

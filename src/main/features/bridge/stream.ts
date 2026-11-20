@@ -40,6 +40,7 @@ export interface BridgeStreamInput {
   sessionId: string
   /** 已按 NC 口径裁好的历史（含本轮用户输入，最后一条应为 user） */
   messages: BridgeMessage[]
+  historyBefore?: number
   /** NC 的 system 段（人格 / 时间 / 记忆 / 摘要）→ ST 的 extensionPrompt */
   systemPrompts?: string[]
   signal?: AbortSignal
@@ -83,6 +84,7 @@ export async function* bridgeStream(
 
   void runner({
     sessionId: input.sessionId,
+    historyBefore: input.historyBefore,
     messages: Array.isArray(input.messages) ? input.messages : [],
     ...(Array.isArray(input.systemPrompts) && input.systemPrompts.length > 0
       ? { systemPrompts: input.systemPrompts }

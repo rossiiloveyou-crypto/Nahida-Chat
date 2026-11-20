@@ -13,6 +13,7 @@ import type {
 import { chatService } from '../chat/chatService'
 import { settingsStore } from '../settings/settingsStore'
 import { MemoryStore } from '../rag/store'
+import { storyArchiveService } from '../rag/storyArchive'
 import { branchStore, toBranchSessionInfo } from './branches'
 import { closeStoryMemory, storyMemory } from './memory'
 import { isStoryId, storyProfilePath, trashRoot } from './paths'
@@ -73,6 +74,11 @@ export function getStory(storyId: string): StoryMeta | null {
 
 export function createStory(draft: StoryDraft): { meta: StoryMeta; sessionId: string } {
   const meta = storyStore.create(draft, { characterId: settingsStore.get().defaultCharacterId })
+  // 复用既有画像路径与原子写入口；不 trim，保留用户输入的逐字内容。
+  if (typeof draft?.profile === 'string' && draft.profile.trim() && !saveStoryProfile(meta.storyId, draft.profile)) {
+    const removed = storyStore.removeDir(meta.storyId)
+    throw new Error('保存故事画像失败，' + (removed ? '本次创建已撤回' : '故事目录清理失败，请检查存储目录'))
+  }
   // 建故事会话：mode 显式 'story'，并带上 storyId（T2 / T10 的落点）
   const session = chatService.createSession({
     mode: 'story',
@@ -299,6 +305,7 @@ export function deleteStory(storyId: string, opts: { confirmed?: boolean }): Sto
   }
 
   // ④ 关句柄 —— 必须在 ⑤ 之前（§2.2 实测 A / C：任何一个没关，删目录都会 EPERM）
+  storyArchiveService.forget(storyId)
   closeStoryMemory(storyId)
 
   // ⑤ 删目录

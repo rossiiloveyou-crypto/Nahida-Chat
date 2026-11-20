@@ -1,68 +1,17 @@
-/**
- * 隐藏 `BrowserWindow` 宿主（P4 §1 第 2 行）。
- *
- * 一个隐藏窗口、一个独立分区、一套拦截，跑在 NC 的主进程里，加载 ST 的前端页面。
- * 它只负责「窗口在这儿、能跑表达式、状态是干净的」，**不掺和**一轮怎么走（那是 driver 的事）。
- *
- * 复用 P0 探针的六件套（PHASE-0 完成报告 §六「不许重新发明」）：
- * 1. `CANCEL_PATTERNS` + `classifyRequest`（J-07 全套写盘面 + 外网）
- * 2. 独立 `session.fromPartition`（共默认 profile 会被上一实例的锁卡死在 ready 之前）
- * 3. 强就绪判据 `READY_EXPR`（弱判据得到的是「静默变笨」，不是报错）
- * 4. `CONNECT_EXPR` 点一次 Connect（不点则 `generate` 静默 resolve(undefined)）
- * 5. 崩溃/加载失败后可重建（`render-process-gone` / `did-fail-load`）
- * 6. preload 只暴露 `window.ncEmit`（见 preload.ts）
- */
-
+/** 可见 ST 页面、独立分区与托管 ST 进程。轮次注入/清场仍由 driver 负责。 */
 import { app, BrowserWindow, ipcMain, session as electronSession } from 'electron'
-import type { Session as ElectronSession } from 'electron'
-import { join } from 'node:path'
-import { BRIDGE_DEFAULT_CONFIG, BRIDGE_IPC } from '@shared/bridge'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { BRIDGE_GENERATE_TIMEOUT_RANGE, BRIDGE_DEFAULT_CONFIG, BRIDGE_IPC } from '@shared/bridge'
 import type { BridgeConfig, BridgeHealth } from '@shared/bridge'
 import { ensurePreloadFile } from './preload'
-import { EVAL_LABEL } from './session'
+import { StProcess, ONBOARDING_ERROR } from './spawn'
+import { BridgeLogWindow } from './logWindow'
+import { BridgeLogPipe } from './logpipe'
+import { findCard, selectCharacter } from './character'
+import { ensureOverrideFile } from './override'
+import { sweepOrphans, readOrphans } from './chats'
 
-/**
- * 必须拦掉的写盘 / 外网请求（J-07 的**完整**清单，P0 实测穷举）。
- *
- * 🔴 少一条的后果不是报错，是 ST 的 `data/` 里多出文件、`settings.json` 被重写 ——
- *    M2「ST 零持久化」当场不成立，而当时没人会知道。
- * 🔴 `settings/save` 与 `quick-replies/save` 是 P0 补进来的：页面加载与点 Connect **各会**触发一次。
- */
-export const CANCEL_PATTERNS: RegExp[] = [
-  /\/api\/chats\/save(\?|$)/,
-  /\/api\/chats\/delete(\?|$)/,
-  /\/api\/chats\/rename(\?|$)/,
-  /\/api\/chats\/import(\?|$)/,
-  /\/api\/backups\//,
-  /\/api\/settings\/save(\?|$)/,
-  /\/api\/quick-replies\/save(\?|$)/
-]
-
-/** 只有这三个主机名算「本地」。外网一律挡掉（P0 实测一跑 19 次外网请求） */
-const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '::1'])
-
-/** 拦截分类：`write` = 写 ST 磁盘；`external` = 出网；null = 放行 */
-export function classifyRequest(url: string): 'write' | 'external' | null {
-  if (CANCEL_PATTERNS.some((re) => re.test(url))) return 'write'
-  let parsed: URL
-  try {
-    parsed = new URL(url)
-  } catch {
-    return null
-  }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
-  if (!LOCAL_HOSTS.has(parsed.hostname)) return 'external'
-  return null
-}
-
-/**
- * 强就绪判据（P0 §三 第 3 条）。
- *
- * 三件事**同时**成立才算就绪，缺一条都会得到「静默变笨」而不是报错：
- * 1. `characters` 已从 `/api/characters/all` 拉回（长度 > 0）；
- * 2. CSRF token 已就位（否则后续写请求 403 → `pingServer` 失败）；
- * 3. 输入框已挂上（DOM 初始化完成）。
- */
 export const READY_EXPR = [
   '(() => {',
   '    try {',
@@ -118,281 +67,269 @@ export interface BridgePageEvent {
   at: number
 }
 
-export interface BridgeHostStats {
-  /** 建窗次数（>1 = 发生过重建） */
-  boots: number
-  /** 被拦下的写盘请求数 */
-  cancelledWrites: number
-  /** 被拦下的外网请求数 */
-  blockedExternal: number
-  /** 拦下的具体 URL（去重，排障用） */
-  cancelledUrls: string[]
-}
+export interface BridgeHostStats { boots: number }
 
-/**
- * 隐藏窗口宿主。**懒启动**：第一次 `ensure()` 才建窗口 —— 没开故事模式就不该有 ST 窗口。
- */
 export class BridgeHost implements BridgePage {
   readonly config: BridgeConfig
   private win: BrowserWindow | null = null
   private booting: Promise<void> | null = null
+  private orphanSweep: Promise<number> = Promise.resolve(0)
   private healthy = false
   private lastError: string | null = null
+  private needsOnboarding = false
+  private connected = false
+  private loadedConfig = false
+  private epoch = 0
+  private readonly st = new StProcess()
+  private readonly logWindow = new BridgeLogWindow()
   private readonly listeners = new Set<(event: BridgePageEvent) => void>()
-  private readonly wiredPartitions = new Set<string>()
   private eventChannelWired = false
-  private readonly stats: BridgeHostStats = { boots: 0, cancelledWrites: 0, blockedExternal: 0, cancelledUrls: [] }
+  private readonly stats: BridgeHostStats = { boots: 0 }
 
   constructor(config: Partial<BridgeConfig> = {}) {
     this.config = { ...BRIDGE_DEFAULT_CONFIG, ...config }
+    this.loadedConfig = Object.keys(config).length > 0
+    app.on('before-quit', (event) => {
+      try { this.destroy() } catch (error) { event.preventDefault(); this.lastError = 'ST 停止失败：' + messageOf(error) }
+    })
+    this.orphanSweep = app.whenReady().then(() => sweepOrphans()).catch(error => { this.lastError = '孤儿扫描失败：' + messageOf(error); return 0 })
+    app.on('will-quit', () => { try { this.st.stop() } catch { /* before-quit 已保留错误 */ } })
   }
-
-  alive(): boolean {
-    return this.healthy && !!this.win && !this.win.isDestroyed()
-  }
-
-  /** 保证窗口可用（必要时重建）。并发的 ensure 共用同一次启动 */
-  async ensure(): Promise<BridgePage> {
-    if (this.alive()) return this
-    if (!this.booting) {
-      this.booting = this.boot().finally(() => {
-        this.booting = null
-      })
-    }
-    await this.booting
-    return this
-  }
-
-  /**
-   * 在页面里跑一段表达式。
-   * 🔴 不在这里重试/重建：重建是 `ensure()` 的事，混在一起会让「谁的失败」说不清。
-   */
-  async eval<T>(expr: string, label = 'expr'): Promise<T> {
-    const win = this.win
-    if (!win || win.isDestroyed()) {
-      this.healthy = false
-      throw new Error('桥接窗口不可用（未就绪或已崩溃）')
-    }
-    try {
-      return (await win.webContents.executeJavaScript(expr, true)) as T
-    } catch (error) {
-      this.lastError = label + '：' + messageOf(error)
-      throw error
-    }
-  }
-
-  /** 订阅页面回推事件（preload → ipcMain → 这里）。返回退订函数 */
-  onEvent(listener: (event: BridgePageEvent) => void): () => void {
-    this.listeners.add(listener)
-    return () => {
-      this.listeners.delete(listener)
-    }
-  }
-
-  health(): BridgeHealth {
-    return {
-      alive: this.alive(),
-      busy: this.booting !== null,
-      rebuilds: Math.max(0, this.stats.boots - 1),
-      cancelledWrites: this.stats.cancelledWrites,
-      blockedExternal: this.stats.blockedExternal,
-      lastError: this.lastError,
-      config: { ...this.config }
-    }
-  }
-
-  statsSnapshot(): BridgeHostStats {
-    return { ...this.stats, cancelledUrls: this.stats.cancelledUrls.slice() }
-  }
-
-  resetStats(): void {
-    this.stats.cancelledWrites = 0
-    this.stats.blockedExternal = 0
-    this.stats.cancelledUrls = []
-  }
-
-  /** 关窗（回退/退出时用）。不删 profile：分区数据留给下次复用 */
-  destroy(): void {
-    this.healthy = false
-    const win = this.win
-    this.win = null
-    if (win && !win.isDestroyed()) {
-      try {
-        win.destroy()
-      } catch {
-        // 已经没了就算了
+  private configFile(): string { return join(app.getPath('userData'), 'nc-bridge', 'config.json') }
+  private configure(input?: Partial<BridgeConfig>): void {
+    ensureOverrideFile()
+    if (!this.loadedConfig) {
+      this.loadedConfig = true
+      const file = this.configFile()
+      if (existsSync(file)) {
+        try { this.applyConfig(JSON.parse(readFileSync(file, 'utf8'))) }
+        catch (error) { this.lastError = 'ST 配置读取失败：' + messageOf(error) }
       }
     }
-  }
-
-  private async boot(): Promise<void> {
-    try {
-      await app.whenReady()
-    } catch {
-      // 已经 ready 的进程里 whenReady 会直接 resolve；这里挡的是异常环境
+    if (input) {
+      this.applyConfig(input)
+      const file = this.configFile()
+      mkdirSync(join(app.getPath('userData'), 'nc-bridge'), { recursive: true })
+      writeFileSync(file + '.tmp', JSON.stringify({ stRoot: this.config.stRoot, port: this.config.port, nodePath: this.config.nodePath, generateTimeoutMs: this.config.generateTimeoutMs, cardPath: this.config.cardPath, cardName: this.config.cardName, cardAvatar: this.config.cardAvatar }, null, 2), 'utf8')
+      renameSync(file + '.tmp', file)
     }
-    this.wireEventChannel()
-    const win = this.createWindow()
-    this.stats.boots += 1
-    this.win = win
-    try {
-      await this.load(win)
-      await this.waitReady(win)
+    this.config.stUrl = 'http://127.0.0.1:' + this.config.port
+    this.config.stDataDir = this.config.stRoot ? join(resolve(this.config.stRoot), 'data-nc', 'default-user') : ''
+  }
+  private applyConfig(input: Partial<BridgeConfig>): void {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('ST 配置须为对象')
+    const next = { stRoot: this.config.stRoot, port: this.config.port, nodePath: this.config.nodePath, generateTimeoutMs: this.config.generateTimeoutMs, cardPath: this.config.cardPath, cardName: this.config.cardName, cardAvatar: this.config.cardAvatar }
+    for (const key of ['stRoot', 'nodePath', 'cardPath', 'cardName', 'cardAvatar'] as const) {
+      if (input[key] === undefined) continue
+      if (typeof input[key] !== 'string' || input[key]!.length > 32768 || input[key]!.includes('\0')) throw new Error(key + ' 须为有效路径字符串')
+      next[key] = input[key]!.trim()
+    }
+    if (input.port !== undefined) {
+      if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535) throw new Error('ST 端口须为 1–65535 的整数')
+      next.port = input.port
+    }
+    if (input.generateTimeoutMs !== undefined) {
+      const ms = input.generateTimeoutMs
+      if (!Number.isInteger(ms) || ms < BRIDGE_GENERATE_TIMEOUT_RANGE.minMs || ms > BRIDGE_GENERATE_TIMEOUT_RANGE.maxMs) {
+        throw new Error('单轮上限须为 10–3600 秒的整数')
+      }
+      next.generateTimeoutMs = ms
+    }
+    const changed = next.cardName !== this.config.cardName || next.cardAvatar !== this.config.cardAvatar || next.stRoot !== this.config.stRoot || next.port !== this.config.port || next.nodePath !== this.config.nodePath || next.generateTimeoutMs !== this.config.generateTimeoutMs
+    if (changed && (this.st.running() || this.booting)) throw new Error('请先停止 ST，再修改目录、桥接角色、端口、Node 路径或单轮上限')
+    Object.assign(this.config, next)
+  }
+  alive(): boolean { return this.healthy && this.st.running() && !!this.win && !this.win.isDestroyed() }
+  private launch(): Promise<void> {
+    if (!this.booting) this.booting = this.boot().finally(() => { this.booting = null })
+    return this.booting
+  }
+  async ensure(): Promise<BridgePage> {
+    await this.orphanSweep
+    this.configure()
+    if (!this.config.cardName) throw new Error('请填写桥接角色后再打开 ST')
+    if (!this.alive()) await this.launch()
+    if (!this.connected) {
+      const win = this.win
+      if (!win || win.isDestroyed()) throw new Error('ST 窗口已关闭')
       await this.connect(win)
+      this.connected = true
+    }
+    return this
+  }
+  async openSt(config?: Partial<BridgeConfig>): Promise<BridgeHealth> {
+    try {
+      if (typeof config?.cardName === 'string' && !config.cardName.trim()) throw new Error('请填写桥接角色后再打开 ST')
+      this.configure(config)
+      if (!this.config.cardName) throw new Error('请填写桥接角色后再打开 ST')
+      await this.orphanSweep
+      this.orphanSweep = sweepOrphans()
+      await this.orphanSweep
+      if (this.win && !this.win.isDestroyed()) { this.win.show(); this.win.focus() }
+      if (!this.alive()) await this.launch()
+      else await this.ensureCard()
+      return this.health()
+    } catch (error) { this.lastError = messageOf(error); throw error }
+  }
+  async stopSt(): Promise<BridgeHealth> {
+    this.destroy()
+    // 取消尚在体检/就绪阶段的启动，等待其退出后再向 UI 报告停止完成。
+    await this.booting?.catch(() => {})
+    return this.health()
+  }
+  async openLog(): Promise<void> {
+    this.configure()
+    if (!this.st.log) {
+      const path = this.config.logPath || (this.config.stRoot ? join(this.config.stRoot, 'data-nc', 'logs', 'st-bridge.log') : join(app.getPath('userData'), 'nc-bridge', 'st-bridge.log'))
+      this.st.log = new BridgeLogPipe(path)
+      if (this.lastError) this.st.log.write('host', this.lastError)
+    }
+    await this.logWindow.open(this.st.log, join(app.getPath('userData'), 'nc-bridge'), this.win ?? undefined)
+  }
+  async eval<T>(expr: string, label = 'expr'): Promise<T> {
+    const win = this.win
+    if (!win || win.isDestroyed()) { this.healthy = false; throw new Error('桥接窗口不可用（未就绪或已崩溃）') }
+    try {
+      // Electron otherwise replaces page rejections with an unhelpful generic error.
+      const result = await win.webContents.executeJavaScript(
+        '(async () => { try { return { ok: true, value: await (' + expr + ') }; } catch (error) { return { ok: false, error: error && error.message ? String(error.message) : String(error) }; } })()', true
+      ) as { ok: boolean; value?: T; error?: string }
+      if (!result.ok) throw new Error(result.error || 'ST 页面执行失败')
+      return result.value as T
+    } catch (error) { this.lastError = label + '：' + messageOf(error); throw error }
+  }
+  onEvent(listener: (event: BridgePageEvent) => void): () => void {
+    this.listeners.add(listener)
+    return () => { this.listeners.delete(listener) }
+  }
+  health(): BridgeHealth {
+    this.configure()
+    let orphanCount = 0
+    try { orphanCount = readOrphans().items.length } catch (error) { this.lastError = '孤儿清单读取失败：' + messageOf(error) }
+    return {
+      alive: this.alive(), busy: this.booting !== null,
+      rebuilds: Math.max(0, this.stats.boots - 1),
+      stRunning: this.st.running(), stPid: this.st.pid, port: this.config.port,
+      logBytes: this.st.log?.logBytes ?? 0, orphans: orphanCount,
+      nodeSource: this.st.info?.runtime.source ?? null, needsOnboarding: this.needsOnboarding,
+      cardAvatar: this.config.cardAvatar, cardName: this.config.cardName,
+      cancelledWrites: 0, blockedExternal: 0,
+      lastError: this.st.lastError ?? this.lastError,
+      config: { ...this.config, logPath: this.st.log?.path ?? this.config.logPath }
+    }
+  }
+  statsSnapshot(): BridgeHostStats { return { ...this.stats } }
+  resetStats(): void { /* 保留旧探针方法，P2 不再维护拦截计数 */ }
+  private closePage(): void {
+    this.healthy = false
+    this.connected = false
+    const win = this.win
+    this.win = null
+    if (win && !win.isDestroyed()) win.destroy()
+  }
+  destroy(): void {
+    this.epoch++
+    this.closePage()
+    this.logWindow.close()
+    this.st.stop()
+    this.needsOnboarding = false
+  }
+  private async boot(): Promise<void> {
+    const epoch = this.epoch
+    await app.whenReady()
+    if (epoch !== this.epoch) throw new Error('ST 启动已取消')
+    this.wireEventChannel()
+    try {
+      const oldLog = this.st.log
+      await this.st.start(this.config)
+      if (oldLog !== this.st.log) { this.logWindow.close(); this.closePage() }
+      if (epoch !== this.epoch) throw new Error('ST 启动已取消')
+      if (!this.win || this.win.isDestroyed()) {
+        const win = this.createWindow()
+        this.stats.boots++
+        this.win = win
+        await win.loadURL(this.config.stUrl)
+      }
+      const win = this.win
+      win.show()
+      await this.waitReady(win, epoch)
+      await this.ensureCard()
+      if (epoch !== this.epoch || !this.st.running()) throw new Error('ST 启动已取消或进程已退出')
       this.healthy = true
+      this.needsOnboarding = false
       this.lastError = null
     } catch (error) {
       this.healthy = false
       this.lastError = messageOf(error)
-      this.destroy()
-      throw new Error('桥接隐藏窗口启动失败：' + messageOf(error))
+      try {
+        this.st.log ??= new BridgeLogPipe(join(app.getPath('userData'), 'nc-bridge', 'st-bridge.log'))
+        this.st.log.write('host', this.lastError)
+      } catch { /* 日志故障保留原错误 */ }
+      // 向导超时保留窗口与进程；用户完成初始化后仍在同一个页面重试。
+      throw new Error('ST 启动失败：' + this.lastError)
     }
   }
-
+  private async ensureCard(): Promise<void> {
+    const card = await findCard(this, this.config.cardName, this.config.cardAvatar)
+    await selectCharacter(this, card, this.config.readyTimeoutMs)
+    this.config.cardAvatar = card.avatar
+    // 选择已回读确认，持久化其身份；这里不经过运行中配置修改闸。
+    const file = this.configFile()
+    mkdirSync(join(app.getPath('userData'), 'nc-bridge'), { recursive: true })
+    writeFileSync(file + '.tmp', JSON.stringify({ stRoot: this.config.stRoot, port: this.config.port, nodePath: this.config.nodePath, generateTimeoutMs: this.config.generateTimeoutMs, cardPath: this.config.cardPath, cardName: this.config.cardName, cardAvatar: card.avatar }, null, 2), 'utf8')
+    renameSync(file + '.tmp', file)
+  }
   private createWindow(): BrowserWindow {
-    const partition = this.config.partition
-    const ses = electronSession.fromPartition(partition)
-    this.wireInterception(ses, partition)
-    ses.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
-    ses.setPermissionCheckHandler(() => false)
-
     const win = new BrowserWindow({
-      show: false,
-      width: 1280,
-      height: 900,
-      backgroundColor: '#000000',
+      show: true, width: 1280, height: 900,
       webPreferences: {
-        // 🔴 contextIsolation:false 是 ST 页面的要求（隔离下拿不到 getContext 的可用引用）
-        contextIsolation: false,
-        nodeIntegration: false,
-        // preload 要用 require('electron') 的 ipcRenderer，所以不能开 sandbox
-        sandbox: false,
-        session: ses,
-        // 隐藏窗口没有焦点，默认会被降频：不关掉的话流式增量会成批到达（看起来像「顿一下」）
-        backgroundThrottling: false,
-        spellcheck: false,
+        contextIsolation: false, nodeIntegration: false, sandbox: false,
+        session: electronSession.fromPartition(this.config.partition),
+        backgroundThrottling: false, spellcheck: false,
         preload: ensurePreloadFile(join(app.getPath('userData'), 'nc-bridge'))
       }
     })
-
-    win.webContents.setBackgroundThrottling(false)
-    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-
-    // 只许留在 ST 自己的源上：ST 的脚本会尝试跳转到别处（P0 挡过外网）
-    win.webContents.on('will-navigate', (event, url) => {
-      if (!isSameOrigin(url, this.config.stUrl)) event.preventDefault()
-    })
-
-    win.webContents.on('did-fail-load', (_event, code, description, url) => {
+    win.webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
+      if (!isMainFrame || code === -3) return
       this.lastError = 'did-fail-load ' + code + ' ' + description + ' ' + url
       this.healthy = false
+      this.connected = false
     })
-
-    // 崩溃就是不可用：下一次 ensure() 重建，不在原地重试
     win.webContents.on('render-process-gone', (_event, details) => {
       this.lastError = 'render-process-gone ' + details.reason
-      this.healthy = false
-      if (this.win === win) this.destroy()
+      if (this.win === win) this.closePage()
     })
-
+    win.on('closed', () => { if (this.win === win) { this.win = null; this.healthy = false; this.connected = false } })
     return win
   }
-
-  private wireInterception(ses: ElectronSession, partition: string): void {
-    // 每个分区只挂一次：重复 onBeforeRequest 会互相覆盖，拦截面会悄悄变窄
-    if (this.wiredPartitions.has(partition)) return
-    this.wiredPartitions.add(partition)
-    ses.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
-      const url = details.url || ''
-      const kind = classifyRequest(url)
-      if (!kind) {
-        callback({})
-        return
-      }
-      if (kind === 'write') this.stats.cancelledWrites += 1
-      else this.stats.blockedExternal += 1
-      if (this.stats.cancelledUrls.length < 64 && !this.stats.cancelledUrls.includes(url)) {
-        this.stats.cancelledUrls.push(url)
-      }
-      callback({ cancel: true })
-    })
-  }
-
   private wireEventChannel(): void {
     if (this.eventChannelWired) return
     this.eventChannelWired = true
-    ipcMain.on(BRIDGE_IPC.event, (_event, message: unknown) => {
-      if (!message || typeof message !== 'object') return
+    ipcMain.on(BRIDGE_IPC.event, (source, message: unknown) => {
+      if (!this.win || source.sender !== this.win.webContents || !message || typeof message !== 'object') return
       const record = message as Record<string, unknown>
       const name = typeof record.name === 'string' ? record.name : ''
       if (!name) return
-      const event: BridgePageEvent = {
-        name,
-        payload: record.payload,
-        at: typeof record.at === 'number' ? record.at : Date.now()
-      }
-      for (const listener of this.listeners) {
-        try {
-          listener(event)
-        } catch {
-          // 订阅方自己的异常不许打断别的订阅方
-        }
-      }
+      const event: BridgePageEvent = { name, payload: record.payload, at: typeof record.at === 'number' ? record.at : Date.now() }
+      for (const listener of this.listeners) { try { listener(event) } catch { /* 独立消费者 */ } }
     })
   }
-
-  private async load(win: BrowserWindow): Promise<void> {
-    try {
-      await win.loadURL(this.config.stUrl)
-    } catch (error) {
-      throw new Error('加载 ' + this.config.stUrl + ' 失败：' + messageOf(error))
-    }
-  }
-
-  private async waitReady(win: BrowserWindow): Promise<void> {
+  private async waitReady(win: BrowserWindow, epoch: number): Promise<void> {
     const started = Date.now()
-    let lastError: string | null = null
     while (Date.now() - started < this.config.readyTimeoutMs) {
-      try {
-        const ok = (await win.webContents.executeJavaScript(READY_EXPR, true)) as boolean
-        if (ok === true) return
-      } catch (error) {
-        lastError = messageOf(error)
-      }
+      if (epoch !== this.epoch || win.isDestroyed() || !this.st.running()) throw new Error('ST 窗口或进程已停止')
+      try { if (await win.webContents.executeJavaScript(READY_EXPR, true) === true) return } catch { /* 页面初始化中 */ }
       await sleep(300)
     }
-    throw new Error(
-      'READY_TIMEOUT ' + this.config.readyTimeoutMs + 'ms' + (lastError ? '（' + lastError + '）' : '')
-    )
+    this.needsOnboarding = true
+    throw new Error(ONBOARDING_ERROR + '；若已完成向导，请确认角色列表已加载')
   }
-
   private async connect(win: BrowserWindow): Promise<void> {
-    const result = (await win.webContents.executeJavaScript(
-      connectExpr(this.config.connectTimeoutMs),
-      true
-    )) as { ok?: boolean; error?: string }
-    if (result?.ok === false) {
-      throw new Error('Connect 失败：' + (result.error ?? 'online_status 没抬起来'))
-    }
+    const result = await win.webContents.executeJavaScript(connectExpr(this.config.connectTimeoutMs), true) as { ok?: boolean; error?: string }
+    if (result?.ok === false) throw new Error('Connect 失败：' + (result.error ?? 'online_status 没抬起来'))
   }
 }
 
-/** 单例：P6 接线后 `chatService` 直接用它 */
 export const bridgeHost = new BridgeHost()
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-function messageOf(error: unknown): string {
-  if (error instanceof Error) return error.message
-  return String(error)
-}
-
-function isSameOrigin(url: string, base: string): boolean {
-  try {
-    return new URL(url).origin === new URL(base).origin
-  } catch {
-    return false
-  }
-}
+function sleep(ms: number): Promise<void> { return new Promise(resolveWait => setTimeout(resolveWait, ms)) }
+function messageOf(error: unknown): string { return error instanceof Error ? error.message : String(error) }

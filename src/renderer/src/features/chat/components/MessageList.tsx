@@ -71,7 +71,7 @@ function BubbleMarkdown({
 }) {
   // P7: structured cards only when bridge scripts are supplied; ordinary chat keeps P3 rendering.
   const parts = useMemo(() => scripts.length ? displayPartsOf(source, scripts, depth)
-    : [{ kind: 'text' as const, offset: 0, html: displayOf(source, scripts, depth) }], [source, scripts, depth])
+    : [{ kind: 'text' as const, offset: 0, html: displayOf(source, scripts, depth, undefined, true) }], [source, scripts, depth])
   if (!parts.length) return null
   return <div className="bubble__md">{parts.map(part => part.kind === 'card'
     ? <BubbleCard key={part.offset} card={part} />
@@ -170,7 +170,10 @@ export function MessageList({
     const editing = editor?.id === message.id
     const locked = isStreaming || saving
     const reason = isStreaming ? '当前会话仍在生成中，先停止再重试' : saving ? '正在保存消息' : undefined
-    const tailReply = message.role === 'assistant' && index === messages.length - 1 && messages.some(item => item.role === 'user')
+    const previousAssistant = messages.slice(0, index).findLastIndex(item => item.role === 'assistant')
+    const hasReplyInput = messages.some(item => item.role === 'user')
+      || messages.slice(previousAssistant + 1, index).some(item => item.role === 'narration' && item.content.trim())
+    const tailReply = message.role === 'assistant' && index === messages.length - 1 && hasReplyInput
     return <div className="message-actions">
       {editing ? (
         <div className="message-editor" data-ui-region="消息行内编辑">

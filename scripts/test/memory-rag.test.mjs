@@ -57,7 +57,7 @@ function loadModule(relative, { dropImports = true, constants = {} } = {}) {
 
 const tokenMod = loadModule('tokenize.ts')
 const vectorMod = loadModule('vector.ts')
-const extractMod = loadModule('extract.ts', { constants: { MEMORY_MAX_CHARS: 300 } })
+const extractMod = loadModule('extract.ts', { constants: { MEMORY_EXTRACT_MAX_CHARS: 300 } })
 
 const { tokenize, toMatchQuery, estimateTokens } = tokenMod
 const { cosine, normalize } = vectorMod

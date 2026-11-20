@@ -60,6 +60,8 @@ const KNOWN_TITLES = {
   'settings-qq-lower': '设置 · QQ 接入（下半屏 / 行为开关）',
   'settings-qq-events': '设置 · QQ 接入（最近事件）',
   'settings-tools': '设置 · 工具权限',
+  'settings-bridge': '设置 · ST 桥接（进程与日志）',
+  'settings-bridge-lower': '设置 · ST 桥接（运行状态）',
   'settings-appearance': '设置 · 外观',
   'settings-about': '设置 · 关于'
 }
@@ -127,7 +129,7 @@ for (const name of viewIds) {
   const view = data.views[name]
   const title = KNOWN_TITLES[name] || name + '（待补中文标题）'
   md += '## ' + title + '\n\n'
-  md += '![' + name + '](./ui-map-v' + version + '-' + name + '.png)\n\n'
+  md += '![' + name + '](./ui-map-v' + (view.imageVersion ?? version) + '-' + name + '.png)\n\n'
 
   md += '### 区域\n\n| 编号 | 区域 | 坐标 |\n| --- | --- | --- |\n'
   for (const reg of view.regions || []) {

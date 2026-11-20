@@ -7,6 +7,7 @@ import {
   DEFAULT_APPEARANCE,
   DEFAULT_CONTEXT_WINDOW,
   DEFAULT_MEMORY_SETTINGS,
+  DEFAULT_STORY_RECALL,
   DEFAULT_SUMMARY_SETTINGS,
   MEMORY_BUDGET_RANGE,
   MEMORY_TOP_K_RANGE,
@@ -18,6 +19,7 @@ import {
   providerMeta
 } from '@shared/constants'
 import { promptStore } from '../prompt/promptStore'
+import { normalizeStoryRecall } from '../rag/retriever'
 import { isDirectory, normalizeDir, workspaceLabel } from '../workspace'
 import type {
   AppearanceSettings,
@@ -165,6 +167,24 @@ class SettingsStore {
         ...patch.chatTools,
         tools: { ...(prev.tools ?? {}), ...(patch.chatTools.tools ?? {}) }
       }
+    }
+    if (patch.storyRecall !== undefined) {
+      // Validate before mutating the cache or flushing: failed writes preserve both.
+      const raw = { ...DEFAULT_STORY_RECALL, ...this.get().storyRecall, ...patch.storyRecall }
+      const limits = { n: [1, 20], budgetTokens: [1000, 32000], minScore: [0, 1], keywordWeight: [0, 1], recheckDepth: [0, 64] } as const
+      for (const key of Object.keys(limits) as (keyof typeof limits)[]) {
+        const value = raw[key]
+        const [min, max] = limits[key]
+        if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max ||
+            ((key === 'n' || key === 'recheckDepth' || key === 'budgetTokens') && !Number.isInteger(value))) {
+          throw new Error('故事召回参数超出范围：' + key)
+        }
+      }
+      if (typeof raw.enabled !== 'boolean') throw new Error('故事召回开关必须是布尔值')
+      if (raw.keywordWeight <= raw.minScore) {
+        throw new Error('关键词权重必须大于相似度阈值，否则模型未安装 / 向量不可用时，纯关键词召回会全部被过滤掉')
+      }
+      next.storyRecall = normalizeStoryRecall(raw)
     }
     next.temperature = clamp(next.temperature, TEMPERATURE_RANGE.min, TEMPERATURE_RANGE.max)
     next.permission = normalizePermission(next.permission)

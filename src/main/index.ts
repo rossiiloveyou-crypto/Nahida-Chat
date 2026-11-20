@@ -1,4 +1,5 @@
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, shell, session as electronSession } from 'electron'
+import { BRIDGE_DEFAULT_CONFIG } from '@shared/bridge'
 import { registerIpcHandlers } from './ipc'
 import { channelStore, migrateFromBindings } from './features/channels/store'
 import { startQqHost } from './features/qq/host'
@@ -35,8 +36,9 @@ if (!gotTheLock) {
       ensureWorkspace(workspace.dir, workspace.id === 'workspace-default')
     }
 
-    // 任何渲染进程都不允许偷偷开新窗口或跳外链以外的导航
+    // NC 自身页面沿用导航闸；ST 独立分区遵循原生导航行为（P2）。
     app.on('web-contents-created', (_event, contents) => {
+      if (contents.session === electronSession.fromPartition(BRIDGE_DEFAULT_CONFIG.partition)) return
       contents.on('will-navigate', (event, url) => {
         const devServerUrl = process.env['ELECTRON_RENDERER_URL']
         const allowed = devServerUrl ? url.startsWith(devServerUrl) : url.startsWith('file://')

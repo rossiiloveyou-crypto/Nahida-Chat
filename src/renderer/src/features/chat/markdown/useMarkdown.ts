@@ -24,5 +24,5 @@ export function useMarkdown(source: string): string {
  * `scripts` 与 `depth` 都是依赖项：脚本清单到达（首帧 `[]` → 真清单）与流式增长都要重算。
  */
 export function useDisplay(source: string, scripts: StRegexScript[], depth?: number): string {
-  return useMemo(() => displayOf(source, scripts, depth), [source, scripts, depth])
+  return useMemo(() => displayOf(source, scripts, depth, undefined, true), [source, scripts, depth])
 }

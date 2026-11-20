@@ -107,6 +107,7 @@ export interface InjectReport {
   /** 页面回读的 mes 数组 */
   actualMes: string[]
   length: number
+  inPrompt: number
 }
 
 /** 每轮**进入**与**退出**各调一次（M2：ST 零持久化） */
@@ -159,7 +160,7 @@ export async function injectChat(page: BridgePageLike, chat: StChatMessage[]): P
     '        name: String(m.name),',
     '        send_date: new Date(Date.now() + i * 1000).toISOString(),',
     '        is_system: !!m.is_system,',
-    '        extra: {},',
+    '        extra: m.extra && m.extra.ncBridgeNarration === true ? { ncBridgeNarration: true } : {},',
     '    }));',
     '    ctx.chat.splice(0, ctx.chat.length, ...built);',
     '    const actual = ctx.chat.map(m => String(m.mes));',
@@ -169,10 +170,11 @@ export async function injectChat(page: BridgePageLike, chat: StChatMessage[]): P
     '        flagsEqual: flags.length === input.length && flags.every((v, i) => v[0] === !!input[i].is_user && v[1] === !!input[i].is_system),',
     '        actual,',
     '        length: ctx.chat.length,',
+    '        inPrompt: ctx.chat.filter(m => !m.is_system).length,',
     '    };',
     '})()'
   ].join('\n')
-  const report = await page.eval<{ equal: boolean; flagsEqual: boolean; actual: string[]; length: number }>(
+  const report = await page.eval<{ equal: boolean; flagsEqual: boolean; actual: string[]; length: number; inPrompt: number }>(
     expr,
     EVAL_LABEL.inject
   )
@@ -182,7 +184,8 @@ export async function injectChat(page: BridgePageLike, chat: StChatMessage[]): P
     expectedMes: chat.map((item) => item.mes),
     expectedFlags: chat.map((item) => [item.is_user === true, item.is_system === true] as [boolean, boolean]),
     actualMes: Array.isArray(report.actual) ? report.actual : [],
-    length: report.length
+    length: report.length,
+    inPrompt: report.inPrompt
   }
 }
 
@@ -401,3 +404,16 @@ export async function restoreSwitches(
   }
 }
 
+
+export interface ChatSelection { index: number; avatar: string; previous: unknown; hadChat: boolean }
+export async function prepareChat(page: BridgePageLike, name: string): Promise<ChatSelection> {
+  // Snapshot and mutation use a page-owned token so restoration survives an interrupted return.
+  return page.eval<ChatSelection>('(()=>{const c=SillyTavern.getContext();const index=c.characterId,card=c.characters[index];if(!card)throw new Error("ST selected card missing");if(window.__ncBridgeChat)throw new Error("Previous bridge chat not restored");const s={index,avatar:card.avatar,previous:card.chat,hadChat:Object.prototype.hasOwnProperty.call(card,"chat")};window.__ncBridgeChat=s;card.chat='+JSON.stringify(name)+';return s})()', 'chat:prepare')
+}
+export async function restoreChat(page: BridgePageLike): Promise<boolean> {
+  return page.eval<boolean>('(()=>{const s=window.__ncBridgeChat;if(!s)return true;const c=SillyTavern.getContext();const card=c.characters.find(x=>x.avatar===s.avatar);if(!card)throw new Error("Original ST card missing");if(s.hadChat)card.chat=s.previous;else delete card.chat;const ok=s.hadChat?card.chat===s.previous:!Object.prototype.hasOwnProperty.call(card,"chat");if(ok)delete window.__ncBridgeChat;return ok})()', 'chat:restore')
+}
+/** Drain ST's own pending debounce before restoring the original chat name. No save is triggered. */
+export async function drainChatSaves(page: BridgePageLike): Promise<void> {
+  await page.eval('(async()=>{const st=await import("/script.js");if(typeof st.cancelDebouncedChatSave!=="function")throw new Error("ST save debounce API missing");st.cancelDebouncedChatSave();const end=Date.now()+3000;while(st.isChatSaving){if(Date.now()>=end)throw new Error("ST save did not settle");await new Promise(r=>setTimeout(r,25))}st.cancelDebouncedChatSave();return true})()', 'chat:drain')
+}

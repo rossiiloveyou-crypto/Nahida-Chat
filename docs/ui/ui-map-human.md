@@ -5,6 +5,39 @@
 
 ## 需求 → 位置 → 代码
 
+### 故事召回面板与创建入口（2026-11-21，P4.9）
+
+| 需求 | 图上位置 | 代码 |
+| --- | --- | --- |
+| 独立故事召回参数与向量降级状态 | `settings-story-recall`「故事召回开关 / 轮数 / 预算 / 阈值 / 关键词权重 / 补查深度 / 保存故事召回设置」 | `StoryRecallPanel.tsx` → settings.save；story.recallStatus 只读临时 DB/WAL 副本 |
+| 原有事实记忆展开可操作；摘要原样保留 | `settings-memory-facts`「检索参数 / 试召回输入 / 按人列表」；`settings-memory`「对话摘要参数」 | `MemorySection.tsx`，事实区默认折叠 |
+| 主页面三模式，故事创建迁移，侧栏只列出/打开 | `chat-empty / chat-stories`「Chat / Agent / 故事 / 新建故事」 | `EmptyState.tsx / ChatPage.tsx / Sidebar.tsx` |
+| 创建画像原文写入原有 profile.md | `new-story-dialog` 元素 17「故事画像输入」 | `NewStoryDialog.tsx` → `createStory / saveStoryProfile` |
+| QQ 门槛即时保存，其他字段继续点保存 | `settings-qq-threshold` 元素 10「门槛组」 | `QqSection.tsx` → useQq.saveSettings，仅 commandThresholds |
+
+定位图用隔离 `out-p49` 和临时 userData。运行 `env -u ELECTRON_RUN_AS_NODE pnpm ui:map --only=chat-empty,chat-stories,new-story-dialog,settings-memory,settings-story-recall,settings-memory-facts,settings-qq-threshold --build=out-p49 --verify-p49`，验证目标可见、视口边界、PNG 哈希和 DPI 尺寸。全局 verify-map.cjs 本机缺失，等价检查内置于生成器；保留的旧视图单独标记。
+
+### 对话预发送（2026-11-21）
+
+| 需求 | 图上位置 | 代码 |
+| --- | --- | --- |
+| 每会话预发送开关，重启保留 | `chat-dialogue` 元素 **31「预发送开关」** | `features/chat/components/Composer.tsx` → `ChatPage.tsx` → `chatService.updateSession` |
+| 独立请求回复；保留草稿，双击只生成一次 | 元素 **32「请求回复」**；同排位于开关右侧 | `features/chat/store.ts` → `chat.requestReply` → `chatService.begin` |
+| Enter / 发送只追加，旁白沿用选择 | 元素 **33「对话旁白切换」/ 34「输入框」** | `Composer.tsx` → `queueMessage` / `narrate` |
+
+只重拍此视图，使用隔离 `out-sup02` 与临时 userData。运行 `pnpm ui:map --only=chat-dialogue --build=out-sup02 --verify-presend` 验证 Enter 入队、请求、草稿、生成禁用、空队列与定位图 SHA/边界。QQ 会话隐藏该模式并在主进程拒绝新 API。
+
+### ST 桥接进程与日志（2026-11-18）
+
+| 需求 | 图上位置 | 代码 |
+| --- | --- | --- |
+| 设置 ST 目录、桥接角色、端口与可选 Node 路径 | `settings-bridge` 元素 **5 / 6 / 7 / 8**（桥接角色 `G9–R9`） | `features/settings/sections/BridgeSection.tsx` |
+| 打开 ST / 停止 ST / 打开日志 | `settings-bridge` 元素 **10 / 11 / 12** | `BridgeSection.tsx` → preload → `main/features/bridge/host.ts` |
+| 查看角色卡、PID、端口、日志大小、运行时及最近错误 | `settings-bridge-status` 元素 **14「桥接状态」**；元素 **15「刷新桥接状态」** | `host.health()`、`character.ts`、`spawn.ts`、`logpipe.ts` |
+| 修改最高权重规则（空默认、清空停用） | `settings-bridge-lower` 元素 **11「最高权重规则正文」/ 12「保存最高权重规则」/ 13「最高权重规则状态」** | `BridgeSection.tsx` → `bridge.override.get/save` → `override.ts`；`driver.ts` 每轮 SYSTEM / IN_CHAT / depth 0 注入 |
+
+2026-11-18：只新增桥接设置上下两张定位图；独立 ST 窗口和实时日志另见桥接任务 baseline 证据。
+
 ### 世界书条目搜索（2026-11-08）
 
 | 需求 | 图上位置 | 代码 |
@@ -85,6 +118,25 @@
 | 不是最后一条时说明为什么不能重试 | 同一行显示「后面已经有新消息了，只能重试最后一轮」，只留「删除这条」 | `MessageList.tsx` |
 | 重试复用那条回复、不重复用户原话 | 点重试后 user 气泡仍是 1 个、消息总数仍是 2 条 | `main/features/chat/chatService.ts`（`restartTurn`） |
 ## 变更记录
+
+### 修订 32（2026-11-20）· P4.5 桥接角色通用化
+
+- 仅重拍 `settings-bridge`：新增元素 **6「桥接角色」**（416,517，678×36；`G9–R9`），新用户留空；运行期间与目录等配置一起置灰，停止后恢复编辑。
+- 角色名随「打开 ST」传入并持久化；不再检查角色卡正文、世界书条目数或字节数。设置页移除单角色调试建议与过期阶段说明。
+- 本视图端口 / Node / 单轮上限为元素 **7 / 8 / 9**，三个进程按钮为 **10 / 11 / 12**。其余三十张视图沿用历史截图及坐标，`settings-bridge-lower/status` 的旧编号仅对应各自旧图。
+- 切卡会硬失败并提示切回目标角色；真实 ST 与真实模型的 H-23 仍由人工确认。
+
+### 修订 31（2026-11-19）· M27 提示词资产分家
+
+- 提示词库增加「添加自定义角色」与「内置 / 自定义」来源徽标，角色目录按钮打开用户层，避免空目录覆盖内置。
+- `settings-prompts` 保留注入顺序与入口；新增 `settings-prompts-roles` 展示完整角色区。`--verify-prompt-roots` 仅在隔离 userData 播种 test-a，通过真实 renderer → preload → IPC 捕获打开目录，并核对两种来源徽标。
+- 用户路径由主进程返回；shared 逐文件兜底，角色同 id 整体覆盖。内置世界书可读，保存由主进程只读守卫拦截。
+- 定位：`settings-prompts-roles` 元素 **6 添加自定义角色**（414,205），**8/9/10 角色来源**（三枚都在视口）；区域与编号由脚本生成，不手填生成表。
+
+
+### 修订 30（2026-11-18）· P3 角色卡检测与最高权重规则
+
+仅更新 settings-bridge、settings-bridge-lower、settings-bridge-status：手动导卡/导卡世界书与 ST 运行预算指引；多行规则输入、保存和启用状态；角色卡名称/avatar/完整性警告。控件顺延为 11–15；其余视图沿用既有地图。P3.5/P4 未施工。
 
 ### 修订 29（2026-11-14）· 失败的一轮：写明原因 + 可重试
 

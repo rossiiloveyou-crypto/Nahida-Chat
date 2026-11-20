@@ -4,7 +4,7 @@
  * 测的是**真实边界**，不是「把实现再写一遍」：
  * - 阈值不达到 → 一次模型都不调（否则等于每轮烧钱）
  * - 达到 → 四段并发、游标前移、锚点写对
- * - 撤回一条已覆盖消息 → 锚点漂移 → 整份摘要作废、回落全量历史
+ * - 删除已覆盖消息 → 按 id 重挂边界；锚点丢失也保留摘要与有界窗口
  * - 消息被清空（游标越界）→ 不崩、不用过期下标切片
  * - 落盘 → 新实例能读回；手改坏字段 → 落回安全默认
  * - 改设置 → 下一次调用立刻生效（不需要重启）
@@ -25,7 +25,7 @@ const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-summary-'))
 installElectronStub(userData)
 
 const EXPORTS = [
-  "export { SummaryService, SummaryStore } from '" + p('src/main/features/summary/service.ts') + "'",
+  "export * from '" + p('src/main/features/summary/service.ts') + "'",
   "export { settingsStore } from '" + p('src/main/features/settings/settingsStore.ts') + "'"
 ].join('\n')
 
@@ -161,7 +161,7 @@ check('未过阈值不重复压缩', fake.count() === 4, fake.count())
 check('追加消息后窗口变长 5 条', service.historyOf(session).length === before + 5)
 
 session.messages.splice(10, 1)
-check('撤回已覆盖消息 → 回落全量历史', service.historyOf(session).length === 49, service.historyOf(session).length)
+check('撤回已覆盖消息 → 重挂并保留原窗口', service.historyOf(session).length === before + 5, service.historyOf(session).length)
 check('撤回后摘要仍在（不删库）', service.systemBlock({ id: 'sess', messages: [] }).includes('【近期】'))
 check('消息清空后不崩', service.historyOf({ id: 'sess', messages: [] }).length === 0)
 
@@ -170,7 +170,7 @@ const file = path.join(dataDir, 'summaries.json')
 check('summaries.json 已落盘', fs.existsSync(file))
 const service2 = new modA.SummaryService(new modA.SummaryStore(() => dataDir), readSettings)
 check('新实例能读回摘要', Boolean(service2.stateOf('sess')))
-check('status 统计覆盖条数', service2.status().coveredMessages === 45, service2.status().coveredMessages)
+check('status 统计重挂后覆盖条数', service2.status().coveredMessages === 0, service2.status().coveredMessages)
 
 // ── 5. 配置热生效 / 总开关 / 演示模式 ────────────────────────────────────────
 setSummary({})
@@ -211,5 +211,124 @@ check('forget 清掉该会话', service2.stateOf('sess') === null)
 const cleared = service2.clear()
 check('clear 后会话数归零', cleared.sessionCount === 0, cleared.sessionCount)
 check('clear 后文件仍存在且为空表', JSON.parse(fs.readFileSync(file, 'utf8')).items.sess === undefined)
+
+// ── 7. P3.7 锚点漂移：临时持久库 + 真实 service + 桩 provider ─────────────────
+setSummary({ triggerCount: 4, windowCount: 4 })
+function anchorFixture(name, count = 36, coveredCount = 24) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-summary-anchor-'))
+  const store = new modA.SummaryStore(() => dir)
+  const session = { id: name, messages: Array.from({ length: count }, (_, i) =>
+    msg('p' + i, i % 2 === 0 ? 'user' : 'assistant', 'ANCHOR_MESSAGE_' + i)) }
+  const summary = { sessionId: name, personaId: 'default', coveredCount,
+    anchorMessageId: session.messages[coveredCount - 1]?.id ?? 'missing',
+    sections: { short_term: '近期记忆', long_term: '长期记忆', user_info: '用户记忆', promises: '重要约定' },
+    updatedAt: 1234, lastError: null, lastAttemptAt: 0 }
+  store.save(new Map([[name, summary]]))
+  const service = new modA.SummaryService(store, readSettings)
+  let writes = 0
+  const save = store.save.bind(store)
+  store.save = map => { writes++; save(map) }
+  return { session, summary, service, store, writes: () => writes,
+    reload: () => new modA.SummaryService(new modA.SummaryStore(() => dir), readSettings) }
+}
+const ids = messages => messages.map(m => m.id).join(',')
+const stable = anchorFixture('stable')
+const stableIds = Array.from({ length: 16 }, (_, i) => 'p' + (20 + i)).join(',')
+check('S1 正常窗口逐条 id 与原路径相等', ids(stable.service.historyOf(stable.session)) === stableIds)
+check('S1 正常路径不写盘', stable.writes() === 0)
+
+const shifted = anchorFixture('shifted')
+shifted.session.messages.splice(6, 1)
+const shiftedHistory = shifted.service.historyOf(shifted.session)
+check('S2 中间删除仍保留原窗口逐条 id', ids(shiftedHistory) === stableIds)
+check('S2 中间删除重挂到仍在的锚点', shifted.service.stateOf('shifted').coveredCount === 23 && shifted.service.stateOf('shifted').anchorMessageId === 'p23')
+check('S2 修正已持久化且内容更新时间不变', shifted.reload().stateOf('shifted').coveredCount === 23 && shifted.service.stateOf('shifted').updatedAt === 1234)
+check('S2 重挂留下可读诊断且状态页可见', /锚点.*重挂/.test(shifted.service.status().lastError ?? ''))
+check('S2 摘要四段逐字保留', JSON.stringify(shifted.service.stateOf('shifted').sections) === JSON.stringify(shifted.summary.sections))
+
+const lost = anchorFixture('lost')
+lost.session.messages.splice(23, 1)
+check('S5 lost 写回前仍注入长期记忆', lost.service.systemBlock(lost.session).includes('长期记忆'))
+const lostHistory = lost.service.historyOf(lost.session)
+const healed = lost.service.stateOf('lost')
+check('S3 lost 不回落全量且保留既有重叠窗口', ids(lostHistory) === 'p28,p29,p30,p31,p32,p33,p34,p35' && lostHistory.length < lost.session.messages.length)
+check('S4 lost 重挂到末尾窗口起点', healed.coveredCount === 31 && healed.anchorMessageId === 'p31')
+check('S4 lost 写回可由新实例读回', lost.reload().stateOf('lost').anchorMessageId === 'p31')
+check('S4 只改坐标与诊断，时间戳不动', healed.updatedAt === 1234 && healed.lastAttemptAt === 0 && /锚点丢失/.test(healed.lastError ?? ''))
+check('S5 lost 写回后仍注入长期记忆', lost.service.systemBlock(lost.session).includes('长期记忆'))
+const lostWrites = lost.writes()
+check('S6 连续调用输出逐条相等', ids(lost.service.historyOf(lost.session)) === ids(lostHistory))
+check('S6 连续调用不重复写盘', lost.writes() === lostWrites && lostWrites === 1)
+check('S6 重启后窗口与本轮相等', ids(lost.reload().historyOf(lost.session)) === ids(lostHistory))
+
+const empty = anchorFixture('empty')
+empty.session.messages = []
+check('S7 清空消息返回空数组', empty.service.historyOf(empty.session).length === 0)
+check('S7 清空后边界归零锚点为 null', empty.service.stateOf('empty').coveredCount === 0 && empty.service.stateOf('empty').anchorMessageId === null)
+const emptyWrites = empty.writes()
+empty.service.historyOf(empty.session)
+check('S7 清空后重复调用不写盘', empty.writes() === emptyWrites)
+const short = anchorFixture('short')
+short.session.messages = [msg('new', 'user', '新对话')]
+check('S7 旧边界越界且短于窗口时返回全量', short.service.historyOf(short.session).length === 1 && short.service.stateOf('short').coveredCount === 0)
+const over = anchorFixture('over')
+over.service.stateOf('over').coveredCount = 100
+check('S7 越界但锚点仍在时按 id 找回边界', ids(over.service.historyOf(over.session)) === stableIds && over.service.stateOf('over').coveredCount === 24)
+
+const failedSave = anchorFixture('failed-save')
+failedSave.session.messages.splice(23, 1)
+failedSave.store.save = () => { throw new Error('P37_WRITE_FAILURE') }
+let saveThrew = false, failureHistory
+const warnings = [], originalWarn = console.warn
+console.warn = (...args) => warnings.push(args.join(' '))
+try { failureHistory = failedSave.service.historyOf(failedSave.session) } catch { saveThrew = true } finally { console.warn = originalWarn }
+check('写盘失败不影响聊天窗口', !saveThrew && ids(failureHistory ?? []) === ids(lostHistory))
+check('写盘失败只警告且内存边界已收敛', warnings.some(w => w.includes('P37_WRITE_FAILURE')) && failedSave.service.stateOf('failed-save').coveredCount === 31)
+
+// 不先调 historyOf：直接在 lost 下 schedule，验证真正送进 provider 的新增对话。
+const scheduled = anchorFixture('scheduled', 36, 34)
+scheduled.session.messages.splice(33, 1)
+const requests = []
+const capture = { id: 'fake', async *stream(req) { requests.push(req.messages.at(-1).content); yield { type: 'text', text: '新档案' }; yield { type: 'finish', reason: 'stop' } } }
+scheduled.service.schedule(scheduled.session, capture, current)
+for (let i = 0; i < 80 && scheduled.service.stateOf('scheduled').coveredCount !== 35; i++) await sleep(10)
+check('S8 lost 调度实际调用四段 provider', requests.length === 4, requests.length)
+check('S8 压缩输入含旧下标会跳过的消息', requests.length === 4 && requests.every(text => text.includes('ANCHOR_MESSAGE_31') && text.includes('ANCHOR_MESSAGE_32') && text.includes('ANCHOR_MESSAGE_34')))
+check('S8 压缩成功后重挂到新尾部并保留提交复核', scheduled.service.stateOf('scheduled').coveredCount === 35 && scheduled.service.stateOf('scheduled').anchorMessageId === 'p35')
+
+// 导出判定函数：先做 service 缺陷回归，再检查四态与纯函数边界。
+check('F1 导出两个纯函数', typeof modA.resolveCovered === 'function' && typeof modA.windowStartOf === 'function')
+if (typeof modA.resolveCovered === 'function' && typeof modA.windowStartOf === 'function') {
+  const config = { enabled: true, triggerCount: 4, windowCount: 4 }
+  const resolve = (s, summary, patch = {}) => modA.resolveCovered(s, summary, { ...config, ...patch })
+  const snapshot = JSON.stringify(stable.session)
+  check('四态 none：无记录、禁用、零边界、空锚点', [resolve(stable.session, null), resolve(stable.session, stable.summary, { enabled: false }), resolve(stable.session, { ...stable.summary, coveredCount: 0 }), resolve(stable.session, { ...stable.summary, anchorMessageId: null })].every(r => r.state === 'none' && r.covered === 0))
+  check('S1 纯函数 ok 快路径', resolve(stable.session, stable.summary).state === 'ok' && resolve(stable.session, stable.summary).covered === 24)
+  check('S2 纯函数 shifted 按 id 重挂', resolve(shifted.session, shifted.summary).state === 'shifted' && resolve(shifted.session, shifted.summary).covered === 23)
+  check('S4 纯函数 lost 新边界', resolve(lost.session, lost.summary).state === 'lost' && resolve(lost.session, lost.summary).covered === 31)
+  check('S6 自愈后的判定为 ok', resolve(lost.session, healed).state === 'ok')
+  check('纯函数不改输入', JSON.stringify(stable.session) === snapshot)
+  const mixed = [msg('old', 'user', '旧'), msg('blank', 'assistant', '  '), msg('one', 'narration', '旁白'), msg('sys', 'system', '注入'), { ...msg('stream', 'assistant', '半句'), status: 'streaming' }, msg('two', 'user', '新')]
+  check('窗口只计可读消息，保留中间非可读原记录', modA.windowStartOf(mixed, 2) === 2)
+  check('窗口支持从指定边界往回数', modA.windowStartOf(stable.session.messages, 4, 24) === 20)
+  check('零窗口边界与空历史', modA.windowStartOf(mixed, 0) === 6 && modA.windowStartOf([], 4) === 0)
+  check('S7 lost 短会话的纯函数边界为零', resolve(short.session, short.summary).covered === 0)
+}
+
+// 首条 assistant 修正发生在重挂之后，且不拿修正后的起点污染持久坐标。
+const assistantFirst = anchorFixture('assistant-first', 35, 24)
+assistantFirst.session.messages.splice(23, 1)
+const assistantHistory = assistantFirst.service.historyOf(assistantFirst.session)
+check('重挂后仍修正首条 assistant', assistantHistory[0].role === 'user')
+check('首条修正不改变重挂边界', assistantFirst.service.stateOf('assistant-first').coveredCount === 30 && assistantFirst.service.stateOf('assistant-first').anchorMessageId === 'p30')
+
+setSummary({ enabled: false })
+const disabled = anchorFixture('disabled')
+disabled.session.messages.splice(23, 1)
+check('禁用保持全量、不注入、不自愈写盘', disabled.service.historyOf(disabled.session) === disabled.session.messages && disabled.service.systemBlock(disabled.session) === '' && disabled.writes() === 0)
+setSummary({ windowCount: 0 })
+const zero = anchorFixture('zero')
+zero.session.messages.splice(23, 1)
+check('零窗口 lost 重挂到末尾且可返回空历史', zero.service.historyOf(zero.session).length === 0 && zero.service.stateOf('zero').coveredCount === 35)
 
 done()

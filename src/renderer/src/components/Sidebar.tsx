@@ -1,9 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import type { ConversationMode } from '@shared/types'
 import { useChatStore } from '../features/chat/store'
 import { StoryCard } from '../features/story/StoryCard'
-import { NewStoryDialog } from '../features/story/NewStoryDialog'
 import { visibleDesktopSessions } from '../features/story/sessionFilter'
 import { useStoryStore } from '../features/story/store'
 import { usePromptLibrary } from '../features/settings/usePromptLibrary'
@@ -42,7 +41,6 @@ export function Sidebar() {
   const refreshStories = useStoryStore((s) => s.refreshStories)
   const openStory = useStoryStore((s) => s.openStory)
   const { library } = usePromptLibrary()
-  const [storyDialogOpen, setStoryDialogOpen] = useState(false)
 
   useEffect(() => {
     void refreshStories()
@@ -106,14 +104,6 @@ export function Sidebar() {
 
       <div className="sidebar__section-title sidebar__section-title--inset" data-ui-region="B 故事分区">
         故事
-        <button
-          type="button"
-          className="sidebar__section-action"
-          data-ui-target="新建故事"
-          onClick={() => setStoryDialogOpen(true)}
-        >
-          + 新建故事
-        </button>
       </div>
       <div className="story-list" data-ui-target="故事列表">
         {stories.length === 0 && <p className="session-list__empty">还没有故事区</p>}
@@ -132,8 +122,6 @@ export function Sidebar() {
           />
         ))}
       </div>
-
-      {storyDialogOpen && <NewStoryDialog onClose={() => setStoryDialogOpen(false)} />}
 
       {/* 纯装饰：日间浅色叶纹、夜间星尘，靠主题选择器换图（P2 §4.7） */}
       <div className="sidebar__ornament" aria-hidden="true" />

@@ -75,7 +75,7 @@ export function displayOf(
   scripts: StRegexScript[] | undefined,
   depth?: number,
   purify?: PurifierLike,
-  dialogue = false
+  dialogue = true
 ): string {
   const text = applyDisplayScripts(mes, scripts, depth)
   if (!text) return ''
