@@ -189,7 +189,8 @@ const DEFAULT_VIEWS = [
   { hash: '/chat', name: 'chat-failed-turn', seedFailure: true },
   { hash: '/settings/models', name: 'settings-models' },
   { hash: '/settings/prompts', name: 'settings-prompts' },
-  { hash: '/settings/prompts', name: 'settings-prompts-roles', scrollY: 390 },
+  { hash: '/settings/prompts', name: 'settings-prompts-roles', scrollY: 374 },
+  { hash: '/settings/prompts', name: 'settings-prompts-files', scrollY: 374, click: '[data-ui-target="角色文件"]' },
   // P9：世界书编写器弹层（列表默认 8 条 + 展开按钮 + 新增表单）。
   // 点「打开世界书编辑器」后弹层自己会拉 knownDirs 并落到默认角色的 worldbook 目录。
   { hash: '/settings/prompts', name: 'worldbook-editor', click: '[data-ui-target="世界书编辑器入口"]' },

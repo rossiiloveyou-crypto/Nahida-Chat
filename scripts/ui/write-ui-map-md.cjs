@@ -119,7 +119,7 @@ md += '| URL 加 `?grid=1` | 以开启状态启动（截图脚本用这个） |\
 md += '| `pnpm ui:map --only=<视图>[,…]` | 只重拍改动到的视图，坐标合并进上一份 JSON（**默认写法**） |\n'
 md += '| `pnpm ui:map --all` | 重拍全部视图（公共样式 / 侧栏 / 主题这类全局改动才用） |\n'
 md += '| 裸跑 `pnpm ui:map` | 被拒绝（退出码 6）：网格图只该拍这次改动的地方 |\n'
-md += '| `node ~/.dsh/agents-global/ui-map/verify-map.cjs docs/ui/ui-map-v' + version + '-*.png` | 自检图里是否真有网格 |\n\n'
+md += '| `env -u ELECTRON_RUN_AS_NODE pnpm ui:map --only=<视图> --verify-p49` | 生成器内置校验：网格哈希、PNG 尺寸/DPI、该视图已声明的必需控件可见性与视口边界 |\n\n'
 md += '网格覆盖层只在调试时使用，不参与业务；生产打包默认关闭。\n\n---\n\n'
 
 md += '## 主图\n\n'

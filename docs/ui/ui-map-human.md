@@ -27,16 +27,16 @@
 
 只重拍此视图，使用隔离 `out-sup02` 与临时 userData。运行 `pnpm ui:map --only=chat-dialogue --build=out-sup02 --verify-presend` 验证 Enter 入队、请求、草稿、生成禁用、空队列与定位图 SHA/边界。QQ 会话隐藏该模式并在主进程拒绝新 API。
 
-### ST 桥接进程与日志（2026-11-18）
+### ST 桥接进程与日志（2026-11-21，P6）
 
 | 需求 | 图上位置 | 代码 |
 | --- | --- | --- |
 | 设置 ST 目录、桥接角色、端口与可选 Node 路径 | `settings-bridge` 元素 **5 / 6 / 7 / 8**（桥接角色 `G9–R9`） | `features/settings/sections/BridgeSection.tsx` |
 | 打开 ST / 停止 ST / 打开日志 | `settings-bridge` 元素 **10 / 11 / 12** | `BridgeSection.tsx` → preload → `main/features/bridge/host.ts` |
-| 查看角色卡、PID、端口、日志大小、运行时及最近错误 | `settings-bridge-status` 元素 **14「桥接状态」**；元素 **15「刷新桥接状态」** | `host.health()`、`character.ts`、`spawn.ts`、`logpipe.ts` |
-| 修改最高权重规则（空默认、清空停用） | `settings-bridge-lower` 元素 **11「最高权重规则正文」/ 12「保存最高权重规则」/ 13「最高权重规则状态」** | `BridgeSection.tsx` → `bridge.override.get/save` → `override.ts`；`driver.ts` 每轮 SYSTEM / IN_CHAT / depth 0 注入 |
+| 查看角色卡、PID、端口、日志大小、运行时及最近错误 | `settings-bridge-status` 元素 **16「桥接状态」/ 17「桥接失败步骤」/ 18「桥接故事召回状态」/ 19「刷新桥接状态」** | `host.health()`、`character.ts`、`spawn.ts`、`logpipe.ts` |
+| 修改最高权重规则（空默认、清空停用） | `settings-bridge-lower` 元素 **13「最高权重规则正文」/ 14「保存最高权重规则」/ 15「最高权重规则状态」** | `BridgeSection.tsx` → `bridge.override.get/save` → `override.ts`；`driver.ts` 每轮 SYSTEM / IN_CHAT / depth 0 注入 |
 
-2026-11-18：只新增桥接设置上下两张定位图；独立 ST 窗口和实时日志另见桥接任务 baseline 证据。
+2026-11-21：仅重拍 `settings-bridge / settings-bridge-lower / settings-bridge-status` 三张受影响视图；记忆组件未改，沿用既有图。健康状态页显示连续恢复失败次数、中文失败步骤和只读召回联动，新增入口沿用 `story.recallStatus`；轮询不重复复制召回库。熔断红色告警和孤儿扫描失败的隔离夹具定位图见任务 `baseline/p6-circuit-ui/`，不代表真实故障现场。最近一轮落盘计数尚无只读契约，本轮保留缺口。全局 AGENTS.md 本机不存在；仓库 AGENTS.md 和写图文档脚本仍引用旧全局校验器，二者不在 P6 白名单，U-07/U-08 保持部分未闭合。
 
 ### 世界书条目搜索（2026-11-08）
 
@@ -119,6 +119,13 @@
 | 重试复用那条回复、不重复用户原话 | 点重试后 user 气泡仍是 1 个、消息总数仍是 2 条 | `main/features/chat/chatService.ts`（`restartTurn`） |
 ## 变更记录
 
+### 修订 33（2026-11-22）· SUP-03 角色卡描述与文件折叠
+
+- 角色根目录新增 `description.md`，仅供卡片展示；缺失时显示带角色 id 的占位提示，描述不进入任何模式的提示词。
+- 文件清单默认收起，summary 保留「文件 7 个」及红色缺失计数；新增 `settings-prompts-files` 以真实点击展开第一张卡，原 7 项保留。
+- 三张 prompts 图重拍；角色区按 1280×860 内容尺寸实测后设 `scrollY: 374`（收起态受页面最大滚动量钳制）。独立审计覆盖 PNG 哈希、绿色元素框/紫色区域标记、角色控件边界与编号。
+- `settings-prompts-roles`：元素 **6 添加自定义角色**（414,306），**7 角色列表**（414,332，682×362）；来源 **8/11/14**，描述 **9/12/15**，文件 **10/13/16**；世界书入口 **17**，编辑器/选择目录/新建 **18/19/20**。坐标单位为 CSS px，PNG 随设备比例为 1666×1120。
+
 ### 修订 32（2026-11-20）· P4.5 桥接角色通用化
 
 - 仅重拍 `settings-bridge`：新增元素 **6「桥接角色」**（416,517，678×36；`G9–R9`），新用户留空；运行期间与目录等配置一起置灰，停止后恢复编辑。
@@ -131,7 +138,7 @@
 - 提示词库增加「添加自定义角色」与「内置 / 自定义」来源徽标，角色目录按钮打开用户层，避免空目录覆盖内置。
 - `settings-prompts` 保留注入顺序与入口；新增 `settings-prompts-roles` 展示完整角色区。`--verify-prompt-roots` 仅在隔离 userData 播种 test-a，通过真实 renderer → preload → IPC 捕获打开目录，并核对两种来源徽标。
 - 用户路径由主进程返回；shared 逐文件兜底，角色同 id 整体覆盖。内置世界书可读，保存由主进程只读守卫拦截。
-- 定位：`settings-prompts-roles` 元素 **6 添加自定义角色**（414,205），**8/9/10 角色来源**（三枚都在视口）；区域与编号由脚本生成，不手填生成表。
+- 当前定位（SUP-03 重拍后）：`settings-prompts-roles` 元素 **6 添加自定义角色**（414,306），来源 **8/11/14**，描述 **9/12/15**，文件 **10/13/16**（三卡均在视口）；世界书入口 **17**，编辑器/选择目录/新建 **18/19/20**。区域与编号由脚本生成，不手填生成表。
 
 
 ### 修订 30（2026-11-18）· P3 角色卡检测与最高权重规则
@@ -267,3 +274,5 @@
   新建出来的对话跟随「新对话默认角色」。故事会话里那个选择器是置灰的 —— 它的角色属故事区（`story.json` 的 meta）。
 - **切角色不会换记忆库**：长期记忆按「用户人设」分域，不按 AI 角色分域，切换角色后仍会召回同一批事实记忆。
 - 元素编号按 DOM 顺序生成，**新增控件会让后面的编号后移** —— 改完 UI 必须重跑截图并重新生成本文。
+
+2026-11-22（P6 补做）：删除桥接状态页面向用户的内部台账提示；仅重拍 settings-bridge-status 与隔离熔断夹具，状态元素仍为16/17/18/19、最高权重三件仍为13/14/15；仓库规范和文档模板改用内置校验。旧阶段“全局校验器本机缺失”和“白名单外残留”的记录仅为历史现场，不再作为当前操作步骤；桥接控件边界仍以任务baseline独立审计为准。

@@ -1,6 +1,6 @@
 # 项目施工规范 · Nahida Chat
 
-本文件是本仓库的编码指令入口。**全局约规（`~/.dsh/AGENTS.md`）同样适用**，下面是本项目的补充与细化。
+本文件是本仓库的编码指令入口。**全局约规（`~/.dsh/AGENTS.md`）同样适用**（该全局文件在本机不存在；存在时同样适用），下面是本项目的补充与细化。
 
 ---
 
@@ -38,10 +38,10 @@ renderer (React) ── window.nahida ──▶ preload ──▶ main (Node)
 ```bash
 pnpm typecheck && pnpm build                        # 1. 必须构建，截图读的是 out/
 pnpm ui:map --only=<这次改到的视图>[,<视图>]        # 2. 只拍改动部分
-node ~/.dsh/agents-global/ui-map/verify-map.cjs docs/ui/ui-map-v0-<视图>.png   # 3. 自检
+env -u ELECTRON_RUN_AS_NODE pnpm ui:map --only=<视图> --verify-p49   # 3. 自检
 ```
 
-第 3 步必须看到 `PASS`。
+第 3 步必须看到 `PASS P4.9 grid hash/controls/bounds <视图>`。
 
 **截图只截改动部分（操作者规则，2026-11-13）**：网格图是「这次改动」的证据，不是产品目录。
 
@@ -87,6 +87,7 @@ Prompt/
 - **不要在代码里写死任何角色名或人格文本** —— 后续要做多角色。
 - **设置页不显示提示词正文**，只提供「改哪个文件」对照表和「打开目录」按钮；正文一律用编辑器改。
 - 新增角色 = 建一个文件夹，不改代码。
+- 角色根目录的 `description.md` 只供设置卡片展示，不参与拼装、不进提示词。
 
 ---
 
