@@ -197,6 +197,7 @@ export function PromptsSection() {
         <div className="prompt-characters" data-ui-target="角色列表">
           {(library?.characters ?? []).map((character) => {
             const isDefault = settings?.defaultCharacterId === character.id
+            const missingCount = character.files.filter((file) => !file.exists).length
             return (
               <div className={isDefault ? 'prompt-character is-default' : 'prompt-character'} key={character.id}>
                 <div className="prompt-character__head">
@@ -219,15 +220,24 @@ export function PromptsSection() {
                     )}
                   </div>
                 </div>
-                <ul className="prompt-character__files">
-                  {character.files.map((file) => (
-                    <li key={file.id} className={file.exists ? '' : 'is-missing'}>
-                      <span>{file.label}</span>
-                      <code>{file.relativePath}</code>
-                      {!file.exists && <span className="prompt-character__missing">缺失</span>}
-                    </li>
-                  ))}
-                </ul>
+                <div className="prompt-character__desc" data-ui-target="角色描述">
+                  {character.description || `未写角色描述 —— 在 characters/${character.id}/description.md 里写一句`}
+                </div>
+                <details className="prompt-character__files-wrap">
+                  <summary className={missingCount > 0 ? 'hint-text--error' : undefined} data-ui-target="角色文件">
+                    文件 {character.files.length} 个
+                    {missingCount > 0 && <span className="prompt-character__missing"> · 缺失 {missingCount}</span>}
+                  </summary>
+                  <ul className="prompt-character__files">
+                    {character.files.map((file) => (
+                      <li key={file.id} className={file.exists ? '' : 'is-missing'}>
+                        <span>{file.label}</span>
+                        <code>{file.relativePath}</code>
+                        {!file.exists && <span className="prompt-character__missing">缺失</span>}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
               </div>
             )
           })}

@@ -528,6 +528,8 @@ export interface PromptCharFile {
 export interface PromptCharacter {
   id: string
   name: string
+  description: string
+  descriptionSource: 'file' | 'none'
   origin: 'builtin' | 'user'
   /** 当前生效角色目录与世界书目录，由主进程解析。 */
   dir: string

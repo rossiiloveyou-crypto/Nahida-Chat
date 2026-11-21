@@ -136,6 +136,7 @@ class PromptStore {
         merged.set(key, {
           id: canonicalId,
           name: readCharacterName(dir, entry.name),
+          ...readCharacterDescription(dir),
           origin,
           dir,
           worldbookDir: join(dir, 'worldbook'),
@@ -377,6 +378,25 @@ function readIfExists(path: string): string {
     return readFileSync(path, 'utf8').trim()
   } catch {
     return ''
+  }
+}
+
+/** 仅供设置卡片展示：读取首个正文段落，不参与提示词拼装。 */
+function readCharacterDescription(dir: string): Pick<PromptCharacter, 'description' | 'descriptionSource'> {
+  const lines: string[] = []
+  for (const raw of readIfExists(join(dir, 'description.md')).split(/\r?\n/)) {
+    const line = raw.trim()
+    if (!line || /^[#>]/.test(line)) {
+      if (lines.length) break
+      continue
+    }
+    lines.push(line)
+  }
+  const text = lines.join(' ').replace(/`/g, '').replace(/\s+/g, ' ').trim()
+  const characters = Array.from(text)
+  return {
+    description: characters.length > 200 ? characters.slice(0, 200).join('') + '…' : text,
+    descriptionSource: text ? 'file' : 'none'
   }
 }
 

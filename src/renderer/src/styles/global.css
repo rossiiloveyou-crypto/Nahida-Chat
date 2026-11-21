@@ -3135,6 +3135,26 @@ input[type='range'] {
   color: var(--nc-text-tertiary);
 }
 
+.prompt-character__desc {
+  margin-bottom: 8px;
+  color: var(--nc-text-tertiary);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.prompt-character__files-wrap {
+  color: var(--nc-text-secondary);
+  font-size: 12px;
+}
+
+.prompt-character__files-wrap > summary {
+  cursor: pointer;
+}
+
+.prompt-character__files-wrap[open] > summary {
+  margin-bottom: 8px;
+}
+
 .prompt-character__files {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
