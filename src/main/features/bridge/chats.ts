@@ -1,7 +1,7 @@
 /** P4: only owned one-turn chats are read/deleted; backups are observed, never removed. */
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { lstat, readdir, readFile, realpath, rm } from 'node:fs/promises'
+import { lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { readdir, readFile } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { app } from 'electron'
 import type { BridgePageLike } from './session'
@@ -61,11 +61,31 @@ export function validateChat(previous: Buffer, current: Buffer, injected: number
   if (last.is_user !== false || typeof last.mes !== 'string' || !last.mes.trim()) throw new Error('落盘末条必须是非空 assistant 消息')
   return { content: last.mes, actualLines: lines.length, expectedLines, metadataLines }
 }
-async function confined(target: ChatTarget): Promise<void> {
-  const parent = await realpath(target.directory)
-  if (resolve(parent).toLowerCase() !== resolve(target.directory).toLowerCase()) throw new Error('Owned chat directory redirects outside selected root')
-  try { if ((await lstat(target.path)).isSymbolicLink()) throw new Error('Owned chat is a symbolic link') }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
+const pathKey = (value: string): string => process.platform === 'win32' ? resolve(value).toLowerCase() : resolve(value)
+function statOrMissing(file: string): ReturnType<typeof lstatSync> | undefined {
+  try { return lstatSync(file) }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error }
+}
+// Walk from the root so a dangling ancestor junction is rejected, not mistaken for absence.
+function confined(target: ChatTarget): boolean {
+  const owned = chatTarget(dirname(dirname(target.directory)), target.name, target.avatar)
+  if (target.file !== owned.file || pathKey(target.directory) !== pathKey(owned.directory) || pathKey(target.path) !== pathKey(owned.path)) throw new Error('Invalid owned chat target')
+  const parents: string[] = []
+  for (let current = resolve(target.directory); ; current = dirname(current)) {
+    parents.unshift(current)
+    if (dirname(current) === current) break
+  }
+  for (const directory of parents) {
+    const stat = statOrMissing(directory)
+    if (!stat) return false
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('Owned chat directory is a link or not a directory')
+    if (pathKey(realpathSync(directory)) !== pathKey(directory)) throw new Error('Owned chat directory redirects outside selected root')
+  }
+  const stat = statOrMissing(target.path)
+  if (!stat) return false
+  if (stat.isSymbolicLink() || !stat.isFile()) throw new Error('Owned chat is a link or not a regular file')
+  if (pathKey(realpathSync(target.path)) !== pathKey(target.path)) throw new Error('Owned chat redirects outside selected root')
+  return true
 }
 export async function waitChat(target: ChatTarget, injected: number, timeoutMs = DISK_TIMEOUT_MS): Promise<DiskRead> {
   const started = Date.now()
@@ -73,7 +93,7 @@ export async function waitChat(target: ChatTarget, injected: number, timeoutMs =
   let reason = '文件尚未出现'
   while (Date.now() - started < timeoutMs) {
     try {
-      await confined(target)
+      if (!confined(target)) throw Object.assign(new Error('文件尚未出现'), { code: 'ENOENT' })
       const observed = (await readdir(target.directory)).find(file => file === target.file)
       if (!observed) throw Object.assign(new Error('文件尚未出现'), { code: 'ENOENT' })
       target.file = observed; target.path = join(target.directory, observed)
@@ -92,65 +112,77 @@ export async function waitChat(target: ChatTarget, injected: number, timeoutMs =
   throw new Error('等待 ST 落盘超时：' + reason)
 }
 interface Orphan { dataDir?: string; avatar?: string; at: string; sessionId: string; file: string; path: string; reason: string; attempts?: number }
-interface Orphans { version: 1; items: Orphan[] }
+interface Orphans { version: 1; items: unknown[] }
+function isOrphan(value: unknown): value is Orphan & { dataDir: string; avatar: string } {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const row = value as Record<string, unknown>
+  return ['dataDir', 'avatar', 'file', 'path'].every(key => typeof row[key] === 'string' && (row[key] as string).length > 0)
+    && ['at', 'sessionId', 'reason'].every(key => typeof row[key] === 'string')
+    && (row.attempts === undefined || (typeof row.attempts === 'number' && Number.isSafeInteger(row.attempts) && row.attempts >= 0))
+}
 function orphanFile(userData: string): string { return join(userData, 'nc-bridge', 'orphans.json') }
 export function readOrphans(userData = app.getPath('userData')): Orphans {
-  const file = orphanFile(userData)
-  if (!existsSync(file)) return { version: 1, items: [] }
-  const value = JSON.parse(readFileSync(file, 'utf8')) as Orphans
-  if (value.version !== 1 || !Array.isArray(value.items)) throw new Error('Invalid orphan ledger')
-  return value
+  let text: string
+  try { text = readFileSync(orphanFile(userData), 'utf8') }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { version: 1, items: [] }; throw error }
+  const value: unknown = JSON.parse(text)
+  if (!value || typeof value !== 'object' || Array.isArray(value) || !('version' in value) || value.version !== 1 || !('items' in value) || !Array.isArray(value.items)) throw new Error('Invalid orphan ledger')
+  return { version: 1, items: value.items }
 }
 function saveOrphans(value: Orphans, userData: string): void {
   const file = orphanFile(userData); mkdirSync(dirname(file), { recursive: true })
   writeFileSync(file + '.tmp', JSON.stringify(value, null, 2), 'utf8'); renameSync(file + '.tmp', file)
 }
+interface PendingSweep { task: Promise<number>; touched: Set<string> }
+const sweeping = new Map<string, PendingSweep>()
 export function recordOrphan(item: Orphan, userData = app.getPath('userData')): void {
+  // No await in either RMW transaction: synchronous callers keep immediate persistence.
   const ledger = readOrphans(userData)
-  ledger.items = ledger.items.filter(row => row.path !== item.path)
+  ledger.items = ledger.items.filter(row => !isOrphan(row) || pathKey(row.path) !== pathKey(item.path))
   ledger.items.push(item); saveOrphans(ledger, userData)
+  sweeping.get(pathKey(orphanFile(userData)))?.touched.add(pathKey(item.path))
 }
-const sweeping = new Map<string, Promise<number>>()
 export function sweepOrphans(userData = app.getPath('userData')): Promise<number> {
-  const key = resolve(userData)
+  const key = pathKey(orphanFile(userData))
   const active = sweeping.get(key)
-  if (active) return active
-  const task = sweepLedger(userData).finally(() => sweeping.delete(key))
-  sweeping.set(key, task)
+  if (active) return active.task
+  const touched = new Set<string>()
+  // A pending synchronous registration is retained until the next scan, even if identical.
+  const task = Promise.resolve().then(() => sweepLedger(userData, touched)).finally(() => sweeping.delete(key))
+  sweeping.set(key, { task, touched })
   return task
 }
-async function sweepLedger(userData: string): Promise<number> {
+function sweepLedger(userData: string, touched: Set<string>): number {
+  // The complete read/validate/delete/write transaction runs without yielding.
   const ledger = readOrphans(userData)
-  const remaining: Orphan[] = []
+  const remaining: unknown[] = []
   for (const item of ledger.items) {
+    if (!isOrphan(item) || touched.has(pathKey(item.path))) { remaining.push(item); continue }
     try {
-      const file = resolve(item.path)
-      if (!item.dataDir || !item.avatar) throw new Error('Orphan lacks trusted root identity')
+      if (!OWNED.test(item.file)) throw new Error('Invalid orphan filename')
       const owned = chatTarget(item.dataDir, item.file.slice(0, -6), item.avatar)
-      if (resolve(owned.path).toLowerCase() !== file.toLowerCase()) throw new Error('Invalid orphan target')
-      await confined({ name: item.file.slice(0, -6), avatar: '', directory: dirname(file), file: item.file, path: file })
-      await rm(file, { force: true })
+      if (pathKey(owned.path) !== pathKey(item.path)) throw new Error('Invalid orphan target')
+      if (confined(owned)) rmSync(owned.path, { force: true })
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue
-      remaining.push({ ...item, attempts: (item.attempts ?? 0) + 1, reason: String(error) })
+      remaining.push({ ...item, attempts: Math.min((item.attempts ?? 0) + 1, Number.MAX_SAFE_INTEGER), reason: String(error) })
     }
   }
-  // Merge entries recorded while asynchronous removals were in flight.
-  const latest = readOrphans(userData)
-  const newItems = latest.items.filter(row => !ledger.items.some(old => old.path === row.path && old.at === row.at && old.reason === row.reason))
-  const merged = remaining.filter(row => !newItems.some(fresh => fresh.path === row.path)).concat(newItems)
-  if (existsSync(orphanFile(userData))) saveOrphans({ version: 1, items: merged }, userData)
-  return merged.length
+  // A missing/empty ledger needs no rewrite; genuine read and write errors propagate.
+  if (ledger.items.length > 0) saveOrphans({ version: 1, items: remaining }, userData)
+  return remaining.length
 }
 export async function removeChat(page: BridgePageLike, target: ChatTarget, sessionId: string): Promise<boolean> {
   try {
-    await confined(target)
+    if (!confined(target)) return true
     await page.eval('(async()=>{const c=SillyTavern.getContext();const r=await fetch("/api/chats/delete",{method:"POST",headers:c.getRequestHeaders(),body:JSON.stringify(' + JSON.stringify({ chatfile: target.file, avatar_url: target.avatar }) + ')});return r.ok})()', 'chat:delete')
-    if (!existsSync(target.path)) return true
-  } catch { /* page/API failure falls back to owned path deletion */ }
-  try { await confined(target); await rm(target.path, { force: true }); return !existsSync(target.path) }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true
+    if (!confined(target)) return true
+  } catch { /* page/API failure falls back to a fresh owned path check */ }
+  try {
+    if (!confined(target)) return true
+    rmSync(target.path, { force: true })
+    if (confined(target)) throw new Error('Owned chat still exists after deletion')
+    return true
+  } catch (error) {
     recordOrphan({ dataDir: dirname(dirname(target.directory)), avatar: target.avatar, at: new Date().toISOString(), sessionId, file: target.file, path: target.path, reason: String(error) })
     return false
   }

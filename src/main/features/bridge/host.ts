@@ -2,8 +2,8 @@
 import { app, BrowserWindow, ipcMain, session as electronSession } from 'electron'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { BRIDGE_GENERATE_TIMEOUT_RANGE, BRIDGE_DEFAULT_CONFIG, BRIDGE_IPC } from '@shared/bridge'
-import type { BridgeConfig, BridgeHealth } from '@shared/bridge'
+import { BRIDGE_GENERATE_TIMEOUT_RANGE, BRIDGE_DEFAULT_CONFIG, BRIDGE_IPC, BridgeFailure, bridgeFailure, isPageUnavailable } from '@shared/bridge'
+import type { BridgeConfig, BridgeHealth, BridgeFailureStep } from '@shared/bridge'
 import { ensurePreloadFile } from './preload'
 import { StProcess, ONBOARDING_ERROR } from './spawn'
 import { BridgeLogWindow } from './logWindow'
@@ -11,6 +11,7 @@ import { BridgeLogPipe } from './logpipe'
 import { findCard, selectCharacter } from './character'
 import { ensureOverrideFile } from './override'
 import { sweepOrphans, readOrphans } from './chats'
+import { appendBridgeTrace } from './trace'
 
 export const READY_EXPR = [
   '(() => {',
@@ -75,6 +76,11 @@ export class BridgeHost implements BridgePage {
   private booting: Promise<void> | null = null
   private orphanSweep: Promise<number> = Promise.resolve(0)
   private healthy = false
+  private needsRecovery = false
+  private retryCount = 0
+  private circuitUntil = 0
+  private lastFailStep: BridgeFailureStep | null = null
+  private orphanScanError: string | null = null
   private lastError: string | null = null
   private needsOnboarding = false
   private connected = false
@@ -86,13 +92,13 @@ export class BridgeHost implements BridgePage {
   private eventChannelWired = false
   private readonly stats: BridgeHostStats = { boots: 0 }
 
-  constructor(config: Partial<BridgeConfig> = {}) {
+  constructor(config: Partial<BridgeConfig> = {}, private readonly now: () => number = Date.now) {
     this.config = { ...BRIDGE_DEFAULT_CONFIG, ...config }
     this.loadedConfig = Object.keys(config).length > 0
     app.on('before-quit', (event) => {
-      try { this.destroy() } catch (error) { event.preventDefault(); this.lastError = 'ST 停止失败：' + messageOf(error) }
+      try { this.destroy() } catch (error) { event.preventDefault(); this.recordFailure(error) }
     })
-    this.orphanSweep = app.whenReady().then(() => sweepOrphans()).catch(error => { this.lastError = '孤儿扫描失败：' + messageOf(error); return 0 })
+    this.orphanSweep = app.whenReady().then(() => this.scanOrphans()).catch(error => { this.recordOrphanError(error); return 0 })
     app.on('will-quit', () => { try { this.st.stop() } catch { /* before-quit 已保留错误 */ } })
   }
   private configFile(): string { return join(app.getPath('userData'), 'nc-bridge', 'config.json') }
@@ -103,7 +109,7 @@ export class BridgeHost implements BridgePage {
       const file = this.configFile()
       if (existsSync(file)) {
         try { this.applyConfig(JSON.parse(readFileSync(file, 'utf8'))) }
-        catch (error) { this.lastError = 'ST 配置读取失败：' + messageOf(error) }
+        catch (error) { this.recordFailure(error) }
       }
     }
     if (input) {
@@ -144,7 +150,52 @@ export class BridgeHost implements BridgePage {
     if (!this.booting) this.booting = this.boot().finally(() => { this.booting = null })
     return this.booting
   }
+  assertAvailable(): void {
+    this.refreshCircuit()
+    if (this.circuitUntil) throw new BridgeFailure('fail:crash', 'ST 反复崩溃，已暂停自动重试；请等待 60 秒或重新打开 ST')
+  }
+  private resetCircuit(): void {
+    this.retryCount = 0
+    this.circuitUntil = 0
+    this.lastFailStep = null
+    this.lastError = null
+  }
+  private refreshCircuit(): void {
+    if (this.circuitUntil && this.now() >= this.circuitUntil) this.resetCircuit()
+  }
+  noteFailure(step: BridgeFailureStep): void { this.lastFailStep = step }
+  recoverySucceeded(): void { this.resetCircuit() }
+  recoveryFailed(error: unknown): void {
+    this.recordFailure(error)
+    this.retryCount = Math.min(2, this.retryCount + 1)
+    this.needsRecovery = true
+    if (this.retryCount >= 2 && !this.circuitUntil) {
+      this.circuitUntil = this.now() + 60_000
+      this.lastError = 'ST 反复崩溃，已暂停自动重试；请等待 60 秒或重新打开 ST'
+      this.lastFailStep = 'fail:crash'
+    }
+  }
+  /** Driver owns accounting for this explicit recovery, including failure after reloading. */
+  async recover(): Promise<BridgePage> {
+    this.assertAvailable()
+    this.closePage()
+    this.needsRecovery = false
+    try { return await this.ensurePage() }
+    catch (error) { this.needsRecovery = true; throw this.recordFailure(error) }
+  }
   async ensure(): Promise<BridgePage> {
+    this.assertAvailable()
+    try {
+      // Driver spends the single per-turn recovery budget, including between-turn crashes.
+      if (this.needsRecovery) throw new BridgeFailure('fail:crash', 'ST 页面崩溃，正在自动重启')
+      return await this.ensurePage()
+    } catch (error) {
+      if (isPageUnavailable(error)) this.pageUnavailable(error)
+      throw this.recordFailure(error)
+    }
+  }
+  private async ensurePage(): Promise<BridgePage> {
+    this.assertAvailable()
     await this.orphanSweep
     this.configure()
     if (!this.config.cardName) throw new Error('请填写桥接角色后再打开 ST')
@@ -153,25 +204,36 @@ export class BridgeHost implements BridgePage {
       const win = this.win
       if (!win || win.isDestroyed()) throw new Error('ST 窗口已关闭')
       await this.connect(win)
+      if (this.needsRecovery || win.isDestroyed()) throw new Error('ST 页面不可用：连接期间页面崩溃')
       this.connected = true
     }
     return this
   }
   async openSt(config?: Partial<BridgeConfig>): Promise<BridgeHealth> {
+    this.resetCircuit()
     try {
       if (typeof config?.cardName === 'string' && !config.cardName.trim()) throw new Error('请填写桥接角色后再打开 ST')
       this.configure(config)
       if (!this.config.cardName) throw new Error('请填写桥接角色后再打开 ST')
       await this.orphanSweep
-      this.orphanSweep = sweepOrphans()
+      this.orphanSweep = this.scanOrphans()
       await this.orphanSweep
       if (this.win && !this.win.isDestroyed()) { this.win.show(); this.win.focus() }
-      if (!this.alive()) await this.launch()
+      if (this.needsRecovery) await this.recover()
+      else if (!this.alive()) await this.launch()
       else await this.ensureCard()
       return this.health()
-    } catch (error) { this.lastError = messageOf(error); throw error }
+    } catch (error) {
+      const failure = this.recordFailure(error)
+      try {
+        appendBridgeTrace({ at: new Date(this.now()).toISOString(), sessionId: 'open-st', before: 0, sent: 0, inChat: 0, inPrompt: 0, promptsWritten: 0, cardName: this.config.cardName, steps: ['open-st', failure.step, 'detail:' + failure.detail] })
+      } catch (traceError) { this.logDetail('open-st trace: ' + messageOf(traceError)) }
+      throw failure
+    }
   }
   async stopSt(): Promise<BridgeHealth> {
+    this.resetCircuit()
+    this.needsRecovery = false
     this.destroy()
     // 取消尚在体检/就绪阶段的启动，等待其退出后再向 UI 报告停止完成。
     await this.booting?.catch(() => {})
@@ -188,7 +250,11 @@ export class BridgeHost implements BridgePage {
   }
   async eval<T>(expr: string, label = 'expr'): Promise<T> {
     const win = this.win
-    if (!win || win.isDestroyed()) { this.healthy = false; throw new Error('桥接窗口不可用（未就绪或已崩溃）') }
+    if (!win || win.isDestroyed()) {
+      const error = new BridgeFailure('fail:crash', 'ST 页面崩溃，正在自动重启；如仍失败，请打开日志或重新打开 ST', '桥接窗口不可用（未就绪或已崩溃）')
+      this.pageUnavailable(error)
+      throw bridgeFailure(error)
+    }
     try {
       // Electron otherwise replaces page rejections with an unhelpful generic error.
       const result = await win.webContents.executeJavaScript(
@@ -196,27 +262,81 @@ export class BridgeHost implements BridgePage {
       ) as { ok: boolean; value?: T; error?: string }
       if (!result.ok) throw new Error(result.error || 'ST 页面执行失败')
       return result.value as T
-    } catch (error) { this.lastError = label + '：' + messageOf(error); throw error }
+    } catch (error) {
+      if (isPageUnavailable(error)) this.pageUnavailable(error)
+      else this.recordFailure(error)
+      this.logDetail(label + '：' + messageOf(error))
+      throw error
+    }
   }
   onEvent(listener: (event: BridgePageEvent) => void): () => void {
     this.listeners.add(listener)
     return () => { this.listeners.delete(listener) }
   }
   health(): BridgeHealth {
+    this.refreshCircuit()
     this.configure()
     let orphanCount = 0
-    try { orphanCount = readOrphans().items.length } catch (error) { this.lastError = '孤儿清单读取失败：' + messageOf(error) }
+    try { orphanCount = readOrphans().items.length } catch (error) { this.recordOrphanError(error) }
     return {
       alive: this.alive(), busy: this.booting !== null,
       rebuilds: Math.max(0, this.stats.boots - 1),
+      circuitOpen: this.circuitUntil !== 0, retryCount: this.retryCount,
+      lastFailStep: this.lastFailStep, orphanScanError: this.orphanScanError,
       stRunning: this.st.running(), stPid: this.st.pid, port: this.config.port,
       logBytes: this.st.log?.logBytes ?? 0, orphans: orphanCount,
       nodeSource: this.st.info?.runtime.source ?? null, needsOnboarding: this.needsOnboarding,
       cardAvatar: this.config.cardAvatar, cardName: this.config.cardName,
       cancelledWrites: 0, blockedExternal: 0,
-      lastError: this.st.lastError ?? this.lastError,
+      lastError: this.lastError ?? (this.st.lastError ? bridgeFailure(this.st.lastError, this.failureContext()).message : null),
       config: { ...this.config, logPath: this.st.log?.path ?? this.config.logPath }
     }
+  }
+  private failureContext(): { port: number; timeoutMs: number; cardName: string } {
+    return { port: this.config.port, timeoutMs: this.config.readyTimeoutMs, cardName: this.config.cardName }
+  }
+  private logDetail(detail: string): void {
+    try {
+      this.st.log ??= new BridgeLogPipe(join(app.getPath('userData'), 'nc-bridge', 'st-bridge.log'))
+      this.st.log.write('host', detail)
+    } catch { /* 诊断写入失败不覆盖主因。 */ }
+  }
+  private recordFailure(error: unknown): BridgeFailure {
+    const mapped = bridgeFailure(error, this.failureContext())
+    // Fixed config validation is already actionable; preserve its established wording.
+    const detail = messageOf(error)
+    const configurationErrors = /^(?:请先停止 ST，再修改目录、桥接角色、端口、Node 路径或单轮上限|ST 配置须为对象|ST 端口须为 1–65535 的整数|单轮上限须为 10–3600 秒的整数|(?:stRoot|nodePath|cardPath|cardName|cardAvatar) 须为有效路径字符串)$/
+    const failure = configurationErrors.test(detail) ? new BridgeFailure(mapped.step, detail, mapped.detail) : mapped
+    this.lastFailStep = failure.step
+    if (!this.circuitUntil) this.lastError = failure.message
+    this.logDetail(failure.detail || messageOf(error))
+    return failure
+  }
+  private pageUnavailable(error: unknown): void {
+    const notify = !this.needsRecovery
+    this.needsRecovery = true
+    this.healthy = false
+    this.connected = false
+    this.recordFailure(error)
+    if (notify) {
+      const event: BridgePageEvent = { name: 'bridge:page-unavailable', payload: {}, at: this.now() }
+      for (const listener of this.listeners) { try { listener(event) } catch { /* 独立消费者 */ } }
+    }
+  }
+  private recordOrphanError(error: unknown): void {
+    this.orphanScanError = '孤儿清单扫描失败，请打开日志查看原因并重新打开 ST 重试'
+    this.lastFailStep = 'fail:delete'
+    this.logDetail('孤儿扫描：' + messageOf(error))
+    try {
+      appendBridgeTrace({ at: new Date(this.now()).toISOString(), sessionId: 'orphan-scan', before: 0, sent: 0, inChat: 0, inPrompt: 0, promptsWritten: 0, cardName: this.config.cardName, steps: ['orphan-scan', 'fail:delete', 'detail:' + messageOf(error)] })
+    } catch (traceError) { this.logDetail('orphan-scan trace: ' + messageOf(traceError)) }
+  }
+  private async scanOrphans(): Promise<number> {
+    try {
+      const count = await sweepOrphans()
+      this.orphanScanError = null
+      return count
+    } catch (error) { this.recordOrphanError(error); return 0 }
   }
   statsSnapshot(): BridgeHostStats { return { ...this.stats } }
   resetStats(): void { /* 保留旧探针方法，P2 不再维护拦截计数 */ }
@@ -255,18 +375,14 @@ export class BridgeHost implements BridgePage {
       await this.waitReady(win, epoch)
       await this.ensureCard()
       if (epoch !== this.epoch || !this.st.running()) throw new Error('ST 启动已取消或进程已退出')
+      if (this.needsRecovery || win.isDestroyed()) throw new Error('ST 页面不可用：启动期间页面崩溃')
       this.healthy = true
       this.needsOnboarding = false
       this.lastError = null
     } catch (error) {
       this.healthy = false
-      this.lastError = messageOf(error)
-      try {
-        this.st.log ??= new BridgeLogPipe(join(app.getPath('userData'), 'nc-bridge', 'st-bridge.log'))
-        this.st.log.write('host', this.lastError)
-      } catch { /* 日志故障保留原错误 */ }
       // 向导超时保留窗口与进程；用户完成初始化后仍在同一个页面重试。
-      throw new Error('ST 启动失败：' + this.lastError)
+      throw error
     }
   }
   private async ensureCard(): Promise<void> {
@@ -290,14 +406,11 @@ export class BridgeHost implements BridgePage {
       }
     })
     win.webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
-      if (!isMainFrame || code === -3) return
-      this.lastError = 'did-fail-load ' + code + ' ' + description + ' ' + url
-      this.healthy = false
-      this.connected = false
+      if (this.win !== win || !isMainFrame || code === -3) return
+      this.pageUnavailable(new Error('did-fail-load ' + code + ' ' + description + ' ' + url))
     })
     win.webContents.on('render-process-gone', (_event, details) => {
-      this.lastError = 'render-process-gone ' + details.reason
-      if (this.win === win) this.closePage()
+      if (this.win === win) this.pageUnavailable(new Error('render-process-gone ' + details.reason))
     })
     win.on('closed', () => { if (this.win === win) { this.win = null; this.healthy = false; this.connected = false } })
     return win
@@ -318,7 +431,9 @@ export class BridgeHost implements BridgePage {
     const started = Date.now()
     while (Date.now() - started < this.config.readyTimeoutMs) {
       if (epoch !== this.epoch || win.isDestroyed() || !this.st.running()) throw new Error('ST 窗口或进程已停止')
-      try { if (await win.webContents.executeJavaScript(READY_EXPR, true) === true) return } catch { /* 页面初始化中 */ }
+      if (this.needsRecovery) throw new Error('ST 页面不可用：就绪期间页面崩溃')
+      try { if (await win.webContents.executeJavaScript(READY_EXPR, true) === true) return }
+      catch (error) { if (isPageUnavailable(error)) { this.pageUnavailable(error); throw error } }
       await sleep(300)
     }
     this.needsOnboarding = true

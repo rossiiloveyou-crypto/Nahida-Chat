@@ -1,10 +1,37 @@
 /** 设置 · ST 桥接：开关仍存 Settings，运行配置与进程由主进程 host 管理。 */
 import { useCallback, useEffect, useState } from 'react'
-import type { BridgeHealth, BridgeOverrideState } from '@shared/bridge'
+import type { BridgeFailureStep, BridgeHealth, BridgeOverrideState } from '@shared/bridge'
+import type { StoryRecallStatus } from '@shared/types'
+import { Link } from 'react-router-dom'
 import { useSettings } from '../useSettings'
 
 type RuntimeDraft = { stRoot: string; cardName: string; port: string; nodePath: string; generateTimeoutMs: string }
 type Action = 'openSt' | 'stopSt' | 'openLog'
+
+const failureLabels: Record<BridgeFailureStep, string> = {
+  'fail:preflight': '启动前检查未通过，请检查 ST 安装目录。',
+  'fail:port': '端口已被占用，请停止占用程序或更换端口。',
+  'fail:node': 'Node 运行环境不可用，请检查路径。',
+  'fail:ready': 'ST 尚未就绪，请完成初始化后重试。',
+  'fail:exposure': 'ST 页面接口不兼容，请检查 ST 版本并查看日志。',
+  'fail:role-empty': '请填写桥接角色。',
+  'fail:role-missing': '未找到桥接角色，请先在 ST 中导入角色卡。',
+  'fail:role-ambiguous': '找到多个同名角色，请使用唯一名称。',
+  'fail:role-switched': '角色已被切换，请重新打开 ST 选中桥接角色。',
+  'fail:inject': '上下文准备失败，请重新打开 ST 后重试。',
+  'fail:timeout': '生成超时，请检查 ST 的模型连接或调整单轮上限。',
+  'fail:budget': '上下文过长，请减少历史内容后重试。',
+  'fail:empty': '模型回复为空，请检查 ST 的模型设置。',
+  'fail:disk-count': '本轮保存内容不完整，回复未采用。请查看日志。',
+  'fail:disk-timeout': '等待本轮保存超时，请检查 ST 和磁盘状态。',
+  'fail:delete': '本轮临时会话清理失败，请查看日志后重试。',
+  'fail:crash': 'ST 意外停止，请稍后重试或重新打开 ST。'
+}
+
+function readableError(value: string | null): string {
+  if (!value) return '无'
+  return value.replace(/fail:[a-z-]+/g, (code) => failureLabels[code as BridgeFailureStep] ?? '桥接失败，请查看日志。')
+}
 
 function bytes(value: number): string {
   if (value < 1024) return value + ' B'
@@ -15,6 +42,8 @@ function bytes(value: number): string {
 export function BridgeSection() {
   const { settings, loading, saving, error, save } = useSettings()
   const [health, setHealth] = useState<BridgeHealth | null>(null)
+  const [recall, setRecall] = useState<StoryRecallStatus | null>(null)
+  const [recallError, setRecallError] = useState(false)
   const [draft, setDraft] = useState<RuntimeDraft | null>(null)
   const [healthError, setHealthError] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -41,17 +70,22 @@ export function BridgeSection() {
     setHealthError(null)
   }, [])
 
-  const refresh = useCallback(async (): Promise<void> => {
+  const refresh = useCallback(async (includeRecall = true): Promise<void> => {
+    const recallRead = includeRecall ? window.nahida.story.recallStatus().then((next) => {
+      setRecall(next)
+      setRecallError(false)
+    }).catch(() => { setRecall(null); setRecallError(true) }) : Promise.resolve()
     try {
       applyHealth(await window.nahida.bridge.health())
     } catch (cause) {
       setHealthError(cause instanceof Error ? cause.message : String(cause))
     }
+    await recallRead
   }, [applyHealth])
 
   useEffect(() => {
     void refresh()
-    const timer = window.setInterval(() => void refresh(), 2000)
+    const timer = window.setInterval(() => void refresh(false), 2000)
     return () => window.clearInterval(timer)
   }, [refresh])
 
@@ -151,6 +185,7 @@ export function BridgeSection() {
         <p className="setting-group__desc">
           关闭后故事模式使用 NC 的模型配置；渠道会话（QQ）始终走原来的路径。
           此开关只控制生成路由，停止进程请使用「停止 ST」。
+          每轮收尾会有约 10 秒观察窗口；回复不再流式，生成完一次性出现。
         </p>
         <label className="setting-toggle" data-ui-target="桥接开关">
           <input type="checkbox" checked={enabled} disabled={loading || saving}
@@ -165,7 +200,7 @@ export function BridgeSection() {
         <h3 className="setting-group__title">ST 进程与日志</h3>
         <p className="setting-group__desc">
           填写包含 server.js 的 ST 安装目录，点击「打开 ST」应用配置并启动可见窗口。
-          运行配置由主进程保存到 userData/nc-bridge/config.json；修改前请先停止 ST。
+          ST 运行期间，目录、角色、端口、Node 路径与单轮上限不可修改，请先停止 ST。
           打开窗口不要求模型已连通，首次启动请在 ST 窗口完成初始化向导。
           请先在 ST 内导入角色卡并配置模型与世界书。NC 不自动导入卡或世界书。
         </p>
@@ -181,7 +216,7 @@ export function BridgeSection() {
             <input className="field__control" data-ui-target="桥接角色" value={draft?.cardName ?? ''}
               disabled={editingDisabled} placeholder="酒馆中的角色卡名称"
               onChange={(event) => setDraft((current) => current && { ...current, cardName: event.target.value })} />
-            <span className="hint-text">填写酒馆里角色卡的名称；点击「打开 ST」时选中它。运行期间不可修改，请先停止 ST。</span>
+            <span className="hint-text">打开 ST 前必须先填桥接角色。填写酒馆里角色卡的名称；点击「打开 ST」时选中它。</span>
           </label>
           <div className="field__row">
             <label className="field">
@@ -191,7 +226,7 @@ export function BridgeSection() {
                 onChange={(event) => setDraft((current) => current && { ...current, port: event.target.value })} />
             </label>
             <label className="field">
-              <span className="field__label">nodePath（可选）</span>
+              <span className="field__label">Node 路径（可选）</span>
               <input className="field__control" data-ui-target="ST Node 路径" value={draft?.nodePath ?? ''}
                 disabled={editingDisabled} placeholder="留空自动选择 Node"
                 onChange={(event) => setDraft((current) => current && { ...current, nodePath: event.target.value })} />
@@ -225,10 +260,8 @@ export function BridgeSection() {
       <section className="setting-group" data-ui-region="桥接最高权重规则" aria-busy={overrideLoading || overrideSaving}>
         <h3 className="setting-group__title">最高权重规则</h3>
         <p className="setting-group__desc" id="bridge-override-help">
-          默认空，仅故事模式的 ST 桥接使用。每轮生成前以系统角色注入 IN_CHAT、depth 0，
-          放在最后一条消息之后，设计意图是在与角色卡或预设冲突时优先采用此处规则；
-          实际模型服从不作保证。可清空并保存，后续轮次即停止注入。
-          内容保存在 userData/nc-bridge/st-override.md；最多使用 8000 字符，超出会截断并提示。
+          默认留空，仅用于故事模式。填写后，每轮生成前会追加这些规则，期望在与角色卡或预设冲突时优先采用；
+          模型未必完全遵循。清空并保存后，后续轮次停止使用。最多保存 8000 字符，超出会截断并提示。
         </p>
         <form onSubmit={(event) => { event.preventDefault(); void saveOverride() }}>
           <label className="field">
@@ -266,6 +299,12 @@ export function BridgeSection() {
             {health.needsOnboarding && <p role="status" className="hint-text">
               ST 首次启动，请在弹出的窗口完成初始化向导，再点「打开 ST」重试。
             </p>}
+            {health.circuitOpen && <p role="alert" className="hint-text hint-text--error" data-ui-target="桥接自动重试暂停">
+              ST 反复崩溃，已暂停自动重试，60 秒后或手动打开 ST 恢复。
+            </p>}
+            {health.orphanScanError && <p role="alert" className="hint-text hint-text--error" data-ui-target="桥接孤儿扫描错误">
+              孤儿清单扫描失败。请打开日志检查记录与文件访问权限，处理后重新打开 ST。
+            </p>}
             <dl className="info-grid" data-ui-target="桥接状态">
               <dt>已检测角色卡</dt><dd>{health.cardAvatar ? health.cardName + " · " + health.cardAvatar : "尚未检测"}</dd>
               <dt>ST 进程</dt><dd>{health.stRunning ? '运行中' : '未启动 / 已停止'}</dd>
@@ -278,13 +317,21 @@ export function BridgeSection() {
               <dt>Node 来源</dt><dd>{health.nodeSource ?? '尚未选择'}</dd>
               <dt>孤儿进程数</dt><dd>{health.orphans}</dd>
               <dt>重建次数</dt><dd>{health.rebuilds}</dd>
-              <dt>最近错误</dt><dd>{health.lastError ?? '无'}</dd>
+              <dt>自动恢复</dt><dd>连续自动恢复失败 {health.retryCount} 次</dd>
+              <dt>最近失败步骤</dt><dd data-ui-target="桥接失败步骤">{health.lastFailStep ? failureLabels[health.lastFailStep] : '无'}</dd>
+              <dt>最近错误</dt><dd>{readableError(health.lastError)}</dd>
               <dt>ST 地址</dt><dd>{health.config.stUrl}</dd>
               <dt>ST 数据目录</dt><dd>{health.config.stDataDir}</dd>
               <dt>单轮上限</dt><dd>{Math.round(health.config.generateTimeoutMs / 1000)} 秒</dd>
             </dl>
           </>
         )}
+        <p role="status" className="hint-text" data-ui-target="桥接故事召回状态">
+          故事召回：{recallError ? '故事召回状态读取失败，请刷新重试。' : recall
+            ? `${recall.databaseErrors.length ? '部分归档库读取失败，仅统计已读取部分：' : ''}已归档 ${recall.archivedRounds} 轮；${settings?.storyRecall?.enabled === false ? '故事召回已关闭' : recall.vectorReady ? '向量可用' : '向量暂不可用，启用时使用关键词检索'}。`
+            : '正在读取…'}
+          <Link to="/settings/memory">前往长期记忆查看与配置</Link>
+        </p>
         <button type="button" className="theme-option sel-frame--stitch" data-ui-target="刷新桥接状态"
           onClick={() => void refresh()}>
           刷新状态

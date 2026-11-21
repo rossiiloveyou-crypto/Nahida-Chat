@@ -157,6 +157,10 @@ export interface BridgeHealth {
   busy: boolean
   /** 崩溃重建次数（>0 说明发生过 render-process-gone / did-fail-load） */
   rebuilds: number
+  circuitOpen: boolean
+  retryCount: number
+  lastFailStep: BridgeFailureStep | null
+  orphanScanError: string | null
   stRunning: boolean
   stPid: number | null
   port: number
@@ -207,6 +211,73 @@ export const BRIDGE_IPC = {
  * `streamToken` 就是 ST 的 `STREAM_TOKEN_RECEIVED`：逐字回推，让 NC 能边生成边显示。
  * 🔴 它是**展示用**的增量，不是真相来源：这一轮成不成只认 `generate()` 的 resolve（J-03）。
  */
+
+/** P5: stable failure steps and human next actions; raw exceptions stay in diagnostics. */
+export type BridgeFailureKey = 'preflight' | 'port' | 'node' | 'ready' | 'exposure' | 'role-empty' | 'role-missing' | 'role-ambiguous' | 'role-switched' | 'inject' | 'timeout' | 'budget' | 'empty' | 'disk-count' | 'disk-timeout' | 'delete' | 'crash'
+export type BridgeFailureStep = `fail:${BridgeFailureKey}`
+export class BridgeFailure extends Error {
+  constructor(readonly step: BridgeFailureStep, message: string, readonly detail = '') { super(message); this.name = 'BridgeFailure' }
+}
+export function isPageUnavailable(error: unknown): boolean {
+  if (error instanceof BridgeFailure) return error.step === 'fail:crash'
+  const text = error instanceof Error ? error.message : String(error)
+  return /render-process-gone|did-fail-load|ERR_(?:ABORTED|CONNECTION_REFUSED)|(?:^|ST )(?:页面|窗口).*(?:不可用|已关闭|已崩溃)|(?:webContents|frame|render frame|Object).*(?:destroyed|disposed|detached)|Execution context was destroyed|Render frame was disposed|crashed/i.test(text)
+}
+export function bridgeFailure(error: unknown, context: { port?: number; timeoutMs?: number; cardName?: string; stage?: string } = {}): BridgeFailure {
+  if (error instanceof BridgeFailure) return error
+  const detail = error && typeof error === 'object' && 'message' in error && typeof error.message === 'string' ? error.message : String(error)
+  let key: BridgeFailureKey
+  if (isPageUnavailable(error)) key = 'crash'
+  else if (/EADDRINUSE|is already in use|端口.*已被占用/i.test(detail)) key = 'port'
+  else if (/Node.*(?:不可用|找不到)|spawn.*ENOENT/i.test(detail)) key = 'node'
+  else if (/请填写桥接角色/.test(detail)) key = 'role-empty'
+  else if (/未找到角色|角色列表中没有/.test(detail)) key = 'role-missing'
+  else if (/多张同名/.test(detail)) key = 'role-ambiguous'
+  else if (/当前角色是|角色不符|角色选中校验失败/.test(detail)) key = 'role-switched'
+  else if (/暴露面|selectCharacterById/.test(detail)) key = 'exposure'
+  else if (/TokenBudgetExceeded|上下文预算|必要的提示词超过了上下文大小|Not enough free tokens|Insufficient.*token|required prompts.*(?:exceed|context)/i.test(detail)) key = 'budget'
+  else if (/注入/.test(detail)) key = 'inject'
+  else if (/落盘.*超时|等待 ST 落盘/.test(detail)) key = 'disk-timeout'
+  else if (/落盘末条.*非空 assistant/.test(detail)) key = 'empty'
+  else if (/落盘|metadata 首行/.test(detail)) key = 'disk-count'
+  else if (/空回复/.test(detail)) key = 'empty'
+  else if (/生成超时/.test(detail)) key = 'timeout'
+  else if (/启动超时|服务启动超时|首次启动|就绪超时/.test(detail)) key = 'ready'
+  else if (/删除|孤儿/.test(detail)) key = 'delete'
+  else if (/体检|server\.js|SillyTavern 源码目录/.test(detail)) key = 'preflight'
+  else if (context.stage === 'exposure') key = 'exposure'
+  else if (context.stage === 'inject') key = 'inject'
+  else if (context.stage === 'disk') key = 'disk-count'
+  else key = 'preflight'
+  const name = context.cardName || '配置的角色'
+  const messages: Record<BridgeFailureKey, string> = {
+    preflight: 'ST 运行失败，请在设置检查包含 server.js、node_modules、config.yaml 的完整安装目录，并打开日志查看原因',
+    port: '端口 ' + (context.port ?? '所选') + ' 已被占用，请在 ST 设置里换一个端口',
+    node: '找不到可用的 Node，请在设置里指定 nodePath',
+    ready: 'ST 启动超时（' + ((context.timeoutMs ?? 60000) / 1000) + 's），请打开日志窗口；首次启动请先完成初始化向导',
+    exposure: 'ST 页面版本不受支持（停止条件 1），请更新或检查 ST 版本',
+    'role-empty': '请填写桥接角色后再打开 ST',
+    'role-missing': '未找到角色「' + name + '」，请先在酒馆中导入对应角色卡',
+    'role-ambiguous': '有多张同名角色卡「' + name + '」，请改用唯一名称',
+    'role-switched': (/角色选中校验失败/.test(detail) ? 'ST 角色选中校验失败。' : '') + 'ST 当前角色与本轮「' + name + '」不符，请切回目标角色；或停止 ST 后修改桥接角色',
+    inject: '历史注入自检失败（mes / is_user 不一致），请保留日志并反馈问题',
+    timeout: '生成超时（' + ((context.timeoutMs ?? 180000) / 1000) + ' 秒；' + (context.timeoutMs ?? 180000) + 'ms），可在设置里调大单轮上限',
+    budget: 'ST 上下文预算不足，请提高容量或调小世界书预算后重试',
+    empty: 'ST 返回空串（空回复，可能被截断或审查），请重试',
+    'disk-count': '落盘校验失败，本轮不落库，请重试并查看日志',
+    'disk-timeout': '等不到 ST 存盘（3s），请重试并查看日志',
+    delete: '本轮 chat 删除失败，已登记孤儿清单，请重新打开 ST 自动清理并查看日志',
+    crash: 'ST 页面崩溃，正在自动重启；如仍失败，请打开日志或重新打开 ST'
+  }
+  // Only allow the character module's fixed, human-readable identity template through.
+  if (key === 'role-switched' && /^ST 当前角色是「[^\r\n]*」.*请切回「[^\r\n]*」/.test(detail) && !/EPERM|ENOENT|EADDRINUSE|\n\s*at /.test(detail)) messages[key] = detail
+  if (key === 'disk-count') {
+    const counts = /expected=(\d+) actual=(\d+)/.exec(detail)
+    if (counts) messages[key] = '落盘校验失败（expected=' + counts[1] + ' / actual=' + counts[2] + '），本轮不落库，请重试'
+  }
+  return new BridgeFailure(('fail:' + key) as BridgeFailureStep, messages[key], detail)
+}
+
 export const BRIDGE_EVENT = {
   streamToken: 'stream_token_received'
 } as const

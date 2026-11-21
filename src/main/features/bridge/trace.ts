@@ -26,6 +26,7 @@ export interface BridgeTraceRecord {
   promptsWritten: number
   cardName: string
   steps: string[]
+  failures?: Array<{ step: string; detail: string }>
   disk?: BridgeTraceDisk
 }
 

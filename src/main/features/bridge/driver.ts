@@ -14,7 +14,8 @@
  *    所以这里用**全局单链**排队；`minIntervalMs` 只负责同会话的轮间间隔。
  */
 
-import { BRIDGE_DEFAULT_CONFIG, BRIDGE_EVENT } from '@shared/bridge'
+import { BRIDGE_DEFAULT_CONFIG, BRIDGE_EVENT, BridgeFailure, bridgeFailure, isPageUnavailable } from '@shared/bridge'
+import type { BridgeFailureStep } from '@shared/bridge'
 import type { BridgeConfig, BridgeTurnInput, BridgeTurnResult, BridgeTurnStatus } from '@shared/bridge'
 import { bridgeHost } from './host'
 import { chatDisk, chatName } from './chats'
@@ -55,6 +56,11 @@ export interface GenerateOutcome {
 /** 宿主的最小接口面（真宿主是 BridgeHost；单测里换成假宿主，别的代码不动） */
 export interface BridgeGateway {
   ensure(): Promise<BridgePage>
+  assertAvailable?(): void
+  recover?(): Promise<BridgePage>
+  recoverySucceeded?(): void
+  recoveryFailed?(error: unknown): void
+  noteFailure?(step: BridgeFailureStep): void
   onEvent(listener: (event: BridgePageEvent) => void): () => void
 }
 
@@ -99,6 +105,7 @@ export interface BridgeTurnTrace {
   historyInChat: number
   historyInPrompt: number
   steps: string[]
+  failures?: Array<{ step: BridgeFailureStep; detail: string }>
   clearedBefore: SessionSnapshot | null
   clearedAfter: SessionSnapshot | null
   /** 清场前后 characters 是否一致（J-02：误用 resetChatState 会让它变） */
@@ -264,6 +271,59 @@ export class BridgeDriver {
 
   /** 跑一轮并同时交出轨迹（单测与探针用） */
   async runTurn(input: BridgeRunInput): Promise<BridgeTurnDetail> {
+    // An open circuit must fail without waiting behind another turn or its interval.
+    try { this.gateway.assertAvailable?.() } catch {
+      const rejected = await this.attempt(input)
+      this.persistTrace(input, rejected.trace, rejected.result.warnings)
+      rejected.trace.warnings = rejected.result.warnings.slice()
+      this.traceOfLastTurn = rejected.trace
+      return rejected
+    }
+    // One gate covers both attempts and their cleanup. No other branch can enter between them.
+    const release = await this.acquire(input.sessionId)
+    let detail: BridgeTurnDetail | undefined
+    let previousSteps: string[] = []
+    try {
+      detail = await this.attempt(input)
+      if (detail.trace.steps.includes('fail:crash') && !detail.trace.steps.includes('fail:delete') && !detail.trace.steps.includes('fail:cleanup') && !input.signal?.aborted && this.gateway.recover) {
+        const firstSteps = detail.trace.steps.slice()
+        const firstFailures = detail.trace.failures?.slice() ?? []
+        try {
+          await this.gateway.recover()
+          detail = await this.attempt(input)
+          previousSteps = [...firstSteps, 'retry:1']
+          detail.trace.failures = [...firstFailures, ...(detail.trace.failures ?? [])]
+          if (detail.trace.steps.includes('fail:crash')) this.gateway.recoveryFailed?.(detail.result.error ?? 'ST 页面崩溃')
+        } catch (error) {
+          this.gateway.recoveryFailed?.(error)
+          const failure = this.failure(error, detail.trace, 'ensure')
+          detail.result = fail(failure.message, detail.trace.genMs, detail.result.warnings)
+          detail.trace.steps.push('retry:1')
+        }
+      }
+      // Cleanup errors are terminal too: never publish a reply before finally has finished.
+      if (detail.result.status === 'done' && detail.trace.steps.some(step => step === 'fail:delete' || step === 'fail:cleanup' || step === 'fail:crash')) {
+        const failure = this.failure(new BridgeFailure('fail:delete', 'ST 本轮收尾未完成，请重新打开 ST 清理并查看日志'), detail.trace)
+        detail.result = fail(failure.message, detail.trace.genMs, detail.result.warnings)
+      }
+      if (previousSteps.length) detail.trace.steps.unshift(...previousSteps)
+      if (detail.result.status === 'done') {
+        this.gateway.recoverySucceeded?.()
+        try { input.onToken?.(detail.result.raw) } catch (error) { this.log('onToken 回调抛错：' + messageOf(error)) }
+      }
+      return detail
+    } finally {
+      release()
+      if (detail) {
+        detail.trace.warnings = detail.result.warnings.slice()
+        this.persistTrace(input, detail.trace, detail.result.warnings)
+        detail.trace.warnings = detail.result.warnings.slice()
+        this.traceOfLastTurn = { ...detail.trace, steps: detail.trace.steps.slice() }
+      }
+    }
+  }
+
+  private async attempt(input: BridgeRunInput): Promise<BridgeTurnDetail> {
     const startedAt = this.now()
     const trace: BridgeTurnTrace = {
       steps: [],
@@ -296,7 +356,8 @@ export class BridgeDriver {
       const result = fail('没有可注入的历史（system / tool / 空正文被全部丢掉）', 0)
       trace.totalMs = this.now() - startedAt
       this.traceOfLastTurn = trace
-      this.persistTrace(input, trace)
+      trace.steps.push('fail:inject')
+      this.gateway.noteFailure?.('fail:inject')
       return { result, trace }
     }
 
@@ -308,8 +369,17 @@ export class BridgeDriver {
      */
     const warnings: string[] = []
 
-    const release = await this.acquire(input.sessionId)
+    let pageFailure: unknown
+    let rejectPage: (error: unknown) => void = () => {}
+    const unavailable = new Promise<never>((_resolve, reject) => { rejectPage = reject })
+    // Attach immediately; a crash can arrive during ensure, before any eval is raced.
+    void unavailable.catch(() => {})
     const offToken = this.gateway.onEvent((event) => {
+      if (event.name === 'bridge:page-unavailable') {
+        pageFailure = new BridgeFailure('fail:crash', 'ST 页面崩溃，正在自动重启')
+        rejectPage(pageFailure)
+        return
+      }
       if (event.name !== BRIDGE_EVENT.streamToken) return
       trace.tokens += 1
       const payload = event.payload as { text?: unknown } | null
@@ -327,14 +397,25 @@ export class BridgeDriver {
     let prepared = false
     let backupsBefore: string[] = []
     let dataDir = ''
+    let stage = 'ensure'
     try {
-      page = await this.gateway.ensure()
+      this.gateway.assertAvailable?.()
+      const ensured = await this.gateway.ensure()
+      page = {
+        alive: () => ensured.alive(),
+        eval: <T>(expr: string, label?: string): Promise<T> => {
+          if (pageFailure) return Promise.reject(pageFailure)
+          return Promise.race([ensured.eval<T>(expr, label), unavailable])
+        }
+      }
       trace.steps.push('ensure')
 
       // 停止条件 1：暴露面缺字段 → 后面所有判据都不可信
+      stage = 'exposure'
       await assertExposure(page)
       trace.steps.push('exposure')
       const cardConfig = (this.gateway as BridgeGateway & { config?: BridgeConfig }).config ?? this.config
+      stage = 'character'
       await assertCharacter(page, cardConfig.cardName, cardConfig.cardAvatar)
       trace.steps.push('character:assert')
 
@@ -358,6 +439,7 @@ export class BridgeDriver {
         }
       }
 
+      stage = 'inject'
       dataDir = cardConfig.stDataDir
       const name = chatName(input.sessionId)
       backupsBefore = await this.disk.backups(dataDir)
@@ -376,10 +458,7 @@ export class BridgeDriver {
         trace.promptsWritten = prompts.written
         trace.steps.push('prompt:inject')
         if (!prompts.ok) {
-          warnings.push(
-            'NC 的 ' + String(input.systemPrompts.length) + ' 段系统提示只写进 ' + String(prompts.written) + ' 段' +
-              (prompts.error ? '（' + prompts.error + '）' : '')
-          )
+          throw new Error('系统提示注入自检失败：' + (prompts.error ?? '写入段数不一致'))
         }
       }
 
@@ -390,15 +469,7 @@ export class BridgeDriver {
       trace.historyInChat = injection.length
       trace.historyInPrompt = injection.inPrompt
       if (!injection.equal || !injection.flagsEqual) {
-        const result = fail(
-          '历史注入自检失败：' +
-            (injection.equal ? '' : 'mes 不一致') +
-            (injection.equal ? '' : '；') +
-            (injection.flagsEqual ? '' : 'is_user/is_system 映射不一致'),
-          0,
-          warnings
-        )
-        return { result, trace }
+        throw new Error('历史注入自检失败：mes / is_user 不一致')
       }
 
       const override = this.readOverride()
@@ -409,6 +480,7 @@ export class BridgeDriver {
       }
       // 生成前再读一次，用户在注入期间切卡也不能静默继续。
       await assertCharacter(page, cardConfig.cardName, cardConfig.cardAvatar)
+      stage = 'generate'
       const generated = await this.generate(page, input, trace)
       trace.genMs = generated.ms
       trace.lastMes = generated.lastMes
@@ -425,16 +497,21 @@ export class BridgeDriver {
           ? '生成超时（' + this.config.generateTimeoutMs + 'ms）'
           : '生成失败：' + (generated.error ?? '未知原因')
         const withToast = generated.toasts.length > 0 ? reason + '；页面提示：' + generated.toasts.join(' / ') : reason
-        return { result: fail(withToast, generated.ms, warnings), trace }
+        const failure = this.failure(withToast, trace, stage)
+        // Keep harmless provider explanations; machine codes and stacks never reach UI.
+        const context = !/EPERM|ENOENT|EADDRINUSE|\n\s*at |Error:|node:|\.tsx?:\d/i.test(withToast) ? withToast : ''
+        return { result: fail(failure.message + (context && !generated.timeout ? '；' + context : ''), generated.ms, warnings), trace }
       }
 
       // ST can still resolve after TokenBudgetExceeded with only a partial system prompt.
       if (generated.toasts.some(text => /TokenBudgetExceeded|必要的提示词超过了上下文大小|Not enough free tokens|Insufficient.*token|required prompts.*(exceed|context)/i.test(text))) {
-        return { result: fail('ST 上下文预算不足，角色提示词未完整发送。请在 ST 中提高上下文容量或调整世界书预算后重试；页面提示：' + generated.toasts.join(' / '), generated.ms, warnings), trace }
+        const failure = this.failure('ST 上下文预算不足', trace, stage)
+        return { result: fail(failure.message, generated.ms, warnings), trace }
       }
 
       if (!target) throw new Error('Missing owned chat target')
       await drainChatSaves(page)
+      stage = 'disk'
       const persisted = await this.disk.wait(target, trace.historyInChat)
       trace.disk = { injected: trace.historyInChat, expectedLines: persisted.expectedLines, actualLines: persisted.actualLines, deleted: false, backupDelta: 0, file: persisted.file, waitMs: persisted.waitMs }
       trace.steps.push('chat:stable')
@@ -443,12 +520,11 @@ export class BridgeDriver {
       //    位置很关键：必须在 resolve 分支**之后**判，不能被落成「reject 分支的一部分」。
       if (raw.trim() === '') {
         // 空回复写进分支比报错更糟（用户会以为模型哑了）
-        const extra = generated.toasts.length > 0 ? '；页面提示：' + generated.toasts.join(' / ') : ''
-        const hole = raw.length === 0 ? '空串' : '全空白（' + raw.length + ' 个空白字符）'
-        return { result: fail('ST 返回空回复（可能被渠道截断或审查）：' + hole + extra, generated.ms, warnings), trace }
+        const failure = this.failure('ST 返回空回复', trace, stage)
+        const blank = raw.length ? '（全空白，原始 ' + raw.length + ' 字符）' : ''
+        return { result: fail(failure.message + blank, generated.ms, warnings), trace }
       }
 
-      try { input.onToken?.(raw) } catch (error) { this.log('onToken 回调抛错：' + messageOf(error)) }
       return {
         result: { status: 'done', content: raw, raw, error: null, ms: generated.ms, warnings },
         trace
@@ -460,7 +536,9 @@ export class BridgeDriver {
         if (typeof evidence.actualLines === 'number') trace.disk.actualLines = evidence.actualLines
         if (typeof evidence.expectedLines === 'number') trace.disk.expectedLines = evidence.expectedLines
       }
-      return { result: fail(messageOf(error), trace.genMs, warnings), trace }
+      if (input.signal?.aborted) return { result: { status: 'aborted', content: '', raw: '', error: null, ms: trace.genMs, warnings }, trace }
+      const failure = this.failure(error, trace, stage)
+      return { result: fail(failure.message, trace.genMs, warnings), trace }
     } finally {
       // 🔴 顺序敏感（蓝图 §1 第 4 行）：**先还原开关 → 再 reset 会话**。
       //    反了的话，还原动作会落在已被清空的会话域上（页面侧上下文可能已被重建，写入丢失）。
@@ -471,7 +549,9 @@ export class BridgeDriver {
         trace.switchesRestored = restore.restored === true
         trace.steps.push('switch:restore')
         if (!restore.restored) {
-          warnings.push('auto_continue / auto_swipe 还原失败：' + String(restore.error ?? '未知原因'))
+          warnings.push('auto_continue / auto_swipe 还原失败，请重新打开 ST 并查看日志')
+          if (!restore.ok && !isPageUnavailable(restore.error)) trace.steps.push('fail:cleanup')
+          if (isPageUnavailable(restore.error)) this.failure(restore.error, trace)
         }
       }
       if (page && prepared) {
@@ -479,7 +559,12 @@ export class BridgeDriver {
           await drainChatSaves(page)
           if (!await restoreChat(page)) throw new Error('chat name readback mismatch')
           trace.steps.push('chat:restore')
-        } catch (error) { warnings.push('ST 会话名还原失败：' + messageOf(error)) }
+        } catch (error) {
+          this.log('ST 会话名还原失败：' + messageOf(error))
+          warnings.push('ST 会话名还原失败，请重新打开 ST 并查看日志')
+          if (!isPageUnavailable(error)) trace.steps.push('fail:cleanup')
+          if (isPageUnavailable(error)) this.failure(error, trace)
+        }
       }
       if (page) {
         try {
@@ -490,6 +575,8 @@ export class BridgeDriver {
         } catch (error) {
           // 清场失败不能掩盖这一轮的真实结果，但必须留下痕迹
           this.log('退出清场失败：' + messageOf(error))
+          if (!isPageUnavailable(error)) trace.steps.push('fail:cleanup')
+          if (isPageUnavailable(error)) this.failure(error, trace)
         }
       }
       if (page && target) {
@@ -497,8 +584,11 @@ export class BridgeDriver {
           const deleted = await this.disk.remove(page, target, input.sessionId)
           if (trace.disk) trace.disk.deleted = deleted
           trace.steps.push('chat:delete')
-          if (!deleted) warnings.push('本轮 chat 删除失败，已登记孤儿清单')
-        } catch (error) { warnings.push('本轮 chat 收尾失败：' + messageOf(error)) }
+          if (!deleted) warnings.push(this.failure('本轮 chat 删除失败，已登记孤儿清单', trace).message)
+        } catch (error) {
+          this.log('本轮 chat 收尾失败：' + messageOf(error))
+          warnings.push(this.failure(new BridgeFailure('fail:delete', '本轮 chat 删除失败，请重新打开 ST 自动清理并查看日志', messageOf(error)), trace).message)
+        }
         try {
           // ST backups use a 10s leading/trailing throttle. Keep the serial gate until its observation window ends.
           if (this.disk.backupWindowMs) {
@@ -509,15 +599,27 @@ export class BridgeDriver {
           }
           const after = await this.disk.backups(dataDir)
           if (trace.disk) trace.disk.backupDelta = after.filter(file => !backupsBefore.includes(file)).length
-        } catch (error) { warnings.push('备份计数失败：' + messageOf(error)) }
+        } catch (error) {
+          this.log('备份计数或延迟清场失败：' + messageOf(error))
+          warnings.push('备份计数或延迟清场失败，请查看日志')
+          if (this.disk.backupWindowMs && !isPageUnavailable(error)) trace.steps.push('fail:cleanup')
+          if (isPageUnavailable(error)) this.failure(error, trace)
+        }
       }
       offToken()
-      release()
       trace.totalMs = this.now() - startedAt
-      this.persistTrace(input, trace, warnings)
       trace.warnings = warnings.slice()
-      this.traceOfLastTurn = { ...trace, steps: trace.steps.slice() }
     }
+  }
+
+  private failure(error: unknown, trace: BridgeTurnTrace, stage?: string): BridgeFailure {
+    const config = (this.gateway as BridgeGateway & { config?: BridgeConfig }).config ?? this.config
+    const failure = bridgeFailure(error, { port: config.port, cardName: config.cardName, timeoutMs: stage === 'generate' ? config.generateTimeoutMs : config.readyTimeoutMs, stage })
+    trace.steps.push(failure.step)
+    ;(trace.failures ??= []).push({ step: failure.step, detail: failure.detail || messageOf(error) })
+    this.gateway.noteFailure?.(failure.step)
+    this.log(failure.step + '：' + (failure.detail || messageOf(error)))
+    return failure
   }
 
   private persistTrace(input: BridgeRunInput, trace: BridgeTurnTrace, warnings = trace.warnings): void {
@@ -529,12 +631,14 @@ export class BridgeDriver {
         inChat: trace.historyInChat, inPrompt: trace.historyInPrompt,
         promptsWritten: trace.promptsWritten, cardName: config.cardName,
         disk: trace.disk,
+        failures: trace.failures?.slice(),
         steps: trace.steps.slice()
       })
     } catch (error) {
-      const warning = '桥接轨迹落盘失败：' + messageOf(error)
-      warnings.push(warning)
-      this.log(warning)
+      const detail = messageOf(error)
+      const hint = /EPERM|ENOENT|EADDRINUSE|\n\s*at |Error:|node:internal/.test(detail) ? '' : '：' + detail
+      warnings.push('桥接轨迹落盘失败' + hint + '，请检查日志目录权限并重试')
+      this.log('桥接轨迹落盘失败：' + messageOf(error))
     }
   }
 
