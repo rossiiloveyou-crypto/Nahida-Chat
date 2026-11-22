@@ -29,6 +29,11 @@ function readInitialTheme(): 'light' | 'dark' {
 
 const api: NahidaApi = {
   initialTheme: readInitialTheme(),
+  transfer: {
+    pickImport: () => ipcRenderer.invoke(IPC.transferPickImport),
+    import: (request) => ipcRenderer.invoke(IPC.transferImport, request),
+    export: (request) => ipcRenderer.invoke(IPC.transferExport, request)
+  },
   app: {
     info: () => ipcRenderer.invoke(IPC.appInfo)
   },

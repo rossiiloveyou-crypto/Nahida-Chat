@@ -4,6 +4,9 @@
  */
 export const IPC = {
   appInfo: 'app:info',
+  transferPickImport: 'transfer:pick-import',
+  transferImport: 'transfer:import',
+  transferExport: 'transfer:export',
 
   settingsGet: 'settings:get',
   settingsSave: 'settings:save',

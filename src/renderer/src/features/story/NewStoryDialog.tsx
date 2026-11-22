@@ -1,4 +1,7 @@
 import { useState } from 'react'
+import type { ImportPreview } from '@shared/transfer'
+import { ImportPreviewPanel } from '../transfer/ImportPreviewPanel'
+import { refreshImported } from '../transfer/refresh'
 import type { StoryWorldbookMode } from '@shared/story'
 import { usePromptLibrary } from '../settings/usePromptLibrary'
 import { useStoryStore } from './store'
@@ -26,6 +29,7 @@ export function NewStoryDialog({ onClose }: NewStoryDialogProps) {
   const [openingText, setOpeningText] = useState('')
   const [profile, setProfile] = useState('')
   const [busy, setBusy] = useState(false)
+  const [preview, setPreview] = useState<ImportPreview | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const characters = library?.characters ?? []
@@ -42,6 +46,22 @@ export function NewStoryDialog({ onClose }: NewStoryDialogProps) {
     }
   }
 
+  const pickImport = async (): Promise<void> => {
+    setBusy(true)
+    setError(null)
+    try {
+      const next = await window.nahida.transfer.pickImport()
+      if (!next) return
+      setPreview(next)
+      setTitle((value) => value || next.title)
+      setCharacterId((value) => value || next.suggestedCharacterId)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const submit = async (): Promise<void> => {
     if (!title.trim()) return setError('请先填标题')
     if (worldbookMode === 'override' && !worldbookDir.trim()) {
@@ -50,6 +70,15 @@ export function NewStoryDialog({ onClose }: NewStoryDialogProps) {
     setBusy(true)
     setError(null)
     try {
+      if (preview) {
+        const result = await window.nahida.transfer.import({ token: preview.token, title: title.trim(), target: {
+          kind: 'new-story', characterId: chosenCharacter, profile, worldbookMode,
+          worldbookDir: worldbookDir.trim() || undefined, background: background.trim() || undefined
+        } })
+        await refreshImported(result)
+        onClose()
+        return
+      }
       const created = await window.nahida.story.create({
         title: title.trim(),
         characterId: chosenCharacter,
@@ -70,7 +99,7 @@ export function NewStoryDialog({ onClose }: NewStoryDialogProps) {
   }
 
   return (
-    <div className="story-dialog__backdrop" role="presentation" onClick={onClose}>
+    <div className="story-dialog__backdrop" role="presentation" onClick={() => { if (!busy) onClose() }}>
       <div
         className="story-dialog"
         data-ui-region="C 新建故事区"
@@ -80,7 +109,7 @@ export function NewStoryDialog({ onClose }: NewStoryDialogProps) {
       >
         <div className="story-dialog__head">
           <h2>新建故事区</h2>
-          <button className="story-dialog__close" aria-label="关闭" onClick={onClose}>
+          <button className="story-dialog__close" aria-label="关闭" disabled={busy} onClick={onClose}>
             ×
           </button>
         </div>
@@ -171,11 +200,17 @@ export function NewStoryDialog({ onClose }: NewStoryDialogProps) {
           />
         </label>
 
+        <div className="story-field__row">
+          <button type="button" data-ui-target="从对话导入" disabled={busy} onClick={() => void pickImport()}>{preview ? '重新选择文件' : '从对话导入'}</button>
+          {preview && <button type="button" data-ui-target="清空导入预览" disabled={busy} onClick={() => setPreview(null)}>清空预览</button>}
+        </div>
+        {preview && <ImportPreviewPanel preview={preview} />}
         <label className="story-field">
           <span>开场消息（可空）</span>
           <textarea
             data-ui-target="开场消息输入"
             value={openingText}
+            disabled={busy || Boolean(preview)}
             onChange={(event) => setOpeningText(event.target.value)}
             rows={4}
             placeholder="这一条是第一条 assistant 消息的正文（她先开口说什么）。留空则由她的第一条回复自然开场。剧情背景请填上面的『背景与剧本设定』。"
@@ -189,10 +224,11 @@ export function NewStoryDialog({ onClose }: NewStoryDialogProps) {
             取消
           </button>
           <button type="button" className="is-primary" data-ui-target="创建故事区" onClick={() => void submit()} disabled={busy}>
-            {busy ? '创建中…' : '创建'}
+            {busy ? '处理中…' : preview ? '确认并导入' : '创建'}
           </button>
         </div>
       </div>
+
     </div>
   )
 }

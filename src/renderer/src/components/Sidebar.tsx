@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import type { ConversationMode } from '@shared/types'
 import { useChatStore } from '../features/chat/store'
@@ -7,6 +7,7 @@ import { visibleDesktopSessions } from '../features/story/sessionFilter'
 import { useStoryStore } from '../features/story/store'
 import { usePromptLibrary } from '../features/settings/usePromptLibrary'
 import { WorkspaceSection } from '../features/workspace/WorkspaceSection'
+import { ImportDialog } from '../features/transfer/ImportDialog'
 import { useWorkspaces } from '../features/workspace/useWorkspaces'
 
 export function Sidebar() {
@@ -41,6 +42,7 @@ export function Sidebar() {
   const refreshStories = useStoryStore((s) => s.refreshStories)
   const openStory = useStoryStore((s) => s.openStory)
   const { library } = usePromptLibrary()
+  const [importOpen, setImportOpen] = useState(false)
 
   useEffect(() => {
     void refreshStories()
@@ -127,6 +129,7 @@ export function Sidebar() {
       <div className="sidebar__ornament" aria-hidden="true" />
 
       <div className="sidebar__footer" data-ui-target="设置入口">
+        <button type="button" data-ui-target="导入对话" onClick={() => setImportOpen(true)}>导入对话</button>
         <NavLink
           to="/settings/models"
           className={({ isActive }) =>
@@ -137,6 +140,7 @@ export function Sidebar() {
           <span>设置</span>
         </NavLink>
       </div>
+      {importOpen && <ImportDialog onClose={() => setImportOpen(false)} />}
     </aside>
   )
 }

@@ -36,11 +36,13 @@ import { registerWorldbookIpcHandlers } from './worldbook'
 import { registerMemoryIpcHandlers } from './memory'
 import { registerWipeIpcHandlers } from './wipe'
 import { registerRegexIpcHandlers } from './regex'
+import { registerTransferIpcHandlers } from './transfer'
 import { bridgeHost } from '../features/bridge/host'
 import { ensureOverrideFile, getOverride, saveOverride } from '../features/bridge/override'
 
 /** 所有 IPC handler 在这里集中注册，渲染进程能做的事一目了然。 */
 export function registerIpcHandlers(): void {
+  registerTransferIpcHandlers()
   ensureOverrideFile()
   promptStore.ensureUserRoot()
   ipcMain.handle(IPC.appInfo, (): AppInfo => ({

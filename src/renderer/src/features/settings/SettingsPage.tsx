@@ -10,6 +10,7 @@ import { ToolsSection } from './sections/ToolsSection'
 import { QqSection } from './sections/QqSection'
 import { ChannelsSection } from './sections/ChannelsSection'
 import { BridgeSection } from './sections/BridgeSection'
+import { BackupPanel } from './sections/BackupPanel'
 import { AboutSection, AppearanceSection } from './sections/MiscSections'
 import { isSettingsSectionId, type SettingsSectionId } from './nav'
 
@@ -64,6 +65,7 @@ export function SettingsPage() {
             {active === 'qq' && <QqSection />}
             {active === 'tools' && <ToolsSection />}
             {active === 'bridge' && <BridgeSection />}
+            {active === 'backup' && <BackupPanel />}
             {active === 'appearance' && <AppearanceSection />}
             {active === 'about' && <AboutSection info={info} />}
           </div>

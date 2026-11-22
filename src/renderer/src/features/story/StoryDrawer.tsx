@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { StoryBranchItem } from '@shared/story'
 import { useChatStore } from '../chat/store'
 import { activeBranchOf, useStoryStore } from './store'
+import { ImportDialog } from '../transfer/ImportDialog'
 import { relativeTime } from './StoryCard'
 
 interface StoryDrawerProps {
@@ -38,6 +39,7 @@ export function StoryDrawer({ storyId, title }: StoryDrawerProps) {
     return active && active.storyId === storyId ? active.messages : []
   })
   const activeBranch = activeBranchOf(branches)
+  const [importOpen, setImportOpen] = useState(false)
   const [query, setQuery] = useState('')
   const listRef = useRef<HTMLOListElement | null>(null)
 
@@ -109,6 +111,8 @@ export function StoryDrawer({ storyId, title }: StoryDrawerProps) {
         </button>
       </div>
 
+      <button type="button" data-ui-target="导入新分支" disabled={busy} onClick={() => setImportOpen(true)}>导入为新分支</button>
+      {importOpen && <ImportDialog storyId={storyId} onClose={() => setImportOpen(false)} />}
       {error && <p className="story-drawer__error">{error}</p>}
 
       <div className="story-search" data-ui-region="E 故事检索">

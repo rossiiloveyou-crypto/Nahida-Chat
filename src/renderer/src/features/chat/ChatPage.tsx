@@ -15,6 +15,7 @@ import { useSettings } from '../settings/useSettings'
 import { usePromptLibrary } from '../settings/usePromptLibrary'
 import { useWorkspaces } from '../workspace/useWorkspaces'
 import { useDisplayScripts } from './markdown/useDisplayScripts'
+import { ExportDialog } from '../transfer/ExportDialog'
 
 const MODE_LABEL: Record<ConversationMode, string> = { chat: 'Chat', agent: 'Agent', story: '故事' }
 
@@ -64,6 +65,7 @@ export function ChatPage() {
   const refreshStories = useStoryStore((s) => s.refreshStories)
   const openStory = useStoryStore((s) => s.openStory)
   const [storyDialogOpen, setStoryDialogOpen] = useState(false)
+  const [exportOpen, setExportOpen] = useState(false)
 
   useEffect(() => {
     void init()
@@ -308,6 +310,9 @@ export function ChatPage() {
             {modelHint}
           </span>
         </div>
+        <div className="chat-header__actions" data-ui-target="对话头部操作">
+          <button type="button" data-ui-target="对话更多" aria-label="更多：导出对话" title="导出对话" onClick={() => setExportOpen(true)}>⋯</button>
+        </div>
       </header>
 
       {error && (
@@ -370,6 +375,7 @@ export function ChatPage() {
       )}
 
       {storyLanding && storyDialogOpen && <NewStoryDialog onClose={() => setStoryDialogOpen(false)} />}
+      {exportOpen && <ExportDialog sessionId={activeId ?? undefined} onClose={() => setExportOpen(false)} />}
 
       {!storyLanding && <Composer
         disabled={!ready || editing || channelReadOnly}

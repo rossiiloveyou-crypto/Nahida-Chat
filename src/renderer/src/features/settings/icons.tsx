@@ -18,6 +18,10 @@ function base({ size = 18, ...rest }: IconProps): SVGProps<SVGSVGElement> {
   }
 }
 
+export function IconBackup(props: IconProps) {
+  return <svg {...base(props)}><path d="M4 4h16v5H4zM6 9v11h12V9M9 13h6M12 13v4" /></svg>
+}
+
 export function IconModels(props: IconProps) {
   return (
     <svg {...base(props)}>

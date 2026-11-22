@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { RequestReplyInput } from '@shared/api'
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
 import { DEFAULT_SESSION_TITLE, MAX_TOOL_TURNS } from '@shared/constants'
@@ -11,6 +11,7 @@ import type {
   ChatToolUpdate,
   ConversationMode,
   CreateSessionInput,
+  ImportedFrom,
   Message,
   PersonaHistoryEntry,
   SendInput,
@@ -75,6 +76,8 @@ interface StoryPrompt {
 class ChatService {
   private sessions: Session[] = []
   private loaded = false
+  private historyReadFailed = false
+  private importSnapshot: Session[] | null = null
   private readonly inflight = new Map<string, AbortController>()
   /**
    * 正在跑的那一轮（按会话 id）。
@@ -245,6 +248,67 @@ class ChatService {
     session.updatedAt = Date.now()
     this.persist()
     return messages.map(cloneMessage)
+  }
+
+  countTransferImports(fingerprint: string): number {
+    // 冷启动的 ensureLoaded 会修复中断消息并落盘；导入预览只读。
+    let sessions: Session[] = this.sessions
+    if (!this.loaded) {
+      try {
+        const stored = JSON.parse(readFileSync(this.file, 'utf8'))
+        if (Array.isArray(stored)) sessions = stored
+      } catch { /* 缺失或读坏旧文件不影响预览 */ }
+    }
+    const imports = new Set<string>()
+    for (const session of sessions) {
+      const source = session?.importedFrom
+      if (source?.fingerprint === fingerprint && typeof source.importId === 'string') imports.add(source.importId)
+    }
+    return imports.size
+  }
+
+  /** 导入专用：只在同步事务中初始化本次新建的空会话。 */
+  initializeImportedSession(sessionId: string, messages: Message[], source: ImportedFrom): Session {
+    if (!this.importSnapshot || this.importSnapshot.some((item) => item.id === sessionId)) {
+      throw new Error('只能初始化本次导入新建的会话')
+    }
+    const session = this.sessions.find((item) => item.id === sessionId)
+    if (!session || session.messages.length || session.importedFrom) {
+      throw new Error('导入目标不是空会话')
+    }
+    session.messages = messages.map(cloneMessage)
+    session.importedFrom = { ...source }
+    return cloneSession(session)
+  }
+
+  /** createSession（包括 createStory 内部调用）延后至整批完成时一次落盘。 */
+  commitImportedSessions<T>(create: () => T, afterPersist?: (created: T) => void): T {
+    if (this.importSnapshot) throw new Error('正在导入对话')
+    this.ensureLoaded()
+    if (this.historyReadFailed) throw new Error('已有会话存档读取失败，请先修复存档')
+    const prior = this.sessions.slice()
+    this.importSnapshot = prior
+    let written = false
+    try {
+      const created = create()
+      this.writeSessions(true)
+      written = true
+      afterPersist?.(created)
+      return created
+    } catch (error) {
+      this.sessions = prior
+      if (written) {
+        try {
+          this.writeSessions(true)
+        } catch (rollbackError) {
+          console.error('[chat] 导入会话回滚失败', rollbackError)
+          throw new Error('导入失败，会话回滚落盘失败，请检查存储目录')
+        }
+      }
+      throw error
+    } finally {
+      this.importSnapshot = null
+    }
   }
 
   /** 某个故事区下的全部会话（P6 的分支树会用到；本 Phase 只给 P6 / P7 留口） */
@@ -1330,6 +1394,7 @@ class ChatService {
     try {
       if (!existsSync(this.file)) return
       const parsed = JSON.parse(readFileSync(this.file, 'utf8')) as Session[]
+      if (!Array.isArray(parsed)) throw new Error('会话存档格式无效')
       const settings = settingsStore.get()
       // 老会话没有 workspaceId（单工作区时代）：绑到当前活动工作区，
       // 否则老会话的文件工具会找不到落点。
@@ -1346,6 +1411,7 @@ class ChatService {
         : []
       if (this.settleInterrupted(this.sessions) > 0) this.persist()
     } catch (error) {
+      this.historyReadFailed = true
       console.warn('[chat] 会话历史读取失败，已从空列表启动', error)
       this.sessions = []
     }
@@ -1377,13 +1443,28 @@ class ChatService {
   }
 
   private persist(): void {
+    if (this.importSnapshot) return
     try {
-      mkdirSync(dirname(this.file), { recursive: true })
-      const tmp = this.file + '.tmp'
-      writeFileSync(tmp, JSON.stringify(this.sessions, null, 2), 'utf8')
-      renameSync(tmp, this.file)
+      this.writeSessions(false)
+      this.historyReadFailed = false
     } catch (error) {
       console.error('[chat] 会话落库失败', error)
+    }
+  }
+
+  private writeSessions(strict: boolean): void {
+    mkdirSync(dirname(this.file), { recursive: true })
+    const tmp = this.file + (strict ? '.' + randomUUID() + '.tmp' : '.tmp')
+    try {
+      writeFileSync(tmp, JSON.stringify(this.sessions, null, 2), { encoding: 'utf8', ...(strict ? { flag: 'wx' } : {}) })
+      renameSync(tmp, this.file)
+    } catch (error) {
+      if (strict && (error as NodeJS.ErrnoException).code !== 'EEXIST') {
+        try { rmSync(tmp, { force: true }) } catch (cleanupError) {
+          console.error('[chat] 导入临时文件清理失败', cleanupError)
+        }
+      }
+      throw error
     }
   }
 }
@@ -1501,7 +1582,11 @@ function cloneMessage(message: Message): Message {
 }
 
 function cloneSession(session: Session): Session {
-  return { ...session, messages: session.messages.map(cloneMessage) }
+  return {
+    ...session,
+    ...(session.importedFrom ? { importedFrom: { ...session.importedFrom } } : {}),
+    messages: session.messages.map(cloneMessage)
+  }
 }
 
 function deriveTitle(content: string): string {

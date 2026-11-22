@@ -1,5 +1,6 @@
 import type { ComponentType } from 'react'
 import {
+  IconBackup,
   IconBridge,
   IconChannels,
   IconInfo,
@@ -21,6 +22,7 @@ export type SettingsSectionId =
   | 'qq'
   | 'tools'
   | 'bridge'
+  | 'backup'
   | 'appearance'
   | 'about'
 
@@ -100,6 +102,13 @@ export const SETTINGS_NAV: SettingsNavItem[] = [
     label: 'ST 桥接',
     description: '故事模式借 ST 的提示词管线',
     icon: IconBridge,
+    group: '其他'
+  },
+  {
+    id: 'backup',
+    label: '数据与备份',
+    description: '导入对话与导出备份',
+    icon: IconBackup,
     group: '其他'
   },
   {

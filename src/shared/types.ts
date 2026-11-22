@@ -63,12 +63,21 @@ export interface Message {
  */
 export type ConversationMode = 'chat' | 'agent' | 'story'
 
+/** 本地导入来源，仅保存内容指纹和格式，不保存源路径。 */
+export interface ImportedFrom {
+  fingerprint: string
+  format: 'st' | 'nc'
+  /** 同一文件的每次确认独立计数（NC 包可一次创建多条会话）。 */
+  importId: string
+}
+
 export interface Session {
   id: string
   title: string
   createdAt: number
   updatedAt: number
   messages: Message[]
+  importedFrom?: ImportedFrom
   /** 预发送：只追加消息，点击「请求回复」才生成；缺省关闭，渠道会话不启用。 */
   preSend?: boolean
   /** 这段会话用哪个角色的提示词（Prompt/characters/<id>/） */
@@ -236,6 +245,8 @@ export interface StoryRecallConfig {
 }
 
 export interface Settings {
+  /** 酒馆导出的默认用户名，缺省使用 User。 */
+  userName?: string
   /** 模型来源；mock = 本地离线回显，用于验证链路。始终镜像默认档案。 */
   provider: ProviderId
   baseUrl: string

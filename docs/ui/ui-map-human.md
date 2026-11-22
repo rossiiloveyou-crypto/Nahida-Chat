@@ -5,6 +5,17 @@
 
 ## 需求 → 位置 → 代码
 
+### 对话导入与导出（SUP-04）
+
+| 需求 | 图上位置 | 代码 |
+| --- | --- | --- |
+| 设置中的导入与备份入口 | `settings-data`「设置页导入对话 / 设置页导出对话」 | `BackupPanel.tsx` |
+| 文件预览、目标选择、角色匹配警告 | `settings-data-import`、`import-dialog`「导入预览 / 导入模式」 | `ImportDialog.tsx`、`ImportPreviewPanel.tsx` |
+| 故事表单内预览与清除 | `story-import-dialog`「从对话导入 / 清空导入预览 / 开场文案」 | `NewStoryDialog.tsx` |
+| 当前会话导出、格式与范围 | `export-dialog`「导出格式 / 导出范围」 | `ChatPage.tsx`、`ExportDialog.tsx` |
+
+预览图用隔离夹具替代原生文件选择，仍走 Electron preload 与主进程真实解析。
+
 ### 故事召回面板与创建入口（2026-11-21，P4.9）
 
 | 需求 | 图上位置 | 代码 |

@@ -31,6 +31,7 @@ import type {
   WorkspaceCatalog,
   WorkspaceDraft
 } from './types'
+import type { ImportPreview, ImportRequest, ExportRequest, TransferResult } from './transfer'
 import type { ToolApprovalReply, ToolDefinition } from './tools'
 import type { StRegexScript } from './regex'
 import type { BridgeConfig, BridgeHealth, BridgeOverrideState } from './bridge'
@@ -159,6 +160,11 @@ type Unsubscribe = () => void
  * 渲染进程只能从这里拿能力，拿不到 Node / ipcRenderer 本体。
  */
 export interface NahidaApi {
+  transfer: {
+    pickImport: () => Promise<ImportPreview | null>
+    import: (request: ImportRequest) => Promise<TransferResult>
+    export: (request: ExportRequest) => Promise<TransferResult>
+  }
   /**
    * 主进程注入的初始主题（**同步值，非 Promise**）。
    *

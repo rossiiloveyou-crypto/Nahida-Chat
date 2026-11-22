@@ -10,7 +10,7 @@
  *
  * 跑法：pnpm ui:map
  */
-const { app, BrowserWindow } = require('electron')
+const { app, BrowserWindow, dialog } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 
@@ -45,6 +45,17 @@ fs.rmSync(userData, { recursive: true, force: true })
 fs.mkdirSync(userData, { recursive: true })
 fs.mkdirSync(outDir, { recursive: true })
 seedObserveFiles()
+const transferFixture = path.join(userData, 'transfer-fixture.jsonl')
+fs.writeFileSync(transferFixture, [
+  { user_name: '访客', character_name: '示例角色' },
+  { name: '访客', is_user: true, mes: '你看见了什么？' },
+  { name: '示例角色', is_user: false, mes: '窗外的雨停了。' }
+].map((entry) => JSON.stringify(entry)).join('\n'), 'utf8')
+const showOpenDialog = dialog.showOpenDialog
+let useTransferFixture = false
+dialog.showOpenDialog = (...args) => useTransferFixture
+  ? Promise.resolve({ canceled: false, filePaths: [transferFixture] })
+  : showOpenDialog.apply(dialog, args)
 
 // M27：可选隔离夹具，让来源徽标同时出现；绝不触碰真实 userData。
 const promptCheck = process.argv.includes('--verify-prompt-roots')
@@ -195,11 +206,11 @@ const DEFAULT_VIEWS = [
   // 点「打开世界书编辑器」后弹层自己会拉 knownDirs 并落到默认角色的 worldbook 目录。
   { hash: '/settings/prompts', name: 'worldbook-editor', click: '[data-ui-target="世界书编辑器入口"]' },
   // P7：故事区三视图（主界面双分区 / 抽屉展开 / 设置·故事区）
-  { hash: '/chat', name: 'chat-stories', seedStory: true, click: '[data-ui-target="故事"]' },
-  { hash: '/chat', name: 'chat-story-drawer', seedStory: true, click: '[data-ui-target="故事卡片 时钟之谜"]' },
+  { hash: '/chat', name: 'chat-stories', seedStory: true, click: ['[data-ui-target="新建对话"]', '[data-ui-target="故事"]'] },
+  { hash: '/chat', name: 'chat-story-drawer', seedStory: true, click: ['[data-ui-target="新建对话"]', '[data-ui-target="故事"]', '[data-ui-target="故事卡片 时钟之谜"]'] },
   { hash: '/settings/stories', name: 'settings-stories', seedStory: true },
   // P8：新建故事区表单（含「背景与剧本设定」与「开场消息」两栏）
-  { hash: '/chat', name: 'new-story-dialog', click: ['[data-ui-target="故事"]', '[data-ui-target="新建故事"]'] },
+  { hash: '/chat', name: 'new-story-dialog', click: ['[data-ui-target="新建对话"]', '[data-ui-target="故事"]', '[data-ui-target="新建故事"]'] },
   { hash: '/settings/memory', name: 'settings-memory' },
   { hash: '/settings/memory', name: 'settings-story-recall', scrollY: 740 },
   { hash: '/settings/memory', name: 'settings-memory-facts', scrollY: 1580, click: '[data-ui-target="普通聊天事实记忆"] summary' },
@@ -237,7 +248,13 @@ const DEFAULT_VIEWS = [
   { hash: '/settings/bridge', name: 'settings-bridge-lower', scrollY: 650 },
   { hash: '/settings/bridge', name: 'settings-bridge-status', scrollY: 1200 },
   { hash: '/settings/appearance', name: 'settings-appearance' },
-  { hash: '/settings/about', name: 'settings-about' }
+  { hash: '/settings/about', name: 'settings-about' },
+  { hash: '/chat', name: 'import-dialog', transferPreview: true, click: ['[data-ui-target="导入对话"]', '[data-ui-target="选择导入文件"]'] },
+  { hash: '/chat', name: 'story-import-dialog', transferPreview: true, click: ['[data-ui-target="新建对话"]', '[data-ui-target="故事"]', '[data-ui-target="新建故事"]', '[data-ui-target="从对话导入"]'] },
+  { hash: '/chat', name: 'export-dialog', click: '[data-ui-target="对话更多"]' },
+  { hash: '/settings/backup', name: 'settings-backup' },
+  { hash: '/settings/backup', name: 'settings-data' },
+  { hash: '/settings/backup', name: 'settings-data-import', transferPreview: true, click: ['[data-ui-target="设置页导入对话"]', '[data-ui-target="选择导入文件"]'] }
 ]
 const VIEWS = JSON.parse(argValue('views', JSON.stringify(DEFAULT_VIEWS)))
 
@@ -440,8 +457,8 @@ app.whenReady().then(async () => {
     if (view.seedStory) {
       const seeded = await win.webContents.executeJavaScript(`
         (async () => {
-          const existing = await window.nahida.story.list()
-          if (existing.length === 0) {
+          const existing = (await window.nahida.story.list()).find((story) => story.title === '时钟之谜')
+          if (!existing) {
             const created = await window.nahida.story.create({
               title: '时钟之谜',
               characterId: 'nahida',
@@ -484,7 +501,7 @@ app.whenReady().then(async () => {
             }
             return { ok: true, storyId, messages: after ? after.messages.length : 0 }
           }
-          return { ok: true, storyId: existing[0].storyId }
+          return { ok: true, storyId: existing.storyId }
         })()
       `)
       if (!seeded || !seeded.ok) {
@@ -654,6 +671,7 @@ app.whenReady().then(async () => {
         : Array.isArray(view.click)
           ? view.click.filter((item) => typeof item === 'string' && item)
           : []
+    useTransferFixture = Boolean(view.transferPreview)
     for (const clickSelector of clickSteps) {
       const clicked = await win.webContents.executeJavaScript(`
         new Promise((resolve) => {
@@ -693,6 +711,30 @@ app.whenReady().then(async () => {
           requestAnimationFrame(tick)
         })
       `)
+    }
+
+    if (view.transferPreview) {
+      const checked = await win.webContents.executeJavaScript(`(async () => {
+        const find = (label) => document.querySelector('[data-ui-target="' + label + '"]')
+        const wait = async (test) => {
+          const deadline = Date.now() + 5000
+          while (Date.now() < deadline) {
+            if (test()) return true
+            await new Promise(requestAnimationFrame)
+          }
+          return false
+        }
+        if (!(await wait(() => find('导入预览')))) return false
+        if (!${JSON.stringify(view.name === 'story-import-dialog')}) return true
+        if (!find('开场消息输入')?.disabled) return false
+        find('清空导入预览')?.click()
+        if (!(await wait(() => !find('导入预览') && find('开场消息输入')?.disabled === false))) return false
+        find('从对话导入')?.click()
+        return wait(() => find('导入预览') && find('开场消息输入')?.disabled)
+      })()`)
+      if (!checked) throw new Error('导入预览控件验证失败：' + view.name)
+      if (view.name === 'story-import-dialog') console.log('PASS X17 开场消息随导入预览禁用/恢复')
+      await win.webContents.executeJavaScript("window.dispatchEvent(new Event('scroll'))")
     }
 
     // 等到「当前路由的量测结果」就绪再截图：
