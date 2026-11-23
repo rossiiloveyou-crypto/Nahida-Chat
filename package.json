@@ -1,7 +1,7 @@
 {
   "name": "nahida-chat",
   "productName": "Nahida Chat",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "private": true,
   "description": "Nahida Chat - 桌面端 AI 聊天客户端",
   "license": "UNLICENSED",
