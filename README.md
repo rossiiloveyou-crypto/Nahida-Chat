@@ -492,7 +492,7 @@ Chat 默认不供给工具。若需在 Chat 中使用工具：
 | 镜像回退 | 优先 `hf-mirror.com`，失败自动回退 `huggingface.co` |
 | 原子校验 | 先写 `.part` 临时文件并校验真实体积，下载完成后自动清除加载失败缓存，下次检索即时生效 |
 
-未安装模型时不会阻断对话，事实记忆自动降级为纯关键词检索。设计细节见 [docs/04-RAG记忆检索设计.md](https://www.google.com/search?q=docs/04-RAG%E8%AE%B0%E5%BF%86%E6%A3%80%E7%B4%A2%E8%AE%BE%E8%AE%A1.md)。
+未安装模型时不会阻断对话，事实记忆自动降级为纯关键词检索。设计细节见 [docs/04-RAG记忆检索设计.md](docs/04-RAG记忆检索设计.md)。
 
 ### 8.4 记忆分区规则
 
@@ -675,10 +675,10 @@ pnpm release:verify             # 使用打包产物中的宿主执行握手自�
 
 | 文档 | 内容 |
 | --- | --- |
-| [CHANGELOG.md](CHANGELOG.md) | 各版本用户可感知变更日志 |
-| [docs/01-架构与目录约定.md](https://www.google.com/search?q=docs/01-%E6%9E%B6%E6%9E%84%E4%B8%8E%E7%9B%AE%E5%BD%95%E7%BA%A6%E5%AE%9A.md) | 架构分层、IPC 约定与目录规范 |
-| [docs/02-路线图.md](https://www.google.com/search?q=docs/02-%E8%B7%AF%E7%BA%BF%E5%9B%BE.md) | 后续迭代计划 |
-| [docs/03-决策记录.md](https://www.google.com/search?q=docs/03-%E5%86%B3%E7%AD%96%E8%AE%B0%E5%BD%95.md) | 关键架构与产品决策记录 |
-| [docs/04-RAG记忆检索设计.md](https://www.google.com/search?q=docs/04-RAG%E8%AE%B0%E5%BF%86%E6%A3%80%E7%B4%A2%E8%AE%BE%E8%AE%A1.md) | 记忆检索、打分、注入与模型下载设计 |
-| [docs/ui/UI\_MAP.md](https://www.google.com/search?q=docs/ui/UI_MAP.md) | 界面区域与元素坐标索引 |
-| [docs/ui/ui-map-human.md](https://www.google.com/search?q=docs/ui/ui-map-human.md) | 界面设计说明与变更记录 |
+| [CHANGELOG.md](CHANGELOG.md) | 变更日志已并入本手册，文件仅留查阅指引 |
+| [docs/01-架构与目录约定.md](docs/01-架构与目录约定.md) | 架构分层、IPC 约定与目录规范 |
+| [docs/02-路线图.md](docs/02-路线图.md) | 后续迭代计划 |
+| [docs/03-决策记录.md](docs/03-决策记录.md) | 关键架构与产品决策记录 |
+| [docs/04-RAG记忆检索设计.md](docs/04-RAG记忆检索设计.md) | 记忆检索、打分、注入与模型下载设计 |
+| [docs/ui/UI\_MAP.md](docs/ui/UI_MAP.md) | 界面区域与元素坐标索引 |
+| [docs/ui/ui-map-human.md](docs/ui/ui-map-human.md) | 界面设计说明与变更记录 |
