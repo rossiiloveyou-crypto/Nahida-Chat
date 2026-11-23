@@ -12,10 +12,13 @@
  */
 
 import type { StChatMessage } from './mapper'
+import type { BridgeBudgetSource, BridgeConfig } from '@shared/bridge'
+import { BRIDGE_ST_RESERVE_RATIO } from '@shared/constants'
 
 /** `page.eval()` 的标签。假宿主（单测）按标签分发，真宿主只把它写进日志 */
 export const EVAL_LABEL = {
   ready: 'ready',
+  budget: 'budget:read',
   exposure: 'exposure',
   clear: 'clear',
   inject: 'inject',
@@ -92,6 +95,31 @@ export const EXPOSURE_EXPR = [
 /** 页面侧能拿到的最小接口面（真宿主是 BridgeHost，单测里是假宿主） */
 export interface BridgePageLike {
   eval<T>(expr: string, label?: string): Promise<T>
+}
+
+/** 仅读取运行时设置，不访问 settings.json，不写入 ST 设置。 */
+export const BUDGET_EXPR = [
+  '(() => {',
+  '  const settings = SillyTavern.getContext().chatCompletionSettings;',
+  '  const valid = value => typeof value === "number" && Number.isFinite(value) && value >= 0;',
+  '  return { context: settings && valid(settings.openai_max_context) ? settings.openai_max_context : null,',
+  '    response: settings && valid(settings.openai_max_tokens) ? settings.openai_max_tokens : null };',
+  '})()'
+].join('\n')
+
+export async function readBudgetSource(page: BridgePageLike, config: Pick<BridgeConfig, 'manualBudgetTokens' | 'stReserveTokens'>): Promise<BridgeBudgetSource> {
+  const live = await page.eval<{ context: number | null; response: number | null }>(BUDGET_EXPR, EVAL_LABEL.budget)
+    .catch(() => ({ context: null, response: null }))
+  const valid = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0
+  const context = valid(live?.context) ? live.context : null
+  const response = valid(live?.response) ? live.response : null
+  const fromSt = context !== null && response !== null && context >= response
+  const manual = config.manualBudgetTokens
+  const budgetTotal = fromSt ? context - response : valid(manual) ? manual : null
+  const source = fromSt ? 'st' : budgetTotal !== null ? 'manual' : 'unavailable'
+  const stReserveTokens = valid(config.stReserveTokens) ? config.stReserveTokens : Math.ceil((budgetTotal ?? 0) * BRIDGE_ST_RESERVE_RATIO)
+  return { context, response, budgetTotal, source, stReserveTokens,
+    ...(fromSt ? {} : { warning: budgetTotal !== null ? '未读到 ST 上下文设置，正在使用手填值' : '未读到 ST 上下文设置，请填写手动预算' }) }
 }
 
 /** 注入结果自检：逐字相等才算注入成功 */

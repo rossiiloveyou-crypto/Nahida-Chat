@@ -5,6 +5,10 @@
 
 ## 需求 → 位置 → 代码
 
+### 桥接上下文预算（SUP-05）
+
+`settings-bridge-status` 的「桥接预算统计 / 桥接预算回落 / 桥接历史省略」定位到 `BridgeSection.tsx` 的运行状态区。只读展示本轮预算来源、总预算、含 ST 预留的已用量、ST 预留、省略历史条数；不增加设置写入入口。暂无预算轮次时显示占位而非假定容量。
+
 ### 对话导入与导出（SUP-04）
 
 | 需求 | 图上位置 | 代码 |
@@ -44,7 +48,7 @@
 | --- | --- | --- |
 | 设置 ST 目录、桥接角色、端口与可选 Node 路径 | `settings-bridge` 元素 **5 / 6 / 7 / 8**（桥接角色 `G9–R9`） | `features/settings/sections/BridgeSection.tsx` |
 | 打开 ST / 停止 ST / 打开日志 | `settings-bridge` 元素 **10 / 11 / 12** | `BridgeSection.tsx` → preload → `main/features/bridge/host.ts` |
-| 查看角色卡、PID、端口、日志大小、运行时及最近错误 | `settings-bridge-status` 元素 **16「桥接状态」/ 17「桥接失败步骤」/ 18「桥接故事召回状态」/ 19「刷新桥接状态」** | `host.health()`、`character.ts`、`spawn.ts`、`logpipe.ts` |
+| 查看角色卡、PID、端口、日志大小、运行时、预算统计及最近错误 | `settings-bridge-status` 元素 **16「桥接预算统计」/ 17「桥接状态」/ 18「桥接失败步骤」/ 19「桥接故事召回状态」/ 20「刷新桥接状态」**（三张 bridge 视图同为 20 元素） | `host.health()`、`character.ts`、`spawn.ts`、`logpipe.ts`、`bridge/budget.ts` |
 | 修改最高权重规则（空默认、清空停用） | `settings-bridge-lower` 元素 **13「最高权重规则正文」/ 14「保存最高权重规则」/ 15「最高权重规则状态」** | `BridgeSection.tsx` → `bridge.override.get/save` → `override.ts`；`driver.ts` 每轮 SYSTEM / IN_CHAT / depth 0 注入 |
 
 2026-11-21：仅重拍 `settings-bridge / settings-bridge-lower / settings-bridge-status` 三张受影响视图；记忆组件未改，沿用既有图。健康状态页显示连续恢复失败次数、中文失败步骤和只读召回联动，新增入口沿用 `story.recallStatus`；轮询不重复复制召回库。熔断红色告警和孤儿扫描失败的隔离夹具定位图见任务 `baseline/p6-circuit-ui/`，不代表真实故障现场。最近一轮落盘计数尚无只读契约，本轮保留缺口。全局 AGENTS.md 本机不存在；仓库 AGENTS.md 和写图文档脚本仍引用旧全局校验器，二者不在 P6 白名单，U-07/U-08 保持部分未闭合。

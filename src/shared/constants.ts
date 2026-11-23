@@ -308,6 +308,14 @@ export const MEMORY_MODEL_DIMENSIONS = 1024
 /** 默认上下文窗口，仅作展示与将来裁剪判断的初值 */
 export const DEFAULT_CONTEXT_WINDOW = 128_000
 
+/** 桥接预算缺省开启；null 容量须从 ST 读取或由用户明确填写。 */
+export const DEFAULT_BRIDGE_BUDGET = {
+  budgetEnabled: true,
+  manualBudgetTokens: null,
+  stReserveTokens: null
+} as const
+export const BRIDGE_ST_RESERVE_RATIO = 0.35
+
 /** 上下文窗口合法区间 */
 export const CONTEXT_WINDOW_RANGE = { min: 4096, max: 4_000_000 } as const
 

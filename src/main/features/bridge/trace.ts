@@ -1,5 +1,6 @@
 /** 每轮只记诊断计数与步骤，不记录消息正文或提示词正文。 */
 import { app } from 'electron'
+import type { BridgeBudgetTrace } from '@shared/bridge'
 import { appendFileSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -15,7 +16,8 @@ export interface BridgeTraceDisk {
   waitMs: number
 }
 
-export interface BridgeTraceRecord {
+export interface BridgeTraceRecord extends BridgeBudgetTrace {
+  warnings?: string[]
   at: string
   sessionId: string
   before: number

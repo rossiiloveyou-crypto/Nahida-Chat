@@ -305,6 +305,16 @@ export function BridgeSection() {
             {health.orphanScanError && <p role="alert" className="hint-text hint-text--error" data-ui-target="桥接孤儿扫描错误">
               孤儿清单扫描失败。请打开日志检查记录与文件访问权限，处理后重新打开 ST。
             </p>}
+            {health.budget?.budgetSource?.warning && <p role="status" className="hint-text" data-ui-target="桥接预算回落">{health.budget.budgetSource.warning}</p>}
+            {(health.budget?.historyDropped ?? 0) > 0 && <p role="status" className="hint-text" data-ui-target="桥接历史省略">本轮因上下文上限省略了 {health.budget!.historyDropped} 条更早的消息</p>}
+            <dl className="info-grid" data-ui-target="桥接预算统计">
+              <dt>预算分层</dt><dd>{health.config.budgetEnabled === false ? '已关闭（沿用旧路径）' : '已开启'}</dd>
+              <dt>预算来源</dt><dd>{health.budget?.budgetSource?.source === 'st' ? 'ST 实时设置' : health.budget?.budgetSource?.source === 'manual' ? '手填回落' : '尚未取得本轮预算'}</dd>
+              <dt>本轮总预算</dt><dd>{health.budget?.budgetTotal ?? '—'}</dd>
+              <dt>已用（含 ST 预留）</dt><dd>{health.budget?.budgetUsed ?? '—'}</dd>
+              <dt>ST 侧预留</dt><dd>{health.budget?.stReserveTokens ?? '—'}</dd>
+              <dt>省略历史</dt><dd>{health.budget?.historyDropped ?? '—'}</dd>
+            </dl>
             <dl className="info-grid" data-ui-target="桥接状态">
               <dt>已检测角色卡</dt><dd>{health.cardAvatar ? health.cardName + " · " + health.cardAvatar : "尚未检测"}</dd>
               <dt>ST 进程</dt><dd>{health.stRunning ? '运行中' : '未启动 / 已停止'}</dd>

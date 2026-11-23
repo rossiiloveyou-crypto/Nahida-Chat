@@ -53,6 +53,9 @@ import {
 } from '../settings/settingsStore'
 import { bridgeEligible, toBridgeMessages, toBridgeSystemPrompts } from '../bridge/router'
 import { bridgeStream } from '../bridge/stream'
+import { allocateBridgeBudget, estimateBridgeTokens } from '../bridge/budget'
+import { BridgeFailure } from '@shared/bridge'
+import type { BridgePrepareBudget } from '@shared/bridge'
 
 /**
  * `promptStore.compose()` 的 story 入参形状（P5）。
@@ -789,6 +792,7 @@ class ChatService {
 
         const useBridge = bridgeEligible(session, stored)
         const history = summaryService.historyOf(session, memoryTenant.personaId)
+        const budgetParts: { storyBlock?: string; storyBudgetTokens?: number; retainedStoryBlock?: string } = {}
         const payload = await this.buildPayload(
           session,
           memoryBlock,
@@ -797,8 +801,52 @@ class ChatService {
           storyPrompt,
           memoryTenant.personaId,
           useBridge,
-          history
+          history,
+          useBridge ? budgetParts : undefined
         )
+        const prepareBudget: BridgePrepareBudget = async (source) => {
+          if (source.budgetTotal === null) {
+            throw new BridgeFailure('fail:budget', source.warning ?? '未读到 ST 上下文设置，请配置手填预算')
+          }
+          let currentPayload = payload
+          let currentMemory = memoryBlock
+          let currentStory = budgetParts.storyBlock ?? ''
+          const personaTokens = estimateBridgeTokens(storyPrompt?.background?.trim() ? '【本故事背景与剧本设定】\n' + storyPrompt.background.trim() : '')
+            + estimateBridgeTokens(storyPrompt?.profile?.trim() ?? '')
+          const fixedTokens = (source.fixedPromptTokens ?? 0) + estimateBridgeTokens(clockBlock)
+            + estimateBridgeTokens(summaryService.systemBlock(session, memoryTenant.personaId))
+          for (let attempt = 0; attempt < 4; attempt += 1) {
+            const allocation = allocateBridgeBudget({
+              budgetTotal: source.budgetTotal, stReserveTokens: source.stReserveTokens,
+              personaTokens, fixedTokens, storyTokens: estimateBridgeTokens(currentStory),
+              memoryTokens: estimateBridgeTokens(currentMemory), messages: toBridgeMessages(currentPayload)
+            })
+            if (!allocation.ok) throw new BridgeFailure('fail:budget', allocation.message!, '', allocation)
+            const shrinkStory = allocation.storyTokens < estimateBridgeTokens(currentStory)
+            const shrinkMemory = allocation.memoryTokens < estimateBridgeTokens(currentMemory)
+            if (!shrinkStory && !shrinkMemory) return {
+              messages: allocation.messages, systemPrompts: toBridgeSystemPrompts(currentPayload),
+              historyDropped: allocation.historyDropped, budgetUsed: allocation.budgetUsed,
+              budgetTotal: allocation.budgetTotal, stReserveTokens: allocation.stReserveTokens
+            }
+            if (shrinkMemory) {
+              currentMemory = allocation.memoryTokens === 0 || attempt > 0 ? '' : await this.recallMemory(
+                userText, { ...stored.memory, budgetTokens: Math.floor(allocation.memoryTokens / 1.1) },
+                memoryRoute, memoryTenants, visible
+              ).catch(() => '')
+            }
+            const nextParts = {
+              storyBudgetTokens: shrinkStory ? (attempt > 0 ? 0 : Math.floor(allocation.storyTokens / 1.1))
+                : Math.floor(estimateBridgeTokens(currentStory) / 1.1),
+              storyBlock: '',
+              retainedStoryBlock: shrinkStory ? undefined : currentStory
+            }
+            currentPayload = await this.buildPayload(session, currentMemory, clockBlock, false, storyPrompt,
+              memoryTenant.personaId, true, history, nextParts)
+            currentStory = nextParts.storyBlock
+          }
+          throw new BridgeFailure('fail:budget', '上下文预算降级后仍超额，本轮未发送')
+        }
         const calls: ToolCallRecord[] = []
 
         // ── P6：生成源二选一（**唯一**一处）。判定本身不在这里拼条件：
@@ -811,6 +859,7 @@ class ChatService {
               sessionId: session.id,
               messages: toBridgeMessages(payload),
               historyBefore: history.length,
+              prepareBudget,
               systemPrompts: toBridgeSystemPrompts(payload),
               signal: controller.signal,
               // F-06：告警先进这一轮的 message，再由 done 广播带出去（不拼进 content，M5）
@@ -1200,7 +1249,8 @@ class ChatService {
     story: StoryPrompt | null,
     personaId: string,
     contextOnly = false,
-    history = summaryService.historyOf(session, personaId)
+    history = summaryService.historyOf(session, personaId),
+    budgetParts?: { storyBudgetTokens?: number; storyBlock?: string; retainedStoryBlock?: string }
   ): Promise<LlmMessage[]> {
     const payload: LlmMessage[] = []
 
@@ -1238,12 +1288,14 @@ class ChatService {
     // P4.8：唯一新增注入，事实 → 故事原文 → 摘要 → 原历史；普通会话不触库。
     if (session.mode === 'story' && session.storyId) try {
       const visibility = branchVisibility(session.storyId, session.id)
-      const storyBlock = await storyMemory(session.storyId).buildStoryContextBlock(
-        session, settingsStore.get().storyRecall, {
+      const storyBlock = budgetParts?.retainedStoryBlock ?? await storyMemory(session.storyId).buildStoryContextBlock(
+        session, budgetParts?.storyBudgetTokens === undefined ? settingsStore.get().storyRecall
+          : { ...settingsStore.get().storyRecall, budgetTokens: budgetParts.storyBudgetTokens }, {
           storyId: session.storyId, branchId: session.id,
           tenants: [{ userId: ROOT_USER_ID, personaId }], bounds: visibility.bounds,
           recentMessageIds: new Set(history.map((message) => message.id))
         })
+      if (budgetParts) budgetParts.storyBlock = storyBlock
       if (storyBlock) payload.push({ role: 'system', content: storyBlock })
     } catch { /* 回顾增强失败不影响同一条生成链路。 */ }
 

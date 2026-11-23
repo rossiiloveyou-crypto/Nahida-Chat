@@ -116,7 +116,7 @@ export class BridgeHost implements BridgePage {
       this.applyConfig(input)
       const file = this.configFile()
       mkdirSync(join(app.getPath('userData'), 'nc-bridge'), { recursive: true })
-      writeFileSync(file + '.tmp', JSON.stringify({ stRoot: this.config.stRoot, port: this.config.port, nodePath: this.config.nodePath, generateTimeoutMs: this.config.generateTimeoutMs, cardPath: this.config.cardPath, cardName: this.config.cardName, cardAvatar: this.config.cardAvatar }, null, 2), 'utf8')
+      writeFileSync(file + '.tmp', JSON.stringify({ stRoot: this.config.stRoot, port: this.config.port, nodePath: this.config.nodePath, generateTimeoutMs: this.config.generateTimeoutMs, budgetEnabled: this.config.budgetEnabled ?? true, manualBudgetTokens: this.config.manualBudgetTokens ?? null, stReserveTokens: this.config.stReserveTokens ?? null, cardPath: this.config.cardPath, cardName: this.config.cardName, cardAvatar: this.config.cardAvatar }, null, 2), 'utf8')
       renameSync(file + '.tmp', file)
     }
     this.config.stUrl = 'http://127.0.0.1:' + this.config.port
@@ -124,7 +124,7 @@ export class BridgeHost implements BridgePage {
   }
   private applyConfig(input: Partial<BridgeConfig>): void {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('ST 配置须为对象')
-    const next = { stRoot: this.config.stRoot, port: this.config.port, nodePath: this.config.nodePath, generateTimeoutMs: this.config.generateTimeoutMs, cardPath: this.config.cardPath, cardName: this.config.cardName, cardAvatar: this.config.cardAvatar }
+    const next = { stRoot: this.config.stRoot, port: this.config.port, nodePath: this.config.nodePath, generateTimeoutMs: this.config.generateTimeoutMs, budgetEnabled: this.config.budgetEnabled ?? true, manualBudgetTokens: this.config.manualBudgetTokens ?? null, stReserveTokens: this.config.stReserveTokens ?? null, cardPath: this.config.cardPath, cardName: this.config.cardName, cardAvatar: this.config.cardAvatar }
     for (const key of ['stRoot', 'nodePath', 'cardPath', 'cardName', 'cardAvatar'] as const) {
       if (input[key] === undefined) continue
       if (typeof input[key] !== 'string' || input[key]!.length > 32768 || input[key]!.includes('\0')) throw new Error(key + ' 须为有效路径字符串')
@@ -140,6 +140,16 @@ export class BridgeHost implements BridgePage {
         throw new Error('单轮上限须为 10–3600 秒的整数')
       }
       next.generateTimeoutMs = ms
+    }
+    if (input.budgetEnabled !== undefined) {
+      if (typeof input.budgetEnabled !== 'boolean') throw new Error('预算开关须为布尔值')
+      next.budgetEnabled = input.budgetEnabled
+    }
+    for (const key of ['manualBudgetTokens', 'stReserveTokens'] as const) {
+      const value = input[key]
+      if (value === undefined) continue
+      if (value !== null && (!Number.isSafeInteger(value) || value < 0)) throw new Error(key + ' 须为非负整数或 null')
+      next[key] = value
     }
     const changed = next.cardName !== this.config.cardName || next.cardAvatar !== this.config.cardAvatar || next.stRoot !== this.config.stRoot || next.port !== this.config.port || next.nodePath !== this.config.nodePath || next.generateTimeoutMs !== this.config.generateTimeoutMs
     if (changed && (this.st.running() || this.booting)) throw new Error('请先停止 ST，再修改目录、桥接角色、端口、Node 路径或单轮上限')
@@ -392,7 +402,7 @@ export class BridgeHost implements BridgePage {
     // 选择已回读确认，持久化其身份；这里不经过运行中配置修改闸。
     const file = this.configFile()
     mkdirSync(join(app.getPath('userData'), 'nc-bridge'), { recursive: true })
-    writeFileSync(file + '.tmp', JSON.stringify({ stRoot: this.config.stRoot, port: this.config.port, nodePath: this.config.nodePath, generateTimeoutMs: this.config.generateTimeoutMs, cardPath: this.config.cardPath, cardName: this.config.cardName, cardAvatar: card.avatar }, null, 2), 'utf8')
+    writeFileSync(file + '.tmp', JSON.stringify({ stRoot: this.config.stRoot, port: this.config.port, nodePath: this.config.nodePath, generateTimeoutMs: this.config.generateTimeoutMs, budgetEnabled: this.config.budgetEnabled ?? true, manualBudgetTokens: this.config.manualBudgetTokens ?? null, stReserveTokens: this.config.stReserveTokens ?? null, cardPath: this.config.cardPath, cardName: this.config.cardName, cardAvatar: card.avatar }, null, 2), 'utf8')
     renameSync(file + '.tmp', file)
   }
   private createWindow(): BrowserWindow {

@@ -43,6 +43,7 @@ export interface BridgeStreamInput {
   historyBefore?: number
   /** NC 的 system 段（人格 / 时间 / 记忆 / 摘要）→ ST 的 extensionPrompt */
   systemPrompts?: string[]
+  prepareBudget?: BridgeRunInput['prepareBudget']
   signal?: AbortSignal
   /** 这一轮的人话告警（P5 的 warnings）。恒以数组回调，空数组也回调一次 */
   onWarnings?: (warnings: string[]) => void
@@ -85,6 +86,7 @@ export async function* bridgeStream(
   void runner({
     sessionId: input.sessionId,
     historyBefore: input.historyBefore,
+    ...(input.prepareBudget ? { prepareBudget: input.prepareBudget } : {}),
     messages: Array.isArray(input.messages) ? input.messages : [],
     ...(Array.isArray(input.systemPrompts) && input.systemPrompts.length > 0
       ? { systemPrompts: input.systemPrompts }

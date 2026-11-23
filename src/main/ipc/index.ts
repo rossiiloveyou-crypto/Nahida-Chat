@@ -38,6 +38,7 @@ import { registerWipeIpcHandlers } from './wipe'
 import { registerRegexIpcHandlers } from './regex'
 import { registerTransferIpcHandlers } from './transfer'
 import { bridgeHost } from '../features/bridge/host'
+import { bridgeDriver } from '../features/bridge/driver'
 import { ensureOverrideFile, getOverride, saveOverride } from '../features/bridge/override'
 
 /** 所有 IPC handler 在这里集中注册，渲染进程能做的事一目了然。 */
@@ -156,14 +157,27 @@ export function registerIpcHandlers(): void {
 
   // P2：进程与日志入口；配置校验和 userData/nc-bridge/config.json 持久化由 host 负责。
   // 打开 ST 只管理进程和可见窗口，生成仍由 chatService 的 bridgeEligible 路由触发。
-  ipcMain.handle(BRIDGE_IPC.health, (): BridgeHealth => bridgeHost.health())
+  ipcMain.handle(BRIDGE_IPC.health, (): BridgeHealth => {
+    const health = bridgeHost.health()
+    const trace = bridgeDriver.lastTurnTrace()
+    if (!trace?.budgetSource) return health
+    return { ...health, budget: {
+      budgetSource: { ...trace.budgetSource },
+      budgetTotal: trace.budgetTotal, budgetUsed: trace.budgetUsed,
+      stReserveTokens: trace.stReserveTokens, historyDropped: trace.historyDropped,
+      historySent: trace.historySent
+    } }
+  })
   ipcMain.handle(BRIDGE_IPC.openSt, (_event, config?: Partial<BridgeConfig>): Promise<BridgeHealth> =>
     bridgeHost.openSt(config === undefined ? undefined : {
       stRoot: config.stRoot,
       cardName: config.cardName,
       port: config.port,
       nodePath: config.nodePath,
-      generateTimeoutMs: config.generateTimeoutMs
+      generateTimeoutMs: config.generateTimeoutMs,
+      budgetEnabled: config.budgetEnabled,
+      manualBudgetTokens: config.manualBudgetTokens,
+      stReserveTokens: config.stReserveTokens
     })
   )
   ipcMain.handle(BRIDGE_IPC.stopSt, (): Promise<BridgeHealth> => bridgeHost.stopSt())

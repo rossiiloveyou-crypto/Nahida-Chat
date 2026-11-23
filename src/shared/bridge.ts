@@ -1,4 +1,5 @@
 import { isChannelSessionId } from './channels'
+import { DEFAULT_BRIDGE_BUDGET } from './constants'
 import type { Session, Settings } from './types'
 
 /**
@@ -75,6 +76,12 @@ export interface BridgeConfig {
    * 800ms 是实测能稳过的下限（PHASE-4 §一 driver 第 5 条 + A5）。
    */
   minIntervalMs: number
+  /** 缺省开启；无 prepareBudget 的旧调用仍使用原路径。 */
+  budgetEnabled?: boolean
+  /** 读不到 ST 活值时的手填总预算；null 表示尚未配置。 */
+  manualBudgetTokens?: number | null
+  /** null 或缺省表示总预算的 35%。 */
+  stReserveTokens?: number | null
 }
 
 /** 单轮生成上限的允许区间（10 秒 ~ 1 小时）。用户在设置页按「秒」填，落盘按毫秒存。 */
@@ -95,7 +102,8 @@ export const BRIDGE_DEFAULT_CONFIG: BridgeConfig = {
   readyTimeoutMs: 60000,
   connectTimeoutMs: 45000,
   generateTimeoutMs: 180000,
-  minIntervalMs: 800
+  minIntervalMs: 800,
+  ...DEFAULT_BRIDGE_BUDGET
 }
 
 /**
@@ -139,6 +147,40 @@ export interface BridgeMessage {
   content: string
 }
 
+/** 本轮只读 ST 活值或明确配置的手填预算；未知值不猜测。 */
+export interface BridgeBudgetSource {
+  context: number | null
+  response: number | null
+  budgetTotal: number | null
+  source: 'st' | 'manual' | 'unavailable'
+  /** Active fixed override prompt, already safety-adjusted by the driver. */
+  fixedPromptTokens?: number
+  stReserveTokens: number
+  warning?: string
+}
+
+/** 回调产物：历史为原始消息的连续后缀，system 段由调用方按分层预算重建。 */
+export interface BridgeBudgetPrepared {
+  messages: BridgeMessage[]
+  systemPrompts: string[]
+  historyDropped: number
+  budgetUsed: number
+  budgetTotal: number
+  stReserveTokens: number
+  warnings?: string[]
+}
+
+export type BridgePrepareBudget = (source: BridgeBudgetSource) => BridgeBudgetPrepared | Promise<BridgeBudgetPrepared>
+
+/** 只含统计，不含正文；driver 与落盘轨迹共用。 */
+export interface BridgeBudgetTrace {
+  historyDropped?: number
+  budgetUsed?: number
+  budgetTotal?: number
+  stReserveTokens?: number
+  budgetSource?: BridgeBudgetSource
+}
+
 /** 一次调用的入参：哪条会话（只用于排队/间隔，不发给 ST）+ 完整历史（最后一条应为 user） */
 export interface BridgeTurnInput {
   /** NC 侧会话 id（分支 id）。🔴 只用于桥接内部的排队与限速，**不进 ST** */
@@ -151,6 +193,8 @@ export interface BridgeTurnInput {
 
 /** 桥接健康度（P6 的设置面板与探针都用它，不需要另一个字段集） */
 export interface BridgeHealth {
+  /** 最近完成轮次的预算证据；正文不跨 IPC。 */
+  budget?: BridgeBudgetTrace & { historySent: number }
   /** 隐藏窗口当前可用（没崩、没被销毁、上下文就绪过） */
   alive: boolean
   /** 已经在跑的轮次（0 = 空闲） */
@@ -216,7 +260,7 @@ export const BRIDGE_IPC = {
 export type BridgeFailureKey = 'preflight' | 'port' | 'node' | 'ready' | 'exposure' | 'role-empty' | 'role-missing' | 'role-ambiguous' | 'role-switched' | 'inject' | 'timeout' | 'budget' | 'empty' | 'disk-count' | 'disk-timeout' | 'delete' | 'crash'
 export type BridgeFailureStep = `fail:${BridgeFailureKey}`
 export class BridgeFailure extends Error {
-  constructor(readonly step: BridgeFailureStep, message: string, readonly detail = '') { super(message); this.name = 'BridgeFailure' }
+  constructor(readonly step: BridgeFailureStep, message: string, readonly detail = '', readonly budget?: BridgeBudgetTrace) { super(message); this.name = 'BridgeFailure' }
 }
 export function isPageUnavailable(error: unknown): boolean {
   if (error instanceof BridgeFailure) return error.step === 'fail:crash'

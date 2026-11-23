@@ -15,7 +15,8 @@
  */
 
 import { BRIDGE_DEFAULT_CONFIG, BRIDGE_EVENT, BridgeFailure, bridgeFailure, isPageUnavailable } from '@shared/bridge'
-import type { BridgeFailureStep } from '@shared/bridge'
+import type { BridgeFailureStep, BridgePrepareBudget, BridgeBudgetTrace } from '@shared/bridge'
+export type { BridgeBudgetSource, BridgeBudgetPrepared, BridgePrepareBudget } from '@shared/bridge'
 import type { BridgeConfig, BridgeTurnInput, BridgeTurnResult, BridgeTurnStatus } from '@shared/bridge'
 import { bridgeHost } from './host'
 import { chatDisk, chatName } from './chats'
@@ -32,12 +33,14 @@ import {
   injectSystemPrompts,
   muteSwitches,
   resetSession,
+  readBudgetSource,
   restoreSwitches
 } from './session'
 import type { BridgeSwitchState, SessionSnapshot } from './session'
 import { mapMessages } from './mapper'
 import { assertCharacter } from './character'
 import { getOverride } from './override'
+import { estimateBridgeTokens } from './budget'
 import type { BridgeOverrideState } from '@shared/bridge'
 import type { MapOptions, MapDropped } from './mapper'
 
@@ -91,6 +94,8 @@ export interface BridgeRunInput extends BridgeTurnInput {
    *    那是 ST 自己的「材料注入」通道。不传 = 这一轮不注入人格（P4/P5 的逐字行为）。
    */
   systemPrompts?: string[]
+  /** 在就绪后、任何清场或磁盘操作前执行预算准备。 */
+  prepareBudget?: BridgePrepareBudget
 }
 
 /**
@@ -98,7 +103,7 @@ export interface BridgeRunInput extends BridgeTurnInput {
  * 🔴 与结果分开的理由：结果是契约（五个字段），轨迹是证据（想加就加）。混在一起会让
  *    P5/P6 的消费者被迫依赖一堆它们不关心的字段。
  */
-export interface BridgeTurnTrace {
+export interface BridgeTurnTrace extends BridgeBudgetTrace {
   disk?: BridgeTraceDisk
   historyBefore: number
   historySent: number
@@ -343,12 +348,14 @@ export class BridgeDriver {
       warnings: [],
       promptsWritten: 0,
       historyBefore: input.historyBefore ?? input.messages.length,
-      historySent: input.messages.length,
+      historySent: 0,
+      historyDropped: 0,
       historyInChat: 0,
       historyInPrompt: 0
     }
 
-    const mapped = mapMessages(Array.isArray(input.messages) ? input.messages : [], input.map)
+    let mapped = mapMessages(Array.isArray(input.messages) ? input.messages : [], input.map)
+    let systemPrompts = input.systemPrompts
     trace.dropped = mapped.dropped
     trace.injected = mapped.chat.length
 
@@ -398,6 +405,7 @@ export class BridgeDriver {
     let backupsBefore: string[] = []
     let dataDir = ''
     let stage = 'ensure'
+    let budgetPending = false
     try {
       this.gateway.assertAvailable?.()
       const ensured = await this.gateway.ensure()
@@ -418,6 +426,46 @@ export class BridgeDriver {
       stage = 'character'
       await assertCharacter(page, cardConfig.cardName, cardConfig.cardAvatar)
       trace.steps.push('character:assert')
+
+      let override: BridgeOverrideState | undefined
+      // SUP-05: fail before any reset, chat mutation or disk operation.
+      if (input.prepareBudget && cardConfig.budgetEnabled !== false) {
+        budgetPending = true
+        stage = 'budget'
+        const source = await readBudgetSource(page, cardConfig)
+        override = this.readOverride()
+        source.fixedPromptTokens = override.active ? estimateBridgeTokens(override.text) : 0
+        trace.budgetSource = source
+        trace.stReserveTokens = source.stReserveTokens
+        if (source.budgetTotal !== null) trace.budgetTotal = source.budgetTotal
+        if (source.warning) warnings.push(source.warning)
+        const budget = await input.prepareBudget(source)
+        const validCount = (n: number): boolean => Number.isSafeInteger(n) && n >= 0
+        if (![budget.historyDropped, budget.budgetUsed, budget.budgetTotal, budget.stReserveTokens].every(validCount) ||
+            budget.budgetTotal !== source.budgetTotal || budget.stReserveTokens !== source.stReserveTokens || budget.budgetUsed > budget.budgetTotal ||
+            !Array.isArray(budget.messages) || !Array.isArray(budget.systemPrompts) || budget.systemPrompts.some(text => typeof text !== 'string')) {
+          throw new BridgeFailure('fail:budget', '上下文预算准备结果无效，请检查预算与已用统计')
+        }
+        const start = input.messages.length - budget.messages.length
+        if (start < 0 || start !== budget.historyDropped || budget.messages.some((message, i) =>
+          message.role !== input.messages[start + i].role || message.content !== input.messages[start + i].content)) {
+          throw new BridgeFailure('fail:budget', '上下文预算裁剪结果须为逐字连续后缀')
+        }
+        const lastUser = input.messages.findLastIndex(message => message.role === 'user')
+        if (lastUser >= 0 && lastUser < start) throw new BridgeFailure('fail:budget', '上下文预算不足，最新用户消息须保留')
+        mapped = mapMessages(budget.messages, input.map)
+        if (!mapped.chat.length) throw new BridgeFailure('fail:budget', '上下文预算不足，没有可注入的历史')
+        systemPrompts = budget.systemPrompts
+        trace.dropped = mapped.dropped
+        trace.injected = mapped.chat.length
+        trace.historyDropped = budget.historyDropped
+        trace.budgetUsed = budget.budgetUsed
+        warnings.push(...(budget.warnings ?? []))
+        if (budget.historyDropped > 0) warnings.push('本轮因上下文上限省略了 ' + budget.historyDropped + ' 条更早的消息')
+        trace.steps.push('budget:prepared')
+        if (input.signal?.aborted) throw new Error('Budget preparation aborted')
+        budgetPending = false
+      }
 
       // 进入先清（M2）
       trace.clearedBefore = await resetSession(page)
@@ -453,8 +501,8 @@ export class BridgeDriver {
       // 🔴 顺序敏感：必须在 chat 注入**之前** —— ST 在 generate 时才组装 prompt，
       //    但 extensionPrompts 与 chat 是两份独立存储，先写哪份都不影响正确性；
       //    放在前面是为了让失败点更早暴露（人格进不去，后面的生成就没有意义）。
-      if (Array.isArray(input.systemPrompts) && input.systemPrompts.length > 0) {
-        const prompts = await injectSystemPrompts(page, input.systemPrompts)
+      if (Array.isArray(systemPrompts) && systemPrompts.length > 0) {
+        const prompts = await injectSystemPrompts(page, systemPrompts)
         trace.promptsWritten = prompts.written
         trace.steps.push('prompt:inject')
         if (!prompts.ok) {
@@ -466,13 +514,14 @@ export class BridgeDriver {
       trace.steps.push('inject')
       // metadata 行数要读盘才知道，这里只记「注入 + 回复」的下界，成功后由 persisted 覆盖。
       if (trace.disk) { trace.disk.injected = injection.length; trace.disk.expectedLines = injection.length + 1 }
+      trace.historySent = injection.length
       trace.historyInChat = injection.length
       trace.historyInPrompt = injection.inPrompt
-      if (!injection.equal || !injection.flagsEqual) {
+      if (!injection.equal || !injection.flagsEqual || injection.length !== mapped.chat.length) {
         throw new Error('历史注入自检失败：mes / is_user 不一致')
       }
 
-      const override = this.readOverride()
+      override ??= this.readOverride()
       if (override.warning) warnings.push(override.warning)
       if (override.active) {
         await page.eval(overrideExpr(override.text), 'override:inject')
@@ -537,7 +586,14 @@ export class BridgeDriver {
         if (typeof evidence.expectedLines === 'number') trace.disk.expectedLines = evidence.expectedLines
       }
       if (input.signal?.aborted) return { result: { status: 'aborted', content: '', raw: '', error: null, ms: trace.genMs, warnings }, trace }
-      const failure = this.failure(error, trace, stage)
+      if (stage === 'budget' && error instanceof BridgeFailure && error.budget) {
+        const evidence = error.budget
+        if (typeof evidence.budgetUsed === 'number' && Number.isFinite(evidence.budgetUsed)) trace.budgetUsed = evidence.budgetUsed
+        if (typeof evidence.historyDropped === 'number' && Number.isSafeInteger(evidence.historyDropped) && evidence.historyDropped >= 0) trace.historyDropped = evidence.historyDropped
+      }
+      const cause = stage === 'budget' && !(error instanceof BridgeFailure) && !isPageUnavailable(error)
+        ? new BridgeFailure('fail:budget', '上下文预算准备失败：' + messageOf(error)) : error
+      const failure = this.failure(cause, trace, stage)
       return { result: fail(failure.message, trace.genMs, warnings), trace }
     } finally {
       // 🔴 顺序敏感（蓝图 §1 第 4 行）：**先还原开关 → 再 reset 会话**。
@@ -566,7 +622,7 @@ export class BridgeDriver {
           if (isPageUnavailable(error)) this.failure(error, trace)
         }
       }
-      if (page) {
+      if (page && !budgetPending) {
         try {
           trace.clearedAfter = await resetSession(page)
           trace.steps.push('clear:after')
@@ -631,6 +687,9 @@ export class BridgeDriver {
         inChat: trace.historyInChat, inPrompt: trace.historyInPrompt,
         promptsWritten: trace.promptsWritten, cardName: config.cardName,
         disk: trace.disk,
+        historyDropped: trace.historyDropped, budgetUsed: trace.budgetUsed,
+        budgetTotal: trace.budgetTotal, stReserveTokens: trace.stReserveTokens,
+        budgetSource: trace.budgetSource, warnings: warnings.slice(),
         failures: trace.failures?.slice(),
         steps: trace.steps.slice()
       })
