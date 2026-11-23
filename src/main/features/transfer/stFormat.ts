@@ -77,6 +77,20 @@ function readName(value: unknown): string | null {
   return typeof value === 'string' ? value.trim() || null : null
 }
 
+const PLACEHOLDER_NAMES = new Set([
+  'unused', 'unknown', 'null', 'undefined', 'n/a', 'na', 'none', '-', '—', 'character', '角色', 'assistant',
+])
+
+/** 展示标题和角色候选共用；原始头行名保留在解析结果中供诊断。 */
+export function resolveStName(characterName: unknown, fallbackTitle?: string): string | null {
+  const usable = (value: unknown): string | null => {
+    const name = readName(value)
+    return name && !PLACEHOLDER_NAMES.has(name.toLowerCase()) ? name : null
+  }
+  return usable(characterName)
+    ?? usable(readName(fallbackTitle)?.replace(/(?:^| )- (?:\d{4}-\d{2}-\d{2}@.*|[^@]+@\d{1,2}(?:h|:).*)$/, ''))
+}
+
 export function parseSt(text: string, options: ParseTransferOptions = {}): ParsedTransfer {
   assertTransferByteLimit(text)
   const lines = nonBlankLines(text)
@@ -86,7 +100,7 @@ export function parseSt(text: string, options: ParseTransferOptions = {}): Parse
 
   const characterName = readName(header.character_name)
   const userName = readName(header.user_name)
-  const title = characterName ?? readName(options.fallbackTitle) ?? '导入的对话'
+  const title = resolveStName(characterName, options.fallbackTitle) ?? '导入的对话'
   const discardedFields: Record<string, number> = {}
   countDropped(header, discardedFields)
 

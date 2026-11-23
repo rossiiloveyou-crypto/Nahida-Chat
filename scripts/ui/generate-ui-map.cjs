@@ -252,7 +252,6 @@ const DEFAULT_VIEWS = [
   { hash: '/chat', name: 'import-dialog', transferPreview: true, click: ['[data-ui-target="导入对话"]', '[data-ui-target="选择导入文件"]'] },
   { hash: '/chat', name: 'story-import-dialog', transferPreview: true, click: ['[data-ui-target="新建对话"]', '[data-ui-target="故事"]', '[data-ui-target="新建故事"]', '[data-ui-target="从对话导入"]'] },
   { hash: '/chat', name: 'export-dialog', click: '[data-ui-target="对话更多"]' },
-  { hash: '/settings/backup', name: 'settings-backup' },
   { hash: '/settings/backup', name: 'settings-data' },
   { hash: '/settings/backup', name: 'settings-data-import', transferPreview: true, click: ['[data-ui-target="设置页导入对话"]', '[data-ui-target="选择导入文件"]'] }
 ]

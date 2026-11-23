@@ -21,7 +21,7 @@ import { isStoryId } from '../story/paths'
 import { createStory, getStory, storyStoreOf } from '../story/service'
 import { uniqueFileName } from './names'
 import { assertTransferMessageLimit, isRecord, serializeNc } from './ncFormat'
-import { parseTransfer, serializeSt } from './stFormat'
+import { parseTransfer, resolveStName, serializeSt } from './stFormat'
 
 const PREVIEW_TTL = 10 * 60 * 1000
 const MAX_PREVIEWS = 16
@@ -100,7 +100,9 @@ function makePreview(token: string, path: string, parsed: ParsedTransfer, finger
     message ? message.content.slice(0, 320).replace(/\s+/g, ' ').trim().slice(0, 160) : null
   const characters = promptStore.library().characters
   const normalize = (name: string): string => name.normalize('NFKC').trim().toLowerCase()
-  const wantedName = normalize(parsed.characterName ?? '')
+  const wantedName = normalize((parsed.format === 'st'
+    ? resolveStName(parsed.characterName, sourceTitle(path))
+    : parsed.characterName) ?? '')
   const wantedId = parsed.sessions[0]?.characterId
   const match = characters.find((character) => character.id === wantedId)
     ?? (wantedName ? characters.find((character) => normalize(character.name) === wantedName) : undefined)

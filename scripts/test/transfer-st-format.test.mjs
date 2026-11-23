@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { readFileSync, statSync } from 'node:fs'
+import { readFileSync, statSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { basename, join } from 'node:path'
+import { createRequire } from 'node:module'
 import test from 'node:test'
-import { bundleModule, p } from './qq-test-util.mjs'
+import { bundleModule, installElectronStub, p } from './qq-test-util.mjs'
 
 const { parseTransfer, sniffTransferFormat, MAX_TRANSFER_BYTES, MAX_TRANSFER_MESSAGES } = await bundleModule('transfer-st-format', [
   'export * from ' + JSON.stringify(p('src/main/features/transfer/stFormat.ts')),
@@ -74,6 +77,63 @@ test('admits 20,000 messages; rejects overflow and reports actual counts and UTF
   assert.throws(() => parseTransfer('界'.repeat(Math.floor(MAX_TRANSFER_BYTES / 3) + 1)), /67108866.*67108864/)
 })
 
+const placeholders = ['unused', 'UNUSED', ' unknown ', 'null', 'undefined', 'n/a', 'na', 'none', '-', '—', 'character', '角色', 'assistant']
+const namedStem = '示例角色？ 1.0'
+const datedStem = namedStem + ' - 2026-11-21@11h07m3'
+
+test('Y-01..04: title fallback strips ST suffixes and rejects every placeholder', () => {
+  for (const character_name of placeholders) {
+    const result = parseTransfer(JSON.stringify({ ...header, character_name }), { fallbackTitle: datedStem })
+    assert.equal(result.title, namedStem)
+    assert.equal(result.sessions[0].title, namedStem)
+    assert.equal(result.characterName, character_name.trim(), '原始名字仍保留供诊断')
+    assert.equal(parseTransfer(JSON.stringify({ ...header, character_name })).title, '导入的对话')
+  }
+  assert.equal(parseTransfer(JSON.stringify({ ...header, character_name: ' 示例角色 ' }), { fallbackTitle: datedStem }).title, '示例角色')
+  for (const fallbackTitle of [undefined, '', ' ', 'unused', ' - 2026-11-21@11h07m3']) {
+    assert.equal(parseTransfer('{"chat_metadata":{}}', { fallbackTitle }).title, '导入的对话')
+  }
+  assert.equal(parseTransfer('{"chat_metadata":{}}', { fallbackTitle: namedStem + ' - yesterday@11:07:03 imported' }).title, namedStem)
+  assert.equal(parseTransfer('{"chat_metadata":{}}', { fallbackTitle: '通信 - user@example.com' }).title, '通信 - user@example.com')
+})
+
+test('Y-04: real preview shares title normalization and never matches placeholder names', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nc-transfer-title-'))
+  try {
+    installElectronStub(dir)
+    const { dialog } = createRequire(import.meta.url)('electron')
+    let selected
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] })
+    const { transferService, promptStore } = await bundleModule('transfer-title-preview', [
+      'export { transferService } from ' + JSON.stringify(p('src/main/features/transfer/service.ts')),
+      'export { promptStore } from ' + JSON.stringify(p('src/main/features/prompt/promptStore.ts')),
+    ].join('\n'))
+    const originalLibrary = promptStore.library
+    promptStore.library = () => ({ characters: [
+      { id: 'placeholder', name: 'unused' }, { id: 'real', name: namedStem }, { id: 'header', name: '正常头行' },
+    ] })
+    try {
+      for (const character_name of placeholders) {
+        selected = join(dir, 'unused.jsonl')
+        writeFileSync(selected, JSON.stringify({ ...header, character_name }))
+        const preview = await transferService.pickImport()
+        assert.equal(preview.title, '导入的对话')
+        assert.equal(preview.characterMatched, false)
+      }
+      selected = join(dir, datedStem + '.jsonl')
+      writeFileSync(selected, JSON.stringify({ ...header, character_name: 'unused' }))
+      const matched = await transferService.pickImport()
+      assert.equal(matched.title, namedStem)
+      assert.equal(matched.characterMatched, true)
+      assert.equal(matched.suggestedCharacterId, 'real')
+      writeFileSync(selected, JSON.stringify({ ...header, character_name: '正常头行' }))
+      const preferred = await transferService.pickImport()
+      assert.equal(preferred.title, '正常头行')
+      assert.equal(preferred.suggestedCharacterId, 'header')
+    } finally { promptStore.library = originalLibrary }
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
 // Real user data is read solely for aggregate checks, with no text or file-name output.
 const sample = process.env.NC_TRANSFER_ST_SAMPLE
 if (sample) {
@@ -83,7 +143,8 @@ if (sample) {
     const text = bytes.toString('utf8')
     const sha256 = buffer => createHash('sha256').update(buffer).digest('hex')
     const sha256Before = sha256(bytes)
-    const parsed = parseTransfer(text, { mtimeMs })
+    const fallbackTitle = basename(sample).replace(/\.jsonl$/i, '')
+    const parsed = parseTransfer(text, { mtimeMs, fallbackTitle })
     const sha256After = sha256(readFileSync(sample))
     assert.equal(sha256After, sha256Before)
     const counts = { user: 0, assistant: 0, system: 0, narration: 0 }
@@ -92,6 +153,8 @@ if (sample) {
     assert.equal(parsed.skippedLines, 0)
     assert.equal(messages.every((m, i) => !i || m.createdAt >= messages[i - 1].createdAt), true)
     if (process.env.NC_TRANSFER_ST_EXPECT_53 === '1') {
+      assert.equal(parsed.title, fallbackTitle.replace(/ - \d{4}-\d{2}-\d{2}@.*$/, ''))
+      assert.notEqual(parsed.title.toLowerCase(), 'unused')
       assert.deepEqual(counts, { user: 26, assistant: 27, system: 0, narration: 0 })
     }
     console.log('Real ST sample:', JSON.stringify({
