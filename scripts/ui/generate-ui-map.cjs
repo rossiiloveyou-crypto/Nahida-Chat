@@ -160,6 +160,18 @@ function resolveMainEntry() {
   return found
 }
 
+// Q3: optional isolated preset fixture, resolved through the real bridge config and regex IPC.
+const q3PresetFixture = process.argv.includes('--q3-preset-fixture')
+if (q3PresetFixture) {
+  const stRoot = path.join(userData, 'fixture-st')
+  const stDir = path.join(stRoot, 'data-nc', 'default-user')
+  fs.mkdirSync(path.join(stDir, 'OpenAI Settings'), { recursive: true })
+  fs.mkdirSync(path.join(userData, 'nc-bridge'), { recursive: true })
+  fs.writeFileSync(path.join(userData, 'nc-bridge', 'config.json'), JSON.stringify({ stRoot }))
+  fs.writeFileSync(path.join(stDir, 'settings.json'), JSON.stringify({ oai_settings: { preset_settings_openai: 'q3-fixture' } }))
+  const fixture = JSON.parse(fs.readFileSync(path.join(projectRoot, 'scripts', 'fixtures', 'st-settings.json'), 'utf8'))
+  fs.writeFileSync(path.join(stDir, 'OpenAI Settings', 'q3-fixture.json'), JSON.stringify({ regex_scripts: fixture.oai_settings.extensions.regex_scripts }))
+}
 require(resolveMainEntry())
 
 /**
@@ -207,7 +219,11 @@ const DEFAULT_VIEWS = [
   { hash: '/settings/prompts', name: 'worldbook-editor', click: '[data-ui-target="世界书编辑器入口"]' },
   // P7：故事区三视图（主界面双分区 / 抽屉展开 / 设置·故事区）
   { hash: '/chat', name: 'chat-stories', seedStory: true, click: ['[data-ui-target="新建对话"]', '[data-ui-target="故事"]'] },
-  { hash: '/chat', name: 'chat-story-drawer', seedStory: true, click: ['[data-ui-target="新建对话"]', '[data-ui-target="故事"]', '[data-ui-target="故事卡片 时钟之谜"]'] },
+  ...(q3PresetFixture ? [{ hash: '/chat', name: 'chat-story-preset', seedStory: true, click: ['[data-ui-target="新建对话"]', '[data-ui-target="故事"]', '[data-ui-target="故事卡片 时钟之谜"]'], scrollSelector: '.message-list', scrollY: 0 }] : []),
+  { hash: '/chat', name: 'chat-story-drawer', seedStory: true, click: ['[data-ui-target="新建对话"]', '[data-ui-target="故事"]', '[data-ui-target="故事卡片 时钟之谜"]', '[data-ui-target="打开分支抽屉"]'] },
+  // Q1: explicit long-history views expose the new control and absolute message numbering.
+  { hash: '/chat', name: 'chat-pagination', pagination: 10 },
+  { hash: '/chat', name: 'chat-pagination-expanded', pagination: 20 },
   { hash: '/settings/stories', name: 'settings-stories', seedStory: true },
   // P8：新建故事区表单（含「背景与剧本设定」与「开场消息」两栏）
   { hash: '/chat', name: 'new-story-dialog', click: ['[data-ui-target="新建对话"]', '[data-ui-target="故事"]', '[data-ui-target="新建故事"]'] },
@@ -462,7 +478,7 @@ app.whenReady().then(async () => {
               title: '时钟之谜',
               characterId: 'nahida',
               synopsis: '雨夜的小镇里，钟楼停了。她和我一起去找停摆的原因。',
-              openingText: '雨点敲在钟楼的铜面上，像是有人在数数。'
+              openingText: ${JSON.stringify(q3PresetFixture ? '<think_nya>这是隔离预设的折叠内容。</think_nya>雨点敲在钟楼的铜面上。' : '雨点敲在钟楼的铜面上，像是有人在数数。')}
             })
             const storyId = created.meta.storyId
             const root = await window.nahida.story.session(storyId)
@@ -712,6 +728,49 @@ app.whenReady().then(async () => {
       `)
     }
 
+    if (view.pagination) {
+      await win.webContents.executeJavaScript(`(async () => {
+        let session = (await window.nahida.chat.listSessions()).find(item => item.title === '分页定位样本')
+        if (!session) {
+          session = await window.nahida.chat.createSession({ mode: 'chat' })
+          await window.nahida.chat.updateSession(session.id, { title: '分页定位样本', preSend: true })
+          for (let index = 1; index <= 122; index++) {
+            await window.nahida.chat.queueMessage({ sessionId: session.id, content: '第 ' + index + ' 条历史消息：分页后仍使用完整会话的绝对序号。' })
+          }
+          // The first queued message auto-titles a session, so restore the fixture title last.
+          await window.nahida.chat.updateSession(session.id, { title: '分页定位样本' })
+        }
+        const snapshot = (await window.nahida.chat.listSessions()).find(item => item.id === session.id)
+        if (snapshot?.messages.length !== 122) throw new Error('Q1 fixture must contain exactly 122 messages')
+      })()`)
+      await win.loadFile(indexHtml, { hash: view.hash, query: { grid: '1', v: String(viewIndex), pagination: String(Date.now()) } })
+      const checked = await win.webContents.executeJavaScript(`(async () => {
+        const wait = async predicate => {
+          const deadline = Date.now() + 10000
+          while (!predicate()) {
+            if (Date.now() > deadline) throw new Error('Q1 pagination view did not settle')
+            await new Promise(requestAnimationFrame)
+          }
+        }
+        await wait(() => document.querySelectorAll('.message-list [data-message-id]').length === 10)
+        const list = document.querySelector('.message-list')
+        list.scrollTop = 0
+        if (${JSON.stringify(view.pagination)} === 20) {
+          document.querySelector('[data-ui-target="加载更多消息"]').click()
+          await wait(() => document.querySelectorAll('.message-list [data-message-id]').length === 20)
+          list.scrollTop = 0
+        }
+        await new Promise(requestAnimationFrame)
+        const button = document.querySelector('[data-ui-target="加载更多消息"]')
+        const box = button.getBoundingClientRect()
+        const bounds = list.getBoundingClientRect()
+        if (box.top < bounds.top || box.bottom > bounds.bottom) throw new Error('Q1 load-more control outside visible list')
+        window.dispatchEvent(new Event('scroll'))
+        return { count: document.querySelectorAll('.message-list [data-message-id]').length, label: button.textContent, top: box.top, bottom: box.bottom }
+      })()`)
+      console.log('PASS Q1 visible pagination ' + view.name + ' ' + JSON.stringify(checked))
+    }
+
     if (view.transferPreview) {
       const checked = await win.webContents.executeJavaScript(`(async () => {
         const find = (label) => document.querySelector('[data-ui-target="' + label + '"]')
@@ -789,6 +848,10 @@ app.whenReady().then(async () => {
       )
       await new Promise((resolve) => setTimeout(resolve, 250))
     }
+    if (view.name === 'chat-story-preset') {
+      await win.webContents.executeJavaScript("document.querySelector('details.bubble-card')?.scrollIntoView({block:'center'}); window.dispatchEvent(new Event('scroll'))")
+      await new Promise(resolve => setTimeout(resolve, 500))
+    }
     // 截图前再清一次 hover：上一张图之后可能有人动过鼠标，或路由重排让指针落到别的元素上
     clearHover()
     await new Promise((resolve) => setTimeout(resolve, 120))
@@ -865,12 +928,19 @@ app.whenReady().then(async () => {
       const required = {
         'chat-empty': ['Chat', 'Agent', '故事'],
         'chat-stories': ['故事', '新建故事'],
+        'chat-story-drawer': ['跳到消息 10', '从此处分支出新剧情 10'],
         'new-story-dialog': ['故事画像输入'],
         'settings-memory': ['对话摘要参数'],
         'settings-story-recall': ['故事召回开关', '故事召回轮数', '故事召回预算', '故事召回阈值', '故事关键词权重', '故事补查深度', '保存故事召回设置'],
         'settings-memory-facts': ['检索参数', '试召回输入', '按人列表'],
         'settings-qq-threshold': ['门槛组']
       }[view.name] || []
+      if (view.name === 'chat-story-drawer') {
+        const jumps = geometry.targets.filter(item => /^跳到消息 \d+$/.test(item.label))
+        const derives = geometry.targets.filter(item => /^从此处分支出新剧情 \d+$/.test(item.label))
+        assert.equal(jumps.length, 10, '故事样本应有10个时间轴跳转按钮')
+        assert.equal(jumps.length, derives.length, '每行时间轴增加一个跳转按钮')
+      }
       for (const label of required) {
         const target = geometry.targets.find(item => item.label === label)
         assert.ok(target && target.width > 0 && target.height > 0, label + ' 不可见')

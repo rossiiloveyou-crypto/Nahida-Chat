@@ -210,6 +210,7 @@ export interface NahidaApi {
    */
   regex: {
     listScripts: (request?: { stDir?: string }) => Promise<StRegexScript[]>
+    scriptsState: (request?: { stDir?: string; refresh?: boolean }) => Promise<import('./types').DisplayScriptsState>
   }
   /**
    * ST 桥接：健康度、进程与日志。生成仍只从 chatService 的路由发起。

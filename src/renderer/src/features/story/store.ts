@@ -63,7 +63,6 @@ export const useStoryStore = create<StoryUiStore>()((set, get) => ({
     try {
       const session = await window.nahida.story.session(storyId)
       if (session) useChatStore.getState().adoptStorySession(session)
-      set({ drawerOpen: true })
       await get().refreshBranches()
     } catch (error) {
       set({ error: error instanceof Error ? error.message : String(error) })

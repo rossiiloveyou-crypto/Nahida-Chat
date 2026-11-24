@@ -418,6 +418,24 @@ select {
    ---
    为什么不是 100%：正文行长超过约 90 个汉字后，眼睛回扫会明显吃力。
    1180px 配 15px 字号约 78 个汉字/行，仍在上限内。 */
+/* Pagination owns prepend compensation; disable the browser's competing scroll anchor. */
+.message-list--paged { overflow-anchor: none; }
+/* Bottom-align short histories so prepending also preserves anchors before overflow exists. */
+.message-list--paged .message-list__inner { min-height: 100%; justify-content: flex-end; }
+
+.message-list__more {
+  align-self: center;
+  flex-shrink: 0;
+  padding: 7px 16px;
+  border: 1px solid var(--nc-border);
+  border-radius: var(--nc-radius-pill);
+  background: var(--nc-surface);
+  color: var(--nc-text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+.message-list__more:hover { background: var(--nc-accent-soft); }
+
 .message-list__inner {
   max-width: min(1180px, 100%);
   margin: 0 auto;
@@ -4604,6 +4622,30 @@ input[type='range'] {
   flex: 0 0 auto;
   padding: 3px 8px;
   font-size: 11px;
+}
+
+.story-timeline__item .story-timeline__jump {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: var(--nc-text-secondary);
+  text-align: left;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.story-timeline__item .story-timeline__jump:hover,
+.story-timeline__item .story-timeline__jump:focus-visible {
+  color: var(--nc-accent);
+  background: var(--nc-fill-hover);
+}
+
+.story-timeline__hint {
+  margin: 4px 0;
+  color: var(--nc-text-secondary);
+  font-size: 12px;
 }
 
 /* 检索命中高亮（2 秒后 ChatPage 清除 focus） */

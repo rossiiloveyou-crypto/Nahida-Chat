@@ -52,6 +52,7 @@ export const IPC = {
   // 对话摘要（窗口外对话的滚动压缩）。与上面的 memory:* 是两套：那个是 RAG 事实库
   // 显示层正则（P3）：只读 ST 的 regex_scripts 清单。渲染层拿它做「显示层」，绝不参与请求组装。
   regexListScripts: 'regex:list-scripts',
+  regexScriptsState: 'regex:scripts-state',
 
   summaryStatus: 'summary:status',
   summaryForget: 'summary:forget',

@@ -17,8 +17,24 @@
  */
 import { REGEX_PLACEMENT } from '@shared/regex'
 import type { StRegexScript } from '@shared/regex'
-import { getRegexedString } from '@shared/regexEngine'
-import { renderMarkdown } from './render'
+import { getRegexedString, HOST_FALLBACK_DEBUG } from '@shared/regexEngine'
+import { renderMarkdown, escapeHtml } from './render'
+import { splitFoldedTags, preserveFoldedTagLiterals } from './foldedTags'
+
+let configuredTags: string[] = []
+export function setDisplayFoldedTags(tags: string[]): void { configuredTags = tags }
+
+function renderFallback(text: string, purify?: PurifierLike, dialogue = true, tags = configuredTags, scripts: StRegexScript[] = [], depth?: number): string {
+  return splitFoldedTags(text, tags, raw => {
+    let host = false
+    const result = getRegexedString(raw, REGEX_PLACEMENT.AI_OUTPUT, { scripts, isMarkdown: true, depth,
+      onDebug: message => { if (message.includes(HOST_FALLBACK_DEBUG)) host = true }
+    })
+    return host || result !== raw
+  }).map(part => part.tag
+    ? '<details class="bubble-card"><summary>' + escapeHtml(part.tag) + '</summary>' + renderMarkdown(part.text, purify, dialogue ? wrapQuotes : undefined) + '</details>'
+    : renderMarkdown(preserveFoldedTagLiterals(part.text, tags), purify, dialogue ? wrapQuotes : undefined)).join('')
+}
 import type { PurifierLike } from './render'
 import { structureOf } from './structure'
 import { wrapQuotes } from './quotes'
@@ -27,11 +43,10 @@ import type { CardData } from './structure'
 export type DisplayToken = CardData | { kind: 'text'; html: string; offset: number }
 
 /** Structured UI entry; displayOf retains the P3 string contract. */
-export function displayPartsOf(mes: string, scripts: StRegexScript[] = [], depth?: number, purify?: PurifierLike): DisplayToken[] {
+export function displayPartsOf(mes: string, scripts: StRegexScript[] = [], depth?: number, purify?: PurifierLike, tags = configuredTags): DisplayToken[] {
   return structureOf(mes, scripts, depth).map(part => part.kind === 'card' ? part : {
-    kind: 'text', offset: part.offset, html: renderMarkdown(
-      applyDisplayScripts(part.text, scripts, depth),
-      purify, wrapQuotes
+    kind: 'text', offset: part.offset, html: renderFallback(
+      applyDisplayScripts(part.text, scripts, depth), purify, true, tags, scripts, depth
     )
   })
 }
@@ -80,7 +95,7 @@ export function displayOf(
   const text = applyDisplayScripts(mes, scripts, depth)
   if (!text) return ''
   try {
-    return renderMarkdown(text, purify, dialogue ? wrapQuotes : undefined)
+    return renderFallback(text, purify, dialogue, configuredTags, scripts ?? [], depth)
   } catch {
     return ''
   }

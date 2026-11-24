@@ -41,7 +41,11 @@ export function StoryDrawer({ storyId, title }: StoryDrawerProps) {
   const activeBranch = activeBranchOf(branches)
   const [importOpen, setImportOpen] = useState(false)
   const [query, setQuery] = useState('')
+  const [jumpHint, setJumpHint] = useState<string | null>(null)
   const listRef = useRef<HTMLOListElement | null>(null)
+  const jumpRequest = useRef(0)
+
+  useEffect(() => () => { jumpRequest.current += 1 }, [storyId, drawerOpen])
 
   /**
    * 时间轴是个「上下文窗口」：默认贴在**最新一条**，往上滚看历史。
@@ -64,11 +68,36 @@ export function StoryDrawer({ storyId, title }: StoryDrawerProps) {
     }
   }, [drawerOpen, clearSearch])
 
+  useEffect(() => {
+    setJumpHint(null)
+  }, [storyId, activeBranch?.branchId, drawerOpen])
+
   const openHit = async (branchId: string, messageId: string): Promise<void> => {
-    if (branchId !== (activeBranch?.branchId ?? '')) {
-      await switchTo(branchId)
+    const request = ++jumpRequest.current
+    setJumpHint(null)
+    try {
+      // 先核对最新会话：过期命中或已删消息不得切分支、扩窗或改焦点。
+      const target = await window.nahida.story.session(storyId, branchId)
+      if (request !== jumpRequest.current || useStoryStore.getState().currentStoryId !== storyId) return
+      if (!target || !target.messages.some((message) => message.id === messageId)) {
+        setJumpHint('这条消息已不存在，请刷新分支或重新检索。')
+        return
+      }
+      // 以真实视口为准，分支列表的 isActive 可能仍是上一帧。
+      if (useChatStore.getState().activeId !== branchId) await switchTo(branchId)
+      if (request !== jumpRequest.current || useStoryStore.getState().currentStoryId !== storyId) return
+      const chat = useChatStore.getState()
+      const session = chat.sessions.find((item) => item.id === chat.activeId)
+      if (session?.id !== branchId || !session.messages.some((message) => message.id === messageId)) {
+        setJumpHint('这条消息暂时未能定位，请刷新分支后重试。')
+        return
+      }
+      setFocus(messageId)
+    } catch (error) {
+      if (request === jumpRequest.current && useStoryStore.getState().currentStoryId === storyId) {
+        setJumpHint('定位消息失败：' + (error instanceof Error ? error.message : String(error)))
+      }
     }
-    setFocus(messageId)
   }
 
   const removeWithConfirm = (branch: StoryBranchItem): void => {
@@ -78,6 +107,7 @@ export function StoryDrawer({ storyId, title }: StoryDrawerProps) {
     const text =
       '这条分支有 ' + String(branch.messageCount) + ' 条消息，删除后不可恢复。' + tail
     if (!window.confirm(text)) return
+    jumpRequest.current += 1
     void removeBranch(branch.branchId)
   }
 
@@ -114,6 +144,7 @@ export function StoryDrawer({ storyId, title }: StoryDrawerProps) {
       <button type="button" data-ui-target="导入新分支" disabled={busy} onClick={() => setImportOpen(true)}>导入为新分支</button>
       {importOpen && <ImportDialog storyId={storyId} onClose={() => setImportOpen(false)} />}
       {error && <p className="story-drawer__error">{error}</p>}
+      {jumpHint && <p className="story-timeline__hint" role="status">{jumpHint}</p>}
 
       <div className="story-search" data-ui-region="E 故事检索">
         <form
@@ -168,7 +199,7 @@ export function StoryDrawer({ storyId, title }: StoryDrawerProps) {
               branch={branch}
               busy={busy}
               canRemove={branches.length > 1}
-              onSwitch={(branchId) => void switchTo(branchId)}
+              onSwitch={(branchId) => { jumpRequest.current += 1; void switchTo(branchId) }}
               onRemove={removeWithConfirm}
             />
           ))}
@@ -186,16 +217,23 @@ export function StoryDrawer({ storyId, title }: StoryDrawerProps) {
         <ol className="story-timeline__list" ref={listRef}>
           {messages.map((message, index) => (
             <li key={message.id} className="story-timeline__item">
-              <span className="story-timeline__text">
+              <button
+                type="button"
+                className="story-timeline__text story-timeline__jump"
+                data-ui-target={'跳到消息 ' + String(index + 1)}
+                disabled={busy}
+                onClick={() => void openHit(activeBranch?.branchId ?? '', message.id)}
+                title="跳到这条消息"
+              >
                 {index + 1}.{' '}
                 {message.role === 'narration' ? '旁白' : message.role === 'user' ? '我' : '她'} ·{' '}
                 {message.content ? message.content.slice(0, 40) : '（生成中）'}
-              </span>
+              </button>
               <button
                 type="button"
                 data-ui-target={'从此处分支出新剧情 ' + String(index + 1)}
                 disabled={busy}
-                onClick={() => void deriveFrom(message.id)}
+                onClick={() => { jumpRequest.current += 1; void deriveFrom(message.id) }}
                 title="从这条消息之后开一条新分支"
               >
                 由此分支

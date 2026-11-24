@@ -783,13 +783,19 @@ const DEFAULT_BRIDGE_SETTINGS: BridgeSettings = { enabled: false }
  * 🔴 两个调用点缺一不可（同 normalizeAppearance 的注释）：load 的合并路径（老配置 undefined）
  *    与 save 的归一化（用户写了非法值）。只做一处，前者会让老用户读到 undefined 而崩在
  *    `settings.bridge.enabled` 上，后者会让手改的字符串永久写坏。
- * 🔴 只归一化 enabled 一个字段：连接参数（stUrl / stDataDir / 超时）属于部署事实，
+ * enabled 与 foldedTags 是用户偏好；连接参数（stUrl / stDataDir / 超时）属于部署事实，
  *    住在 shared/bridge.ts 的 BRIDGE_DEFAULT_CONFIG，不由 Settings 承载（理由见 BridgeSettings 注释）。
  *    这里多补一个字段，就等于把部署值复制成第二份载体，改一处另一处不动时没有任何东西会报错。
  */
 function normalizeBridge(input: BridgeSettings | undefined): BridgeSettings {
   return {
-    enabled: typeof input?.enabled === 'boolean' ? input.enabled : DEFAULT_BRIDGE_SETTINGS.enabled
+    enabled: typeof input?.enabled === 'boolean' ? input.enabled : DEFAULT_BRIDGE_SETTINGS.enabled,
+    // foldedTags 是用户偏好；目录等部署事实仍只属于 BridgeConfig。
+    foldedTags: [...new Set((Array.isArray(input?.foldedTags) ? input.foldedTags : [])
+      .filter((tag): tag is string => typeof tag === 'string')
+      .flatMap(tag => tag.split(/[,，\r\n]+/))
+      .map(tag => tag.replace(/[<>/]/g, '').trim().toLowerCase())
+      .filter(tag => /^[a-z][a-z0-9_-]*$/.test(tag)))].slice(0, 20)
   }
 }
 

@@ -1,0 +1,128 @@
+{
+  "oai_settings": {
+    "extensions": {
+      "regex_scripts": [
+        {
+          "id": "q25-card-host",
+          "scriptName": "fixture structured card host",
+          "findRegex": "/<([a-z_]+)>[\\s\\S]*?<\\/\\1>/g",
+          "replaceString": "<html><body><details><summary>Card</summary>$&</details></body></html>",
+          "placement": [
+            2
+          ],
+          "markdownOnly": true
+        },
+        {
+          "id": "q25-unused-1",
+          "scriptName": "fixture unmatched 1",
+          "findRegex": "/Q25_UNUSED_SENTINEL_1/g",
+          "replaceString": "fixture-unmatched",
+          "placement": [
+            2
+          ],
+          "markdownOnly": true
+        },
+        {
+          "id": "q25-unused-2",
+          "scriptName": "fixture unmatched 2",
+          "findRegex": "/Q25_UNUSED_SENTINEL_2/g",
+          "replaceString": "fixture-unmatched",
+          "placement": [
+            2
+          ],
+          "markdownOnly": true
+        },
+        {
+          "id": "q25-unused-3",
+          "scriptName": "fixture unmatched 3",
+          "findRegex": "/Q25_UNUSED_SENTINEL_3/g",
+          "replaceString": "fixture-unmatched",
+          "placement": [
+            2
+          ],
+          "markdownOnly": true
+        },
+        {
+          "id": "q25-unused-4",
+          "scriptName": "fixture unmatched 4",
+          "findRegex": "/Q25_UNUSED_SENTINEL_4/g",
+          "replaceString": "fixture-unmatched",
+          "placement": [
+            2
+          ],
+          "markdownOnly": true
+        },
+        {
+          "id": "q25-unused-5",
+          "scriptName": "fixture unmatched 5",
+          "findRegex": "/Q25_UNUSED_SENTINEL_5/g",
+          "replaceString": "fixture-unmatched",
+          "placement": [
+            2
+          ],
+          "markdownOnly": true
+        },
+        {
+          "id": "q25-unused-6",
+          "scriptName": "fixture unmatched 6",
+          "findRegex": "/Q25_UNUSED_SENTINEL_6/g",
+          "replaceString": "fixture-unmatched",
+          "placement": [
+            2
+          ],
+          "markdownOnly": true
+        },
+        {
+          "id": "q25-unused-7",
+          "scriptName": "fixture unmatched 7",
+          "findRegex": "/Q25_UNUSED_SENTINEL_7/g",
+          "replaceString": "fixture-unmatched",
+          "placement": [
+            2
+          ],
+          "markdownOnly": true
+        },
+        {
+          "id": "q25-unused-8",
+          "scriptName": "fixture unmatched 8",
+          "findRegex": "/Q25_UNUSED_SENTINEL_8/g",
+          "replaceString": "fixture-unmatched",
+          "placement": [
+            2
+          ],
+          "markdownOnly": true
+        },
+        {
+          "id": "q25-unused-9",
+          "scriptName": "fixture unmatched 9",
+          "findRegex": "/Q25_UNUSED_SENTINEL_9/g",
+          "replaceString": "fixture-unmatched",
+          "placement": [
+            2
+          ],
+          "markdownOnly": true
+        },
+        {
+          "id": "q25-unused-10",
+          "scriptName": "fixture unmatched 10",
+          "findRegex": "/Q25_UNUSED_SENTINEL_10/g",
+          "replaceString": "fixture-unmatched",
+          "placement": [
+            2
+          ],
+          "markdownOnly": true
+        },
+        {
+          "id": "q25-unused-11",
+          "scriptName": "fixture unmatched 11",
+          "findRegex": "/Q25_UNUSED_SENTINEL_11/g",
+          "replaceString": "fixture-unmatched",
+          "placement": [
+            2
+          ],
+          "markdownOnly": true
+        }
+      ]
+    }
+  }
+}

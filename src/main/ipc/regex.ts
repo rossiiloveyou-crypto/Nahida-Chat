@@ -1,30 +1,39 @@
 import { ipcMain } from 'electron'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { IPC } from '@shared/ipc'
-import type { StRegexScript } from '@shared/regex'
-import { readScripts, resolveStDataDir } from '../features/regex/scripts'
+import type { DisplayScriptsState } from '@shared/types'
+import { readScripts, resolveStDataDir, mergeDisplayScripts, invalidateScriptsCache } from '../features/regex/scripts'
+import { readPresetRegexScripts, readCurrentPresetName, isPresetName, invalidatePresetCache } from '../features/bridge/presetRegex'
+import { bridgeHost } from '../features/bridge/host'
 
-/** 显示层要脚本清单时带的可选目录（P4 会把它接到桥接设置上；这里缺省即部署默认值）。 */
-export interface RegexScriptsRequest {
-  stDir?: string
+export interface RegexScriptsRequest { stDir?: string; refresh?: boolean }
+
+/** 只读 host 的派生配置；不创建第二份目录设置。 */
+export function readDisplayScriptsState(request?: RegexScriptsRequest): DisplayScriptsState {
+  let hostDir = ''
+  try { hostDir = bridgeHost.health().config.stDataDir } catch { /* 下方读取保留明确诊断 */ }
+  const stDir = resolveStDataDir(request?.stDir?.trim() || hostDir)
+  const result: DisplayScriptsState = { scripts: [], stDir, preset: '', warning: null }
+  try {
+    if (request?.refresh) { invalidatePresetCache(); invalidateScriptsCache(stDir) }
+    JSON.parse(readFileSync(join(stDir, 'settings.json'), 'utf8'))
+    result.preset = readCurrentPresetName(stDir)
+    const global = readScripts(stDir)
+    if (result.preset) {
+      if (!isPresetName(result.preset)) throw new Error('preset name')
+      JSON.parse(readFileSync(join(stDir, 'OpenAI Settings', result.preset + '.json'), 'utf8'))
+    }
+    result.scripts = mergeDisplayScripts(global, readPresetRegexScripts(stDir))
+    if (!result.preset) result.warning = 'ST 尚未选择 OpenAI 预设；当前仅使用全局显示脚本。'
+  } catch {
+    result.warning = 'ST 显示脚本读取失败，请检查 ST 数据目录、当前预设文件及 JSON 格式。'
+    console.warn('[regex]', result.warning, stDir)
+  }
+  return result
 }
 
-/**
- * 显示层正则（P3 §1 第 3 步）：**一条只读通道**。
- *
- * 三条硬规矩：
- *  1. 读盘失败（目录不在 / JSON 坏 / 权限）→ 返回空数组 + 一条 warn，**绝不抛**：
- *     显示层坏掉不能连累聊天，退化成「不做正则」是可接受的降级；
- *  2. 不做任何缓存逻辑：缓存真源在 features/regex/scripts.ts（按 mtime+size 失效）；
- *  3. 不做过滤（`markdownOnly` 也不筛）：通道语义归引擎，IPC 只搬数据，否则两处判据迟早分叉。
- */
 export function registerRegexIpcHandlers(): void {
-  ipcMain.handle(IPC.regexListScripts, (_event, request?: RegexScriptsRequest): StRegexScript[] => {
-    const stDir = resolveStDataDir(request && typeof request === 'object' ? request.stDir : undefined)
-    try {
-      return readScripts(stDir)
-    } catch (error) {
-      console.warn('[regex] 读取 ST 正则脚本失败，显示层按「不做正则」运行：', error)
-      return []
-    }
-  })
+  ipcMain.handle(IPC.regexListScripts, (_event, request?: RegexScriptsRequest) => readDisplayScriptsState(request).scripts)
+  ipcMain.handle(IPC.regexScriptsState, (_event, request?: RegexScriptsRequest) => readDisplayScriptsState(request))
 }

@@ -214,3 +214,18 @@ export function invalidateScriptsCache(stDir?: string): void {
   }
   cache.delete(join(stDir, 'settings.json'))
 }
+
+/** 显示层合并：保留全局顺序，同 id 原位以当前预设覆盖；无 id 行不合并。 */
+export function mergeDisplayScripts(globalScripts: StRegexScript[], presetScripts: StRegexScript[]): StRegexScript[] {
+  const out: StRegexScript[] = []
+  const positions = new Map<string, number>()
+  for (const script of [...globalScripts, ...presetScripts]) {
+    const at = script.id ? positions.get(script.id) : undefined
+    if (at !== undefined) out[at] = script
+    else {
+      if (script.id) positions.set(script.id, out.length)
+      out.push(script)
+    }
+  }
+  return out
+}

@@ -5,6 +5,35 @@
 
 ## 需求 → 位置 → 代码
 
+### 酒馆显示脚本与兜底折叠（桥接重构1 Q3，2026-11-25）
+
+- `settings-bridge-lower` 图 G4–Q8「消息显示与折叠」：显示预设、脚本条数和读取错误；刷新按钮使已挂载气泡同步更新。
+- 同区输入每行/逗号分隔的标签，最多20个；保存后全站显示生效。预设先执行，兜底仅处理余下成对标签，原稿和复制行为不变。
+- 新折叠区未添加定位标注，既有卡片标注保留。重拍 `chat-story-drawer` 和三张 `settings-bridge*`，通过P4.9。负向夹具没有配置ST时，红色读取提示是预期状态；最终正向图显示q3-fixture和12条。另补 `chat-story-preset`：F3–H3/元素12是通过真实IPC渲染的think_nya折叠卡。
+- 实现：`BridgeSection.tsx` → `useDisplayScripts.ts` / `ipc/regex.ts`；兜底装配 `display.ts` / `foldedTags.ts`。
+
+
+### 分支面板与时间轴跳转（桥接重构1 Q2，2026-11-24）
+
+| 需求 | 图上位置 | 代码 |
+| --- | --- | --- |
+| 进入故事只显示「分支」把手，同一故事内保持手动状态 | `StoryDrawer` 的「打开分支抽屉」；本轮截图显式点击把手后拍展开态 | `features/story/store.ts` 的 openStory / closeStory / toggleDrawer |
+| 点击绝对序号与摘要跳到消息，高亮约两秒 | `chat-story-drawer` 元素 **69–87（奇数）「跳到消息 1–10」**；最新第10条在图右下时间轴内 | `StoryDrawer.tsx` openHit → 既有 setFocus / MessageList |
+| 目标已删或读取失败有灰字提示 | 抽屉中的临时状态行（仅错误时出现） | `StoryDrawer.tsx` jumpHint；跳转前读最新会话校验 id |
+
+仅重拍分支面板，其余42张坐标和两种PNG哈希保持不变。新增10个跳转按钮，时间轴自身为+10；冻结地图总数86，本次95，整体净增9，差1属于本次独立播种的视图夹具差异，不用整体元素净增量代替新增控件逐项断言。每条由此分支按钮继续保留。
+
+### 消息分页与渲染性能（桥接重构1 Q1，2026-11-24）
+
+| 需求 | 图上位置 | 代码 |
+| --- | --- | --- |
+| 默认最近10条，顶部按10条展开 | `chat-pagination` 元素 **11「加载更多消息」**（剩余112条）；`chat-pagination-expanded` 同名元素（剩余102条） | `features/chat/components/MessageList.tsx`：visible / loadMore / useLayoutEffect |
+| 工具条保持完整会话绝对序号 | 两图分别从「消息操作113」和「消息操作103」开始；DOM尾条仍为「消息操作122」 | `MessageBubble` 的 absoluteIndex，不使用可见切片序号 |
+| 单条流式更新只重画尾气泡 | 计数探针与几何实测见任务 `baseline/q1-pagination-evidence.json`；截图只证明控件外观与定位 | `MessageBubble = memo(...)` 与稳定回调转发 |
+
+重拍全部9张既有 chat-*，新增2张分页顶部图，其他32张沿用旧坐标；`UI_MAP.md` 由脚本重生。新增视图除通用P4.9检查外，还强制断言消息数量、按钮文案及按钮处于真实滚动容器可见范围。样本使用隔离userData和真实chat.queueMessage IPC，不读写用户会话。
+
+
 ### 桥接上下文预算（SUP-05）
 
 `settings-bridge-status` 的「桥接预算统计 / 桥接预算回落 / 桥接历史省略」定位到 `BridgeSection.tsx` 的运行状态区。只读展示本轮预算来源、总预算、含 ST 预留的已用量、ST 预留、省略历史条数；不增加设置写入入口。暂无预算轮次时显示占位而非假定容量。
@@ -133,6 +162,10 @@
 | 不是最后一条时说明为什么不能重试 | 同一行显示「后面已经有新消息了，只能重试最后一轮」，只留「删除这条」 | `MessageList.tsx` |
 | 重试复用那条回复、不重复用户原话 | 点重试后 user 气泡仍是 1 个、消息总数仍是 2 条 | `main/features/chat/chatService.ts`（`restartTurn`） |
 ## 变更记录
+
+### 修订 35（2026-11-24）· Q2 分支时间轴
+
+分支抽屉默认收起；时间轴序号与摘要变为带可定位标注的按钮，复用既有焦点通道。截图夹具显式打开抽屉，新增第10条跳转/由此分支控件的可见性与边界自检。只重拍 chat-story-drawer。
 
 ### 修订 34（2026-11-24）· 新增内置角色 ST
 

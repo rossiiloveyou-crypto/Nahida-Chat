@@ -1,60 +1,70 @@
-/**
- * 显示层脚本清单的取用点（P3）。
- *
- * 三条设计约束：
- *  1. **一次性取**：脚本清单在整个应用生命周期内按 mtime 变化，不是每条消息都变；
- *     每条消息各发一次 IPC 会在 200 条消息的会话里打出 200 次 invoke（蓝图明令禁止）；
- *  2. **模块级缓存**：切换会话、切回列表、重挂载消息区都不该重发；真源失效由主进程的
- *     mtime+size 缓存负责，这里只避免重复 IPC；
- *  3. **失败即空**：拿不到就当成「没有脚本」，气泡退回纯 markdown —— 显示层不能连累聊天。
- */
 import { useEffect, useState } from 'react'
 import type { StRegexScript } from '@shared/regex'
+import type { DisplayScriptsState } from '@shared/types'
+import { useSettings } from '../../settings/useSettings'
+import { normalizeFoldedTags } from './foldedTags'
+import { setDisplayFoldedTags } from './display'
 
-let cached: StRegexScript[] | null = null
-let pending: Promise<StRegexScript[]> | null = null
+let cached: DisplayScriptsState | null = null
+let pending: Promise<DisplayScriptsState> | null = null
+let generation = 0
+const listeners = new Set<(value: DisplayScriptsState) => void>()
+const empty = (): DisplayScriptsState => ({ scripts: [], stDir: '', preset: '', warning: null })
 
-function load(): Promise<StRegexScript[]> {
-  if (cached) return Promise.resolve(cached)
-  if (pending) return pending
-  const bridge = typeof window !== 'undefined' ? window.nahida : undefined
-  if (!bridge?.regex) {
-    cached = []
-    return Promise.resolve(cached)
-  }
-  pending = bridge.regex
-    .listScripts()
-    .then((list) => {
-      cached = Array.isArray(list) ? list : []
-      return cached
-    })
-    .catch(() => {
-      cached = []
-      return cached
-    })
-    .finally(() => {
-      pending = null
-    })
-  return pending
+export function loadDisplayScripts(refresh = false): Promise<DisplayScriptsState> {
+  if (!refresh && cached) return Promise.resolve(cached)
+  if (!refresh && pending) return pending
+  if (refresh) generation++
+  const epoch = generation
+  const api = typeof window === 'undefined' ? undefined : window.nahida?.regex
+  const request = api?.scriptsState ? api.scriptsState({ refresh })
+    : api?.listScripts ? api.listScripts().then(scripts => ({ ...empty(), scripts }))
+    : Promise.resolve({ ...empty(), warning: '显示脚本接口尚未就绪。' })
+  const current = request.catch(() => ({ ...empty(), warning: '显示脚本读取失败，请在 ST 桥接设置中刷新。' }))
+    .then(value => {
+      if (epoch === generation) {
+        cached = value
+        for (const listener of listeners) listener(value)
+      }
+      return value
+    }).finally(() => { if (pending === current) pending = null })
+  pending = current
+  return current
 }
 
-/** 取 ST 的正则脚本清单；首帧给 `[]`（气泡先按纯 markdown 出，脚本到了再补正则）。 */
-export function useDisplayScripts(): StRegexScript[] {
-  const [scripts, setScripts] = useState<StRegexScript[]>(cached ?? [])
-  useEffect(() => {
-    let alive = true
-    void load().then((list) => {
-      if (alive) setScripts(list)
-    })
-    return () => {
-      alive = false
-    }
-  }, [])
-  return scripts
-}
-
-/** 测试/热更新用：清掉模块级缓存。 */
+/** 已挂载消费者同步失效；旧响应不再发布。 */
 export function resetDisplayScriptsCache(): void {
+  generation++
   cached = null
   pending = null
+  for (const listener of listeners) listener(empty())
+  if (listeners.size) void loadDisplayScripts(true)
+}
+
+export function useDisplayScriptsState(): DisplayScriptsState {
+  const [state, setState] = useState(cached ?? empty())
+  useEffect(() => {
+    if (listeners.size === 0) window.addEventListener('focus', resetDisplayScriptsCache)
+    listeners.add(setState)
+    if (cached) setState(cached)
+    void loadDisplayScripts()
+    return () => {
+      listeners.delete(setState)
+      if (listeners.size === 0) window.removeEventListener('focus', resetDisplayScriptsCache)
+    }
+  }, [])
+  return state
+}
+
+/** 签名保持不变，设置偏好变化会产生新数组，触发既有气泡 memo 重算。 */
+export function useDisplayScripts(): StRegexScript[] {
+  const state = useDisplayScriptsState()
+  const { settings } = useSettings()
+  const key = JSON.stringify(settings?.bridge?.foldedTags ?? [])
+  const [scripts, setScripts] = useState(state.scripts)
+  useEffect(() => {
+    setDisplayFoldedTags(normalizeFoldedTags(JSON.parse(key)))
+    setScripts([...state.scripts])
+  }, [state, key])
+  return scripts
 }

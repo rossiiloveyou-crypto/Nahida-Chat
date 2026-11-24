@@ -196,14 +196,23 @@ export interface ModelDiscoveryResult {
 /**
  * ST 桥接配置（P6 / F-01 / F-07）。
  *
- * 🔴 只有 enabled 一个字段，这是刻意的：它**只**回答「开不开」，不回答「连哪个 ST」。
+ * enabled 与 foldedTags 是用户偏好；它不回答「连哪个 ST」。
  *    连接参数（stUrl / stDataDir / partition / 超时）全部住在 shared/bridge.ts 的
  *    BRIDGE_DEFAULT_CONFIG 里 —— 那是部署事实，不是用户偏好。
  *    把两者混进 Settings 的后果很具体：换端口要改「开关」所在的同一份配置，
  *    而用户手滑清空地址就会让「打开开关」变成「连到空地址」，失败点在桥接内部而不在设置页。
  *    设置页只在 F-07 的健康度里**只读显示**当前生效的连接参数。
  */
+export interface DisplayScriptsState {
+  scripts: import('./regex').StRegexScript[]
+  stDir: string
+  preset: string
+  warning: string | null
+}
+
 export interface BridgeSettings {
+  /** 用户显示偏好；不是 ST 部署目录。 */
+  foldedTags?: string[]
   /** 故事模式是否走 ST 桥接。缺省 false（老配置升级零行为变化） */
   enabled: boolean
 }

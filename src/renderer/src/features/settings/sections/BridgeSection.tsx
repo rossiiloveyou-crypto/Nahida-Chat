@@ -4,6 +4,8 @@ import type { BridgeFailureStep, BridgeHealth, BridgeOverrideState } from '@shar
 import type { StoryRecallStatus } from '@shared/types'
 import { Link } from 'react-router-dom'
 import { useSettings } from '../useSettings'
+import { resetDisplayScriptsCache, useDisplayScriptsState } from '../../chat/markdown/useDisplayScripts'
+import { normalizeFoldedTags } from '../../chat/markdown/foldedTags'
 
 type RuntimeDraft = { stRoot: string; cardName: string; port: string; nodePath: string; generateTimeoutMs: string }
 type Action = 'openSt' | 'stopSt' | 'openLog'
@@ -56,6 +58,11 @@ export function BridgeSection() {
   const [overrideError, setOverrideError] = useState<string | null>(null)
   const [overrideSaved, setOverrideSaved] = useState(false)
   const enabled = settings?.bridge?.enabled === true
+  const displayState = useDisplayScriptsState()
+  const [foldedText, setFoldedText] = useState('')
+  useEffect(() => { setFoldedText((settings?.bridge?.foldedTags ?? []).join('\n')) }, [settings?.bridge?.foldedTags])
+  // 轮询已是设置页既有行为；按来源签名变化失效，不逐消息读取。
+  useEffect(() => { resetDisplayScriptsCache() }, [health?.config.stDataDir])
 
   const applyHealth = useCallback((next: BridgeHealth): void => {
     setHealth(next)
@@ -124,7 +131,7 @@ export function BridgeSection() {
   }
 
   const toggle = async (next: boolean): Promise<void> => {
-    const ok = await save({ bridge: { enabled: next } })
+    const ok = await save({ bridge: { ...settings?.bridge, enabled: next } })
     if (ok) setSavedAt(Date.now())
     void refresh()
   }
@@ -164,6 +171,7 @@ export function BridgeSection() {
       // 启动失败也可能已打开首次引导窗口，读取 host 的实际进程状态。
       await refresh()
     } finally {
+      resetDisplayScriptsCache()
       setPending((current) => current === action ? null : current)
     }
   }
@@ -255,6 +263,20 @@ export function BridgeSection() {
           </div>
         </form>
         {actionError && <p role="alert" className="hint-text hint-text--error">操作失败：{actionError}</p>}
+      </section>
+
+      <section className="setting-group" aria-label="消息显示与折叠">
+        <h3 className="setting-group__title">消息显示与折叠</h3>
+        <p className="hint-text">当前预设：{displayState.preset || '未选择'}；显示脚本：{displayState.scripts.length} 条。切换酒馆预设后点击刷新。</p>
+        {displayState.warning && <p role="alert" className="hint-text hint-text--error">{displayState.warning}</p>}
+        <button type="button" className="theme-option sel-frame--stitch" onClick={() => resetDisplayScriptsCache()}>刷新显示脚本</button>
+        <label className="field">
+          <span className="field__label">兜底折叠标签</span>
+          <textarea className="field__control" rows={3} value={foldedText} placeholder="每行一个或逗号分隔，例如 think_nya、memo"
+            onChange={event => setFoldedText(event.target.value)} />
+        </label>
+        <p className="hint-text">全站消息生效，最多 20 个；预设优先，仅折叠成对标签，不改原稿。</p>
+        <button type="button" className="theme-option sel-frame--stitch" disabled={loading || saving} onClick={() => void save({ bridge: { enabled, foldedTags: normalizeFoldedTags(foldedText) } })}>保存折叠标签</button>
       </section>
 
       <section className="setting-group" data-ui-region="桥接最高权重规则" aria-busy={overrideLoading || overrideSaving}>

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { Dispatch, SetStateAction } from 'react'
 import type { StRegexScript } from '@shared/regex'
 import type { Message } from '@shared/types'
 import { brandFor } from '../../../assets/nahida'
@@ -110,6 +111,56 @@ export function MessageList({
     orderable.forEach((item, index) => map.set(item.id, orderable.length - index - 1))
     return map
   }, [messages])
+  // ChatPage keys MessageList by activeId: each session mounts with a fresh ten-message window.
+  const [visible, setVisible] = useState(10)
+  const listRef = useRef<HTMLDivElement | null>(null)
+  const pendingPrepend = useRef<{ height: number; top: number; anchor: HTMLElement | null; anchorTop: number } | null>(null)
+  const focusedIndex = focusMessageId ? messages.findIndex(message => message.id === focusMessageId) : -1
+  const startIndex = Math.min(Math.max(0, messages.length - visible), focusedIndex < 0 ? messages.length : focusedIndex)
+  // Keep a search hit loaded after its temporary highlight is cleared.
+  useLayoutEffect(() => {
+    if (focusedIndex >= 0) setVisible(count => Math.max(count, messages.length - focusedIndex))
+  }, [focusedIndex, messages.length])
+  const loadMore = useCallback(() => {
+    const node = listRef.current
+    if (!node || pendingPrepend.current) return
+    const anchor = node.querySelector<HTMLElement>('[data-message-id]')
+    pendingPrepend.current = { height: node.scrollHeight, top: node.scrollTop, anchor, anchorTop: anchor?.getBoundingClientRect().top ?? 0 }
+    setVisible(count => count + 10)
+  }, [])
+  useLayoutEffect(() => {
+    const node = listRef.current
+    const before = pendingPrepend.current
+    if (node && before) {
+      // scrollHeight is clamped to clientHeight for short histories; measure the retained row itself.
+      const delta = before.anchor?.isConnected
+        ? before.anchor.getBoundingClientRect().top - before.anchorTop
+        : node.scrollHeight - before.height
+      node.scrollTop = before.top + delta
+    }
+    pendingPrepend.current = null
+  }, [visible])
+  // Build previous-assistant boundaries once; each action then reads a constant-time result.
+  const replyInputs = useMemo(() => {
+    const hasUserMessage = messages.some(message => message.role === 'user')
+    const previousAssistant = new Array<number>(messages.length).fill(-1)
+    let assistant = -1
+    for (let index = 0; index < messages.length; index++) {
+      previousAssistant[index] = assistant
+      if (messages[index].role === 'assistant') assistant = index
+    }
+    let lastNarration = -1
+    return messages.map((message, index) => {
+      const hasInput = hasUserMessage || lastNarration > previousAssistant[index]
+      if (message.role === 'narration' && message.content.trim()) lastNarration = index
+      return hasInput
+    })
+  }, [messages])
+  // ChatPage supplies inline adapters; refs retain current callbacks without invalidating every bubble.
+  const callbacks = useRef({ onRetry, onRemove })
+  useLayoutEffect(() => { callbacks.current = { onRetry, onRemove } }, [onRetry, onRemove])
+  const retryMessage = useCallback((id: string) => callbacks.current.onRetry?.(id), [])
+  const removeMessage = useCallback((id: string) => callbacks.current.onRemove?.(id), [])
   const [editor, setEditor] = useState<{ id: string; draft: string } | null>(null)
   const [confirming, setConfirming] = useState<{ id: string; kind: 'delete' | 'resend' } | null>(null)
   const [saving, setSaving] = useState(false)
@@ -130,7 +181,6 @@ export function MessageList({
       setConfirming(null)
     }
   }, [readOnly, messages, editor?.id])
-  const endRef = useRef<HTMLDivElement | null>(null)
   const tailLength = messages.length > 0 ? messages[messages.length - 1].content.length : 0
   // 头像日夜成对（P9）：和侧栏 brand-mark 用同一枚素材，切主题时一起换
   const brand = brandFor(useTheme().resolved)
@@ -144,10 +194,12 @@ export function MessageList({
 
   useEffect(() => {
     if (focusMessageId) return
-    endRef.current?.scrollIntoView({ block: 'end' })
+    const node = listRef.current
+    // The zero-height end marker excludes bottom padding; use the scroll container's full range.
+    if (node) node.scrollTop = node.scrollHeight
   }, [messages.length, tailLength, focusMessageId])
 
-  const saveEdit = async (resend: boolean): Promise<boolean> => {
+  const saveEdit = useCallback(async (resend: boolean): Promise<boolean> => {
     if (!editor || saving || isStreaming || readOnly || !editor.draft.trim()) return false
     const action = resend ? onResend : onUpdate
     if (!action) return false
@@ -161,29 +213,83 @@ export function MessageList({
       setEditError(error instanceof Error ? error.message : String(error))
       return false
     } finally { setSaving(false) }
-  }
+  }, [editor, saving, isStreaming, readOnly, onResend, onUpdate])
 
-  const actionsFor = (message: Message, index: number) => {
+  return (
+    <div className="message-list message-list--paged" ref={listRef}>
+      <div className="message-list__inner">
+        {startIndex > 0 && <button type="button" className="message-list__more" data-ui-target="加载更多消息"
+          onClick={loadMore}>加载更多（还有 {startIndex} 条）</button>}
+        {messages.slice(startIndex).map((message, index) => {
+          const absoluteIndex = startIndex + index
+          return <MessageBubble key={message.id} message={message} absoluteIndex={absoluteIndex}
+            isTail={absoluteIndex === messages.length - 1} isStreaming={isStreaming}
+            focused={focusMessageId === message.id} depth={depths.get(message.id)} avatar={brand.avatar}
+            displayScripts={displayScripts} readOnly={readOnly}
+            tailReply={message.role === 'assistant' && absoluteIndex === messages.length - 1 && replyInputs[absoluteIndex]}
+            editor={editor?.id === message.id ? editor : null} editorOpen={editor !== null}
+            confirming={confirming?.id === message.id ? confirming : null} saving={saving}
+            copied={copiedId === message.id} editError={editor?.id === message.id ? editError : null}
+            canUpdate={Boolean(onUpdate)} onRetry={onRetry ? retryMessage : undefined}
+            onRemove={onRemove ? removeMessage : undefined} setEditor={setEditor} setConfirming={setConfirming}
+            setCopiedId={setCopiedId} setEditError={setEditError} saveEdit={saveEdit} />
+        })}
+        <div />
+      </div>
+    </div>
+  )
+}
+
+interface MessageBubbleProps {
+  message: Message
+  absoluteIndex: number
+  isTail: boolean
+  isStreaming: boolean
+  focused: boolean
+  depth?: number
+  avatar: string
+  displayScripts: StRegexScript[]
+  readOnly: boolean
+  tailReply: boolean
+  editor: { id: string; draft: string } | null
+  editorOpen: boolean
+  confirming: { id: string; kind: 'delete' | 'resend' } | null
+  saving: boolean
+  copied: boolean
+  editError: string | null
+  canUpdate: boolean
+  onRetry?: (id: string) => void
+  onRemove?: (id: string) => void
+  setEditor: Dispatch<SetStateAction<{ id: string; draft: string } | null>>
+  setConfirming: Dispatch<SetStateAction<{ id: string; kind: 'delete' | 'resend' } | null>>
+  setCopiedId: Dispatch<SetStateAction<string | null>>
+  setEditError: Dispatch<SetStateAction<string | null>>
+  saveEdit: (resend: boolean) => Promise<boolean>
+}
+
+/** Shallow props stay stable for unchanged messages during content/reasoning/tool deltas. */
+const MessageBubble = memo(function MessageBubble({
+  message, absoluteIndex, isTail, isStreaming, focused, depth, avatar, displayScripts,
+  readOnly, tailReply, editor, editorOpen, confirming, saving, copied, editError, canUpdate,
+  onRetry, onRemove, setEditor, setConfirming, setCopiedId, setEditError, saveEdit
+}: MessageBubbleProps) {
+  const actionsFor = () => {
     if (readOnly) return null
-    const nth = index + 1
+    const nth = absoluteIndex + 1
     const editable = message.role === 'user' || message.role === 'narration'
     const editing = editor?.id === message.id
     const locked = isStreaming || saving
     const reason = isStreaming ? '当前会话仍在生成中，先停止再重试' : saving ? '正在保存消息' : undefined
-    const previousAssistant = messages.slice(0, index).findLastIndex(item => item.role === 'assistant')
-    const hasReplyInput = messages.some(item => item.role === 'user')
-      || messages.slice(previousAssistant + 1, index).some(item => item.role === 'narration' && item.content.trim())
-    const tailReply = message.role === 'assistant' && index === messages.length - 1 && hasReplyInput
     return <div className="message-actions">
       {editing ? (
         <div className="message-editor" data-ui-region="消息行内编辑">
           <label htmlFor={'edit-' + message.id}>编辑{message.role === 'narration' ? '旁白' : '消息'}原文</label>
-          <textarea id={'edit-' + message.id} data-ui-target="编辑消息正文" rows={4} value={editor.draft}
+          <textarea id={'edit-' + message.id} data-ui-target="编辑消息正文" rows={4} value={editor!.draft}
             disabled={locked} onChange={event => { setEditor({ id: message.id, draft: event.target.value }); setConfirming(null) }} />
           <div className="bubble-actions">
-            <button type="button" data-ui-target="保存不发送" disabled={locked || !editor.draft.trim()}
+            <button type="button" data-ui-target="保存不发送" disabled={locked || !editor!.draft.trim()}
               title={reason} onClick={() => void saveEdit(false)}>保存不发送</button>
-            <button type="button" data-ui-target="保存并重新提问" disabled={locked || !editor.draft.trim()}
+            <button type="button" data-ui-target="保存并重新提问" disabled={locked || !editor!.draft.trim()}
               title={reason} onClick={() => setConfirming({ id: message.id, kind: 'resend' })}>保存并重新提问</button>
             <button type="button" disabled={saving} onClick={() => { setEditor(null); setConfirming(null); setEditError(null) }}>取消编辑</button>
           </div>
@@ -191,16 +297,16 @@ export function MessageList({
         </div>
       ) : (
         <div className="message-toolbar" role="group" aria-label="消息操作" data-ui-target={'消息操作 ' + nth}>
-          {editable && onUpdate && <button type="button" className="message-action" disabled={locked || editor !== null} title={reason || '编辑消息'} aria-label="编辑这条" data-tooltip="编辑消息"
+          {editable && canUpdate && <button type="button" className="message-action" disabled={locked || editorOpen} title={reason || '编辑消息'} aria-label="编辑这条" data-tooltip="编辑消息"
             data-ui-target={'编辑这条 ' + nth} onClick={() => { setEditor({ id: message.id, draft: message.content }); setConfirming(null); setEditError(null) }}><MessageActionIcon kind="edit" /><span className="message-action__label">编辑这条</span></button>}
           {tailReply && onRetry && <button type="button" className="message-action" aria-label="重试这一轮" data-tooltip="重新生成"
-            disabled={locked || editor !== null} title={reason || '重新生成'} onClick={() => onRetry?.(message.id)}><MessageActionIcon kind="retry" /><span className="message-action__label">重试这一轮</span></button>}
+            disabled={locked || editorOpen} title={reason || '重新生成'} onClick={() => onRetry?.(message.id)}><MessageActionIcon kind="retry" /><span className="message-action__label">重试这一轮</span></button>}
           {message.role === 'assistant' && !tailReply && message.status === 'error' && <span className="bubble-actions__hint">后面已经有新消息了，只能重试最后一轮</span>}
-          {onRemove && <button type="button" className="message-action message-action--delete" disabled={locked || editor !== null}
+          {onRemove && <button type="button" className="message-action message-action--delete" disabled={locked || editorOpen}
             title={reason || '删除消息'} aria-label="删除这条" data-tooltip="删除消息" data-ui-target={'删除这条 ' + nth}
             onClick={() => setConfirming({ id: message.id, kind: 'delete' })}><MessageActionIcon kind="delete" /><span className="message-action__label">删除这条</span></button>}
-          {message.content && <button type="button" className="message-action" aria-label={copiedId === message.id ? '已复制' : '复制原稿'} title={copiedId === message.id ? '已复制' : '复制原稿'} data-tooltip={copiedId === message.id ? '已复制' : '复制'} data-ui-target="复制原稿"
-            onClick={() => { void navigator.clipboard.writeText(message.content).then(() => setCopiedId(message.id)).catch(() => setEditError('复制失败，请重试')) }}><MessageActionIcon kind={copiedId === message.id ? 'check' : 'copy'} /><span className="message-action__label">{copiedId === message.id ? '已复制' : '复制原稿'}</span></button>}
+          {message.content && <button type="button" className="message-action" aria-label={copied ? '已复制' : '复制原稿'} title={copied ? '已复制' : '复制原稿'} data-tooltip={copied ? '已复制' : '复制'} data-ui-target="复制原稿"
+            onClick={() => { void navigator.clipboard.writeText(message.content).then(() => setCopiedId(message.id)).catch(() => setEditError('复制失败，请重试')) }}><MessageActionIcon kind={copied ? 'check' : 'copy'} /><span className="message-action__label">{copied ? '已复制' : '复制原稿'}</span></button>}
           {isStreaming && editable && <span className="bubble-actions__hint">{reason}</span>}
         </div>
       )}
@@ -216,123 +322,113 @@ export function MessageList({
     </div>
   }
 
+  const isUser = message.role === 'user'
+  const isNarration = message.role === 'narration'
+  // 头像与气泡都要能被网格覆盖层定位：UI 改动常落在这两处（头像形状/大小、
+  // 气泡圆角与内边距），没有 data-ui-target 就没法在图上报坐标。
+  const nth = absoluteIndex + 1
+  // 只有「会话在生成 + 是最后一条 + 状态还写着 streaming」才是真的在打字；
+  // 其余的 streaming 都是上次没跑完留下的残骸（重启、崩、被杀）。
+  const isLive = isStreaming && isTail && message.status === 'streaming'
+  const view = bubbleViewOf(message, { isLive, isTail })
+
+  // 旁白是“舞台说明”，不是任何一方的发言：无头像、无气泡，整列居中。
+  if (isNarration) {
+    return (
+      <div
+        key={message.id}
+        data-message-id={message.id}
+        className={'message message--narration' + (focused ? ' is-focus' : '')}
+      >
+        <p className="narration-line" data-ui-target={`旁白 ${nth}`}>
+          <span className="narration-line__label">旁白：</span>
+          {message.content}
+        </p>
+        {actionsFor()}
+      </div>
+    )
+  }
+
   return (
-    <div className="message-list">
-      <div className="message-list__inner">
-        {messages.map((message, index) => {
-          const isUser = message.role === 'user'
-          const isNarration = message.role === 'narration'
-          // 头像与气泡都要能被网格覆盖层定位：UI 改动常落在这两处（头像形状/大小、
-          // 气泡圆角与内边距），没有 data-ui-target 就没法在图上报坐标。
-          const nth = index + 1
-          const isTail = index === messages.length - 1
-          // 只有「会话在生成 + 是最后一条 + 状态还写着 streaming」才是真的在打字；
-          // 其余的 streaming 都是上次没跑完留下的残骸（重启、崩、被杀）。
-          const isLive = isStreaming && isTail && message.status === 'streaming'
-          const view = bubbleViewOf(message, { isLive, isTail })
-
-          // 旁白是“舞台说明”，不是任何一方的发言：无头像、无气泡，整列居中。
-          if (isNarration) {
-            return (
-              <div
-                key={message.id}
-                data-message-id={message.id}
-                className={'message message--narration' + (focusMessageId === message.id ? ' is-focus' : '')}
-              >
-                <p className="narration-line" data-ui-target={`旁白 ${nth}`}>
-                  <span className="narration-line__label">旁白：</span>
-                  {message.content}
-                </p>
-                {actionsFor(message, index)}
-              </div>
-            )
-          }
-
-          return (
-            <div
-              key={message.id}
-              data-message-id={message.id}
-              className={
-                (isUser ? 'message message--user' : 'message message--assistant') +
-                (focusMessageId === message.id ? ' is-focus' : '')
-              }
-            >
-              <div
-                className={isUser ? 'avatar avatar--user' : 'avatar avatar--assistant'}
-                data-ui-target={isUser ? `用户头像 ${nth}` : `AI 头像 ${nth}`}
-              >
-                {isUser ? (
-                  '我'
-                ) : (
-                  /*
-                   * 纳西妲头像改成素材图（P9）。
-                   * 原来这里是一个「纳」字 + 纯色底 —— 28px 下汉字辨识度很差，
-                   * 而且和侧栏的品牌头像（已经是图）不是同一个形象，两处对不上。
-                   * 素材由 scripts/ui/build-nahida-avatar.py 从立绘裁出，主题切换走 brandFor。
-                   * alt="" + aria-hidden：紧邻的气泡已经有发言人语义，头像重复朗读是噪音。
-                   */
-                  <img className="avatar__image" src={brand.avatar} alt="" aria-hidden="true" />
-                )}
-              </div>
-              <div className="message__column">
-                {/* 思考过程在气泡**之前**：读的时候要「先想再答」，位置与语义一致 */}
-                {!isUser && message.reasoning && (
-                  <ReasoningBlock message={message} uiLabel={`思考 ${nth}`} live={isLive} />
-                )}
-                <div
-                  className={isUser ? 'bubble' : bubbleClassOf(view.phase)}
-                  data-ui-target={isUser ? `用户气泡 ${nth}` : `AI 气泡 ${nth}`}
-                >
-                  {view.phase === 'typing' && (
-                    <span className="typing">
-                      <i />
-                      <i />
-                      <i />
-                    </span>
-                  )}
-                  {view.phase === 'text' && (
-                    <BubbleMarkdown
-                      source={message.content}
-                      scripts={isUser ? EMPTY_SCRIPTS : displayScripts}
-                      depth={depths.get(message.id)}
-                    />
-                  )}
-                  {view.phase === 'failed' && (
-                    <>
-                      {/* 半截正文也排版：断在 `**粗体` 中间确实会显示成半个星号，但没有渲染器时它整段都是裸符号 */}
-                      {message.content && (
-                        <div className="bubble__partial">
-                          <BubbleMarkdown
-                            source={message.content}
-                            scripts={isUser ? EMPTY_SCRIPTS : displayScripts}
-                            depth={depths.get(message.id)}
-                          />
-                        </div>
-                      )}
-                      <span className="bubble__note">{view.note}</span>
-                    </>
-                  )}
+    <div
+      key={message.id}
+      data-message-id={message.id}
+      className={
+        (isUser ? 'message message--user' : 'message message--assistant') +
+        (focused ? ' is-focus' : '')
+      }
+    >
+      <div
+        className={isUser ? 'avatar avatar--user' : 'avatar avatar--assistant'}
+        data-ui-target={isUser ? `用户头像 ${nth}` : `AI 头像 ${nth}`}
+      >
+        {isUser ? (
+          '我'
+        ) : (
+          /*
+           * 纳西妲头像改成素材图（P9）。
+           * 原来这里是一个「纳」字 + 纯色底 —— 28px 下汉字辨识度很差，
+           * 而且和侧栏的品牌头像（已经是图）不是同一个形象，两处对不上。
+           * 素材由 scripts/ui/build-nahida-avatar.py 从立绘裁出，主题切换走 brandFor。
+           * alt="" + aria-hidden：紧邻的气泡已经有发言人语义，头像重复朗读是噪音。
+           */
+          <img className="avatar__image" src={avatar} alt="" aria-hidden="true" />
+        )}
+      </div>
+      <div className="message__column">
+        {/* 思考过程在气泡**之前**：读的时候要「先想再答」，位置与语义一致 */}
+        {!isUser && message.reasoning && (
+          <ReasoningBlock message={message} uiLabel={`思考 ${nth}`} live={isLive} />
+        )}
+        <div
+          className={isUser ? 'bubble' : bubbleClassOf(view.phase)}
+          data-ui-target={isUser ? `用户气泡 ${nth}` : `AI 气泡 ${nth}`}
+        >
+          {view.phase === 'typing' && (
+            <span className="typing">
+              <i />
+              <i />
+              <i />
+            </span>
+          )}
+          {view.phase === 'text' && (
+            <BubbleMarkdown
+              source={message.content}
+              scripts={isUser ? EMPTY_SCRIPTS : displayScripts}
+              depth={depth}
+            />
+          )}
+          {view.phase === 'failed' && (
+            <>
+              {/* 半截正文也排版：断在 `**粗体` 中间确实会显示成半个星号，但没有渲染器时它整段都是裸符号 */}
+              {message.content && (
+                <div className="bubble__partial">
+                  <BubbleMarkdown
+                    source={message.content}
+                    scripts={isUser ? EMPTY_SCRIPTS : displayScripts}
+                    depth={depth}
+                  />
                 </div>
-                {actionsFor(message, index)}
-                {/*
-                  P6 / F-06：桥接这一轮的人话告警（开关被临时压制、还原失败…）。
-                  🔴 一行灰字，**不是**红字：它不是失败 —— 这一轮正文照样落库、照样可读。
-                  🔴 不阻断、不折叠、不进正文（M5：content 永远是原稿）。
-                  用户的消息与旁白不带告警，所以只挂在助手这一支上。
-                */}
-                {!isUser && message.warnings && message.warnings.length > 0 && (
-                  <p className="bubble__warnings" data-ui-target={`告警 ${nth}`}>
-                    {message.warnings.join('；')}
-                  </p>
-                )}
+              )}
+              <span className="bubble__note">{view.note}</span>
+            </>
+          )}
+        </div>
+        {actionsFor()}
+        {/*
+          P6 / F-06：桥接这一轮的人话告警（开关被临时压制、还原失败…）。
+          🔴 一行灰字，**不是**红字：它不是失败 —— 这一轮正文照样落库、照样可读。
+          🔴 不阻断、不折叠、不进正文（M5：content 永远是原稿）。
+          用户的消息与旁白不带告警，所以只挂在助手这一支上。
+        */}
+        {!isUser && message.warnings && message.warnings.length > 0 && (
+          <p className="bubble__warnings" data-ui-target={`告警 ${nth}`}>
+            {message.warnings.join('；')}
+          </p>
+        )}
 
-                {message.toolCalls && message.toolCalls.length > 0 && <ToolCalls calls={message.toolCalls} />}
-              </div>
-            </div>
-          )
-        })}
-        <div ref={endRef} />
+        {message.toolCalls && message.toolCalls.length > 0 && <ToolCalls calls={message.toolCalls} />}
       </div>
     </div>
   )
-}
+})

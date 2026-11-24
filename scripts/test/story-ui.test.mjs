@@ -9,7 +9,8 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { bundleModule, createChecker, installElectronStub, p } from './qq-test-util.mjs'
+import { spawn } from 'node:child_process'
+import { bundleModule, createChecker, installElectronStub, loadEsbuild, p, projectRoot } from './qq-test-util.mjs'
 
 const { check, done } = createChecker()
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-story-ui-'))
@@ -330,3 +331,87 @@ check(
 )
 
 done()
+
+
+/* Q2: production ChatPage / StoryDrawer / stores, synthetic IPC only. */
+async function q2Browser() {
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-q2-browser-'))
+  function setup() {
+    const make=id=>({id,storyId:'q2',mode:'story',title:'Q2',createdAt:1,updatedAt:1,characterId:null,modelProfileId:'profile',modelId:'model',messages:Array.from({length:122},(_,i)=>({id:id+'-'+(i+1),role:i%2?'assistant':'user',content:'第'+(i+1)+'条。'+'钟楼下的旅人继续前行。'.repeat(8),createdAt:i+1,status:'done',toolCalls:[]}))})
+    const sessions={a:make('a'),b:make('b')},calls=[],delays=[];let active='a',missing=null,failRead=false,delay=0
+    const branches=()=>Object.values(sessions).map(s=>({branchId:s.id,title:s.id,isActive:s.id===active,messageCount:s.messages.length,lastActiveAt:1}))
+    const settings={provider:'mock',model:'model',theme:'light',fontSize:15,bridge:{enabled:false},agent:{},memory:{enabled:false},toolSupply:{},permissionMode:'ask',permission:{mode:'approve'}},off=()=>()=>{}
+    window.nahida={initialTheme:'light',settings:{get:async()=>settings,save:async()=>settings},modelProfiles:{list:async()=>({profiles:[{id:'profile',name:'Profile',provider:'mock',models:['model'],defaultModel:'model'}],defaultProfileId:'profile'})},prompts:{library:async()=>({characters:[]})},workspaces:{list:async()=>({workspaces:[],activeWorkspaceId:null})},regex:{listScripts:async()=>[]},chat:{listSessions:async()=>[],onDelta:off,onReasoning:off,onTool:off,onApproval:off,onDone:off,onError:off},story:{list:async()=>[],session:async(_id,branch)=>{calls.push('read:'+(branch??active));const ms=delays.length?delays.shift():delay;if(ms)await new Promise(r=>setTimeout(r,ms));if(failRead)throw Error('fixture read failed');const s=sessions[branch??active];return s?{...s,messages:s.messages.filter(m=>m.id!==missing)}:null},branches:async()=>branches(),switchBranch:async(_id,id)=>{calls.push('switch:'+id);active=id;return branches()},derive:async()=>{sessions.derived=make('derived');active='derived';return{branch:{branchId:active}}},removeBranch:async(_id,id)=>{delete sessions[id];if(active===id)active='a';return{activeBranchId:active}},search:async()=>[]}}
+    window.__q2Errors=[];window.addEventListener('error',e=>window.__q2Errors.push(e.message));window.addEventListener('unhandledrejection',e=>window.__q2Errors.push(String(e.reason)))
+    window.q2={chat,story,sessions,calls,async mount(){await chat.getState().init();const root=createRoot(document.getElementById('root'));flushSync(()=>root.render(React.createElement(ChatPage)));await story.getState().openStory('q2')},missing(id){missing=id},fail(v){failRead=v},delay(v){delay=v},delays(...values){delays.push(...values)},viewport(id){chat.getState().adoptStorySession(sessions[id])}}
+  }
+  async function suite() {
+    const h=window.q2,checks=[]
+    const check=(name,ok,detail=null)=>checks.push({name,ok:Boolean(ok),detail})
+    const wait=ms=>new Promise(r=>setTimeout(r,ms))
+    const until=async(fn,label,timeout=4000)=>{const end=Date.now()+timeout;while(Date.now()<end){if(fn())return;await wait(25)}throw Error('timeout: '+label)}
+    const rows=()=>[...document.querySelectorAll('.message-list [data-message-id]')],row=id=>rows().find(n=>n.dataset.messageId===id)
+    const jump=n=>document.querySelector('[data-ui-target="跳到消息 '+n+'"]'),list=()=>document.querySelector('.message-list')
+    const settleScroll=async()=>{const end=Date.now()+6000;let last=null,stable=0;while(Date.now()<end){const now=list()?list().scrollTop:0;if(now===last)stable++;else{stable=0;last=now}if(stable>=3)return;await wait(60)}}
+    const centered=id=>{const r=row(id).getBoundingClientRect(),b=list().getBoundingClientRect();return{delta:Math.abs((r.top+r.bottom-b.top-b.bottom)/2),height:b.height,visible:r.top<b.bottom&&r.bottom>b.top}}
+    try{
+      await h.mount();await until(()=>rows().length===10,'initial rows');await wait(150)
+      check('B-01 closed with handle only',!h.story.getState().drawerOpen&&!document.querySelector('.story-drawer')&&Boolean(document.querySelector('[data-ui-target="打开分支抽屉"]')))
+      await h.story.getState().switchTo('b');check('B-02 switch stays closed',h.story.getState().drawerOpen===false)
+      await h.story.getState().deriveFrom('b-3');check('B-02 derive stays closed',h.story.getState().drawerOpen===false)
+      await h.story.getState().removeBranch('derived');check('B-02 remove stays closed',h.story.getState().drawerOpen===false)
+      document.querySelector('[data-ui-target="打开分支抽屉"]').click();await until(()=>document.querySelector('.story-drawer'),'drawer')
+      await h.story.getState().switchTo('b');check('B-03 manual open retained on switch',h.story.getState().drawerOpen)
+      await h.story.getState().deriveFrom('b-3');check('B-03 manual open retained on derive',h.story.getState().drawerOpen)
+      await h.story.getState().removeBranch('derived');check('B-03 manual open retained on remove',h.story.getState().drawerOpen)
+      h.story.getState().closeStory();await h.story.getState().openStory('q2');await until(()=>document.querySelector('[data-ui-target="打开分支抽屉"]'),'reentry')
+      check('B-03 close then reenter closed',!h.story.getState().drawerOpen)
+      document.querySelector('[data-ui-target="打开分支抽屉"]').click();await until(()=>jump(122),'timeline')
+      check('B-09 absolute number 122',jump(122).textContent.trim().startsWith('122.')&&document.querySelectorAll('.story-timeline__jump').length===122)
+      jump(118).click();await until(()=>row('a-118')?.classList.contains('is-focus'),'focus118');await settleScroll()
+      let geometry=centered('a-118');check('B-04 centered <=20%',geometry.visible&&geometry.delta<=geometry.height*.2,geometry)
+      await until(()=>h.story.getState().focusMessageId===null,'expiry60',2600)
+      await h.story.getState().switchTo('b');await h.story.getState().switchTo('a');await until(()=>rows().length===10,'page reset')
+      jump(3).click();await until(()=>row('a-3')?.classList.contains('is-focus'),'hidden focus');await settleScroll()
+      geometry=centered('a-3');check('B-05 hidden target expands to120 and visible',rows().length===120&&geometry.visible,{rows:rows().length,...geometry})
+      check('B-08 focus visibly appears',row('a-3').classList.contains('is-focus')&&getComputedStyle(row('a-3').querySelector('.bubble')).boxShadow!=='none')
+      await until(()=>!row('a-3').classList.contains('is-focus'),'focus clears',2600)
+      check('B-08 production timer clears highlight',h.story.getState().focusMessageId===null&&getComputedStyle(row('a-3').querySelector('.bubble')).boxShadow==='none')
+      h.delay(120);const switches=h.calls.length;jump(118).click();h.viewport('b');await until(()=>h.calls.slice(switches).includes('switch:a'),'cross branch');await until(()=>row('a-118')?.classList.contains('is-focus'),'cross focus');await settleScroll();h.delay(0)
+      geometry=centered('a-118');check('B-06 A timeline B viewport switches then focuses',h.chat.getState().activeId==='a'&&geometry.visible&&geometry.delta<=geometry.height*.2,{calls:h.calls.slice(-6),...geometry})
+      await until(()=>h.story.getState().focusMessageId===null,'cross expiry',2600)
+      const before={active:h.chat.getState().activeId,rows:rows().length,scroll:list().scrollTop,switches:h.calls.filter(s=>s.startsWith('switch:')).length}
+      h.missing('a-60');jump(60).click();await until(()=>document.querySelector('.story-timeline__hint'),'missing hint')
+      check('B-07 missing id warns without navigation',h.chat.getState().activeId===before.active&&rows().length===before.rows&&Math.abs(list().scrollTop-before.scroll)<2&&h.story.getState().focusMessageId===null&&h.calls.filter(s=>s.startsWith('switch:')).length===before.switches,{before,hint:document.querySelector('.story-timeline__hint').textContent})
+      h.missing(null);h.fail(true);jump(61).click();await until(()=>document.querySelector('.story-timeline__hint')?.textContent.includes('fixture read failed'),'error hint');h.fail(false)
+      check('B-07 IPC errors surfaced',h.story.getState().focusMessageId===null&&window.__q2Errors.length===0)
+      jump(61).click();await until(()=>row('a-61')?.classList.contains('is-focus'),'recovery')
+      check('B-07 success clears hint',!document.querySelector('.story-timeline__hint'))
+      h.story.getState().setFocus(null);h.delays(200,20);jump(117).click();jump(119).click()
+      await until(()=>h.story.getState().focusMessageId==='a-119','latest request focus');await wait(300)
+      check('Q2 latest jump wins reversed IPC completion',h.story.getState().focusMessageId==='a-119')
+      h.story.getState().setFocus(null);h.delays(200);jump(117).click();document.querySelector('[data-ui-target="分支 b"] .story-tree__main').click()
+      await until(()=>h.chat.getState().activeId==='b','explicit branch navigation');await wait(300)
+      check('Q2 explicit branch choice cancels pending jump',h.chat.getState().activeId==='b'&&h.story.getState().focusMessageId===null)
+      check('Q2 renderer no errors',window.__q2Errors.length===0,window.__q2Errors)
+    }catch(error){check('Q2 suite completed',false,{message:error.message,stack:error.stack,body:document.body.innerText.slice(-1500),errors:window.__q2Errors})}
+    return{checks,passed:checks.length>=20&&checks.every(x=>x.ok),environment:{userAgent:navigator.userAgent,viewport:[innerWidth,innerHeight]}}
+  }
+  try{
+    const imports=[['React','node_modules/react/index.js'],['{createRoot}','node_modules/react-dom/client.js'],['{flushSync}','node_modules/react-dom/index.js'],['{ChatPage}','src/renderer/src/features/chat/ChatPage.tsx'],['{useChatStore as chat}','src/renderer/src/features/chat/store.ts'],['{useStoryStore as story}','src/renderer/src/features/story/store.ts']].map(([names,file])=>'import '+names+' from '+JSON.stringify(p(file))+';')
+    await loadEsbuild().build({stdin:{contents:imports.join('\n')+'\n('+setup.toString()+')()',resolveDir:projectRoot,loader:'tsx'},bundle:true,platform:'browser',format:'iife',jsx:'automatic',minify:true,define:{'process.env.NODE_ENV':'"production"'},alias:{'@shared':p('src/shared')},outfile:path.join(work,'browser.js'),plugins:[{name:'q2-assets',setup(build){build.onLoad({filter:/[/\\]settings[/\\]useTheme\.ts$/},()=>({contents:'export const useTheme=()=>({resolved:"light"})',loader:'js'}));build.onLoad({filter:/\.(png|svg)$/},()=>({contents:'export default "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="',loader:'js'}))}}]})
+    fs.writeFileSync(path.join(work,'style.css'),['tokens.css','global.css'].map(name=>readText('src/renderer/src/styles/'+name)).join('\n'))
+    fs.writeFileSync(path.join(work,'index.html'),'<!doctype html><html data-theme="light"><head><meta charset="utf-8"><link rel="stylesheet" href="style.css"></head><body><div id="root" style="height:100%;width:100%;display:flex"></div><script src="browser.js"></script></body></html>')
+    const resultFile=path.join(work,'result.json')
+    const runner=["const {app,BrowserWindow}=require('electron'),fs=require('node:fs');",'app.setPath("userData",'+JSON.stringify(path.join(work,'user-data'))+');',"app.commandLine.appendSwitch('disable-renderer-backgrounding');app.commandLine.appendSwitch('disable-background-timer-throttling');",'app.whenReady().then(async()=>{try{const win=new BrowserWindow({width:1280,height:860,useContentSize:true,show:true,skipTaskbar:true,webPreferences:{contextIsolation:true,nodeIntegration:false,backgroundThrottling:false}});await win.loadFile('+JSON.stringify(path.join(work,'index.html'))+');const result=await win.webContents.executeJavaScript('+JSON.stringify('('+suite.toString()+')()')+',true);fs.writeFileSync('+JSON.stringify(resultFile)+',JSON.stringify(result,null,2));app.exit(result.passed?0:1)}catch(e){console.error(e);app.exit(2)}});'].join('\n')
+    fs.writeFileSync(path.join(work,'runner.cjs'),runner)
+    const electron=path.join(p('node_modules/electron/dist'),readText('node_modules/electron/path.txt').trim()),env={...process.env};delete env.ELECTRON_RUN_AS_NODE
+    const code=await new Promise((resolve,reject)=>{const child=spawn(electron,[path.join(work,'runner.cjs')],{cwd:projectRoot,env,stdio:['ignore','inherit','inherit']});const timer=setTimeout(()=>child.kill(),60000);child.on('error',e=>{clearTimeout(timer);reject(e)});child.on('close',c=>{clearTimeout(timer);resolve(c)})})
+    const result=fs.existsSync(resultFile)?JSON.parse(fs.readFileSync(resultFile,'utf8')):{passed:false,checks:[],error:'Electron exited without result'}
+    fs.writeFileSync(p('../DOC/agent--ST桥接重构/task-桥接重构1/baseline/q2-chromium-evidence.json'),JSON.stringify({...result,exitCode:code,generatedAt:new Date().toISOString()},null,2))
+    for(const item of result.checks)console.log((item.ok?'PASS ':'FAIL ')+item.name+(item.ok?'':' '+JSON.stringify(item.detail)))
+    console.log('Q2_CHROMIUM_CHECKS '+result.checks.filter(x=>x.ok).length+'/'+result.checks.length)
+    if(code!==0||!result.passed)process.exitCode=1
+  }finally{fs.rmSync(work,{recursive:true,force:true})}
+}
+await q2Browser()

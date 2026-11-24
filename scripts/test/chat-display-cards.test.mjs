@@ -44,7 +44,7 @@ test('unclosed tag visible in bubble',()=>assert.equal(doc(render('<wave_plan>�
 test('code keeps literal tags',()=>assert.equal(doc(render(tick+'<wave_plan>x</wave_plan>'+tick)).querySelector('code').textContent,'<wave_plan>x</wave_plan>'))
 test('card toggles open and closed',()=>{const d=doc(render(raw)).querySelector('details');d.open=true;assert.equal(d.open,true);d.open=false;assert.equal(d.open,false)})
 test('markdown entities retain visible text',()=>assert.equal(doc(render('「A &amp; B」',[])).querySelector('q').textContent,'「A & B」'))
-const realScripts=collectScripts(JSON.parse(fs.readFileSync(process.env.ST_SETTINGS_PATH||'D:/ST/SillyTavern/data/default-user/settings.json','utf8')))
+const realScripts=collectScripts(JSON.parse(fs.readFileSync(process.env.ST_SETTINGS_PATH||p('scripts/fixtures/st-settings.json'),'utf8')))
 const fixture=fs.readFileSync(p('scripts/fixtures/wave-real.md'),'utf8')
 test('real preset 12 scripts',()=>assert.equal(realScripts.length,12))
 test('real plan card',()=>assert.ok(displayPartsOf(fixture,realScripts,0,purify).some(x=>x.kind==='card'&&x.tag==='wave_plan')))

@@ -57,7 +57,8 @@ const api: NahidaApi = {
   },
   // 显示层正则（P3）：**只读**转发。渲染层拿不到 fs，脚本清单只能从这里来。
   regex: {
-    listScripts: (request) => ipcRenderer.invoke(IPC.regexListScripts, request)
+    listScripts: (request) => ipcRenderer.invoke(IPC.regexListScripts, request),
+    scriptsState: (request) => ipcRenderer.invoke(IPC.regexScriptsState, request)
   },
   // P2：只转发桥接进程与日志操作，Node 能力留在主进程。
   bridge: {
