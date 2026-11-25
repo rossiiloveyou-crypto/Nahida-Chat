@@ -1,4 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useImperativeHandle, useRef, useState } from 'react'
+import type { Ref } from 'react'
+
+export interface ComposerHandle { fillOption: (text: string) => void }
 import type { KeyboardEvent } from 'react'
 import { INPUT_LENGTH_WARN } from '@shared/constants'
 import type { PromptCharacter } from '@shared/types'
@@ -7,6 +10,7 @@ import { useTheme } from '../../settings/useTheme'
 import { ComposerBar } from './ComposerBar'
 
 interface ComposerProps {
+  ref?: Ref<ComposerHandle>
   disabled: boolean
   streaming: boolean
   onSend: (content: string) => void
@@ -49,6 +53,7 @@ interface ComposerProps {
  * 而且模型上下文早就比 8000 字大得多。只在超过阈值时把计数标红提醒。
  */
 export function Composer({
+  ref,
   disabled,
   streaming,
   onSend,
@@ -80,6 +85,24 @@ export function Composer({
     if (!canNarrate) setInputKind('dialogue')
   }, [canNarrate])
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const optionValue = useRef<string | null>(null)
+  const focusOption = useRef(false)
+  useImperativeHandle(ref, () => ({ fillOption(text: string) {
+    if (disabled || streaming || needsWorkspace) return
+    if (value && value !== optionValue.current && !window.confirm('输入框已有内容，替换为所选选项？')) return
+    optionValue.current = text
+    focusOption.current = true
+    setValue(text)
+    // Also focus when choosing the same text twice (no state change).
+    textareaRef.current?.focus()
+    textareaRef.current?.setSelectionRange(text.length, text.length)
+  } }), [disabled, streaming, needsWorkspace, value])
+  useEffect(() => {
+    if (!focusOption.current) return
+    focusOption.current = false
+    textareaRef.current?.focus()
+    textareaRef.current?.setSelectionRange(value.length, value.length)
+  }, [value])
   // 发送图标日夜成对；两张 SVG 的 viewBox 不同（40 vs 44），尺寸由 CSS 锁死
   const brand = brandFor(useTheme().resolved)
 
@@ -188,7 +211,7 @@ export function Composer({
                 ? '写一段旁白，发送后不会触发模型…（Enter 发送 / Shift + Enter 换行）'
                 : '给' + characterName + '发消息…（Enter 发送 / Shift + Enter 换行）'
           }
-          onChange={(event) => setValue(event.target.value)}
+          onChange={(event) => { optionValue.current = null; setValue(event.target.value) }}
           onKeyDown={handleKeyDown}
         />
         {streaming ? (

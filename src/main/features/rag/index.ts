@@ -21,11 +21,12 @@ import { embedder } from './embedder'
 import { installModel, userModelRoot } from './modelInstaller'
 import type { MemoryModelProgress } from '@shared/types'
 import { extractMemories } from './extract'
-import { recall as hybridRecall, recallStory, formatStoryRecall, normalizeStoryRecall } from './retriever'
+import { recall as hybridRecall, recallStory, formatStoryRecallReport, normalizeStoryRecall } from './retriever'
 import { MemoryStore } from './store'
 import type { StoryRoundRow } from './store'
 import { splitRounds, contentVersion, storyArchiveService } from './storyArchive'
 import { estimateTokens } from './tokenize'
+import { recordStoryRecall } from '../story/recallStatus'
 
 /**
  * 记忆能力的对外门面。
@@ -353,15 +354,24 @@ class MemoryService {
       const rounds = [...unique.values()]
       const query = buildStoryQuery(session.messages.filter((message) => message.role !== 'assistant' ||
         !interrupted(message)))
+      let budgetDropped = 0
       const hits = await recallStory(this.store, query, {
         config, rounds, recentMessageIds: options.recentMessageIds,
+        onBudgetDropped: count => { budgetDropped = count },
         isCurrent: (row) => contentVersion(session.messages) === snapshot && current(row)
       })
       if (storyArchiveService.isForgotten(options.storyId) || contentVersion(session.messages) !== snapshot) return ''
       // 访问只排队；SQLite / 切片写入在 setImmediate 后，聊天同步编辑路径不写库。
       const tenant = options.tenants[0]
       storyArchiveService.schedule(session, { storyId: options.storyId }, tenant)
-      return formatStoryRecall(hits, config.budgetTokens)
+      const report = formatStoryRecallReport(hits, config.budgetTokens)
+      const dropped = budgetDropped + report.dropped
+      recordStoryRecall({ at: Date.now(), hitRounds: report.selected.length,
+        dropped, budgetLimited: dropped > 0,
+        top: [...report.selected].sort((a, b) => b.score - a.score).slice(0, 3).map(hit => ({
+          roundIndex: hit.round.round_index, vectorScore: hit.vectorScore, keywordScore: hit.keywordScore
+        })) })
+      return report.text
     } catch (error) {
       console.warn('[story-recall] 召回失败，本轮不注入故事回顾', error)
       return ''

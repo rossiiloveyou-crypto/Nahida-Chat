@@ -32,7 +32,21 @@ export function StoryRecallPanel({ settings, saving, save }: Props) {
       setStatusError(cause instanceof Error ? cause.message : String(cause))
     }
   }
-  useEffect(() => { void refresh() }, [])
+  useEffect(() => {
+    void refresh()
+    return window.nahida.story.onEmbeddingProgress?.(next => {
+      setStatus(current => current ? { ...current, ...next } : current)
+      if (!next.backfilling) void refresh()
+    })
+  }, [])
+
+  async function backfill(cancel = false): Promise<void> {
+    try {
+      const result = await window.nahida.story.backfillEmbeddings(cancel)
+      setStatusError(result.started ? null : result.reason ?? null)
+      await refresh()
+    } catch (cause) { setStatusError(cause instanceof Error ? cause.message : String(cause)) }
+  }
 
   function change(patch: Partial<StoryRecallConfig>): void {
     setDraft(current => ({ ...current, ...patch }))
@@ -97,6 +111,10 @@ export function StoryRecallPanel({ settings, saving, save }: Props) {
         <button type="button" className="btn-primary" disabled={invalid || busy} onClick={() => void persist()} data-ui-target="保存故事召回设置">{pending ? '保存中…' : '保存故事召回设置'}</button>
         <button type="button" className="btn-ghost" onClick={() => void refresh()} data-ui-target="刷新故事召回状态">刷新状态</button>
       </div>
+      <div className="settings-actions">
+        <button type="button" className="btn-ghost" disabled={!!status?.backfilling} onClick={() => void backfill()} data-ui-target="补算故事向量">补算向量</button>
+        {status?.backfilling && <button type="button" className="btn-ghost" onClick={() => void backfill(true)} data-ui-target="停止故事向量补算">停止补算</button>}
+      </div>
       {saveError && <p className="hint-text hint-text--error" role="alert">{saveError}</p>}
       {saved && <p className="hint-text" role="status">故事召回设置已保存</p>}
       <div data-ui-target="故事召回状态" aria-live="polite">
@@ -104,9 +122,16 @@ export function StoryRecallPanel({ settings, saving, save }: Props) {
           <dt>已归档轮数</dt><dd>{status?.archivedRounds ?? '—'}</dd>
           <dt>已有向量轮数</dt><dd>{status?.vectorRounds ?? '—'}</dd>
           <dt>向量可用性</dt><dd>{status?.vectorReady ? '可用' : '不可用（仅关键词召回，可能漏细节）'}</dd>
-          <dt>最近一次召回</dt><dd>{status?.lastRecall ? status.lastRecall.hitRounds + ' 轮 / ' + (status.lastRecall.budgetLimited ? '因预算压缩' : '未因预算压缩') : '暂无记录'}</dd>
+          <dt>最近一次召回</dt><dd className="story-recall-last">{status?.lastRecall ? status.lastRecall.hitRounds + ' 轮' +
+            ((status.lastRecall.dropped ?? 0) > 0 ? '（另有 ' + status.lastRecall.dropped + ' 轮因预算未注入）' : '') : '暂无记录'}</dd>
+          <dt>本次命中分量</dt><dd className="story-recall-components">{status?.lastRecall?.top?.length
+            ? status.lastRecall.top.slice(0, 3).map((hit, index) => <div key={index}>第 {hit.roundIndex + 1} 轮 向量 {hit.vectorScore?.toFixed(2) ?? '—'} / 关键词 {hit.keywordScore?.toFixed(2) ?? '—'}</div>)
+            : '暂无记录'}</dd>
+          <dt>待补向量轮数</dt><dd>{status?.pendingRounds ?? '—'}（{status?.pendingChunks ?? '—'} 个分片）</dd>
+          <dt>补算进度</dt><dd>{status?.backfilling ? `${status.backfilling.done} / ${status.backfilling.total}` : '未在补算'}</dd>
         </dl>
         {!status?.vectorReady && <p className="hint-text hint-text--error" role="status" data-ui-target="故事向量降级提示"><strong>不可用（仅关键词召回，可能漏细节）</strong>{status?.lastError ? '：' + status.lastError : status?.modelInstalled ? ' · 模型已安装，等待下次检索加载' : ' · 模型未安装或尚未就绪'}</p>}
+        {status?.pendingError && <p className="hint-text hint-text--error" role="alert">向量待补原因：{status.pendingError}</p>}
         {statusError && <p className="hint-text hint-text--error" role="alert">状态读取失败：{statusError}</p>}
         {status?.databaseErrors.map(message => <p className="hint-text hint-text--error" role="alert" key={message}>故事库统计失败：{message}</p>)}
       </div>

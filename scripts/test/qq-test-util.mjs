@@ -26,7 +26,7 @@ export function loadEsbuild() {
 }
 
 /** 把 electron 换成最小桩。返回 userData 目录（测试自己往里写 settings.json）。 */
-export function installElectronStub(userData) {
+export function installElectronStub(userData, { encryptionAvailable = true } = {}) {
   const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-qq-stub-'))
   const stub = path.join(sandbox, 'electron-stub.cjs')
   fs.writeFileSync(
@@ -35,6 +35,12 @@ export function installElectronStub(userData) {
       'const path = require("node:path")',
       'const userData = ' + JSON.stringify(userData),
       'module.exports = {',
+      // 测试桩：enc: 仅用于可逆断言，绝非真实加密实现。
+      '  safeStorage: {',
+      '    isEncryptionAvailable: () => ' + JSON.stringify(encryptionAvailable) + ',',
+      '    encryptString: s => Buffer.from("enc:" + s),',
+      '    decryptString: b => { const s = b.toString(); if (!s.startsWith("enc:")) throw new Error("invalid ciphertext"); return s.slice(4) }',
+      '  },',
       '  app: {',
       '    getPath: (key) => (key === "userData" ? userData : path.join(userData, String(key))),',
       '    getAppPath: () => ' + JSON.stringify(projectRoot) + ',',

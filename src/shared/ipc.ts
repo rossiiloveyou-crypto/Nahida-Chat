@@ -121,6 +121,8 @@ export const IPC = {
 
   // 故事区（P4 / M14 允许新开通道）：建区 / 列区 / 读区 / 删区
   storyRecallStatus: 'story:recall-status',
+  storyBackfillEmbeddings: 'story:backfill-embeddings',
+  storyEmbeddingProgress: 'story:embedding-progress',
   storyList: 'story:list',
   storyCreate: 'story:create',
   storyGet: 'story:get',

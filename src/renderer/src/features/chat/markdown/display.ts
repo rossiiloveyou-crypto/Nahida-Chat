@@ -20,6 +20,7 @@ import type { StRegexScript } from '@shared/regex'
 import { getRegexedString, HOST_FALLBACK_DEBUG } from '@shared/regexEngine'
 import { renderMarkdown, escapeHtml } from './render'
 import { splitFoldedTags, preserveFoldedTagLiterals } from './foldedTags'
+import { BUILTIN_FOLDS, parseOptionCard } from './optionCards'
 
 let configuredTags: string[] = []
 export function setDisplayFoldedTags(tags: string[]): void { configuredTags = tags }
@@ -30,9 +31,9 @@ function renderFallback(text: string, purify?: PurifierLike, dialogue = true, ta
     const result = getRegexedString(raw, REGEX_PLACEMENT.AI_OUTPUT, { scripts, isMarkdown: true, depth,
       onDebug: message => { if (message.includes(HOST_FALLBACK_DEBUG)) host = true }
     })
-    return host || result !== raw
+    return !host && result !== raw && /<details\b[^>]*>\s*<summary\b[^>]*>[\s\S]*?<\/summary>[\s\S]*?<\/details>/i.test(result)
   }).map(part => part.tag
-    ? '<details class="bubble-card"><summary>' + escapeHtml(part.tag) + '</summary>' + renderMarkdown(part.text, purify, dialogue ? wrapQuotes : undefined) + '</details>'
+    ? '<details class="bubble-card"><summary>' + escapeHtml(part.tag) + '</summary>' + '<div class="bubble-card__text">' + escapeHtml(part.text) + '</div></details>'
     : renderMarkdown(preserveFoldedTagLiterals(part.text, tags), purify, dialogue ? wrapQuotes : undefined)).join('')
 }
 import type { PurifierLike } from './render'
@@ -40,14 +41,38 @@ import { structureOf } from './structure'
 import { wrapQuotes } from './quotes'
 import type { CardData } from './structure'
 
-export type DisplayToken = CardData | { kind: 'text'; html: string; offset: number }
+export type DisplayToken = CardData | { kind: 'text'; html: string; offset: number } | { kind: 'options'; items: string[]; offset: number }
 
 /** Structured UI entry; displayOf retains the P3 string contract. */
 export function displayPartsOf(mes: string, scripts: StRegexScript[] = [], depth?: number, purify?: PurifierLike, tags = configuredTags): DisplayToken[] {
-  return structureOf(mes, scripts, depth).map(part => part.kind === 'card' ? part : {
-    kind: 'text', offset: part.offset, html: renderFallback(
-      applyDisplayScripts(part.text, scripts, depth), purify, true, tags, scripts, depth
-    )
+  const presetCovers = (raw: string): boolean => {
+    let host = false
+    const result = getRegexedString(raw, REGEX_PLACEMENT.AI_OUTPUT, { scripts, isMarkdown: true, depth,
+      onDebug: message => { if (message.includes(HOST_FALLBACK_DEBUG)) host = true }
+    })
+    return !host && result !== raw && /<details\b[^>]*>\s*<summary\b[^>]*>[\s\S]*?<\/summary>[\s\S]*?<\/details>/i.test(result)
+  }
+  return structureOf(mes, scripts, depth).flatMap((part): DisplayToken[] => {
+    if (part.kind === 'card') return [part]
+    // Inspect original tags so a preset-generated <details><summary> is never folded twice.
+    return splitFoldedTags(part.text, [...new Set([...tags, ...Object.keys(BUILTIN_FOLDS)])], presetCovers).flatMap((fold): DisplayToken[] => {
+      const offset = part.offset + fold.offset
+      if (fold.tag) return [{ kind: 'text', offset, html: '<details class="bubble-card"><summary>' +
+        escapeHtml(tags.includes(fold.tag) ? fold.tag : BUILTIN_FOLDS[fold.tag]) + '</summary><div class="bubble-card__text">' + escapeHtml(fold.text) + '</div></details>' }]
+      const transformed = applyDisplayScripts(fold.text, scripts, depth)
+      return splitFoldedTags(transformed, ['options']).map((option): DisplayToken => {
+        const at = offset + option.offset
+        if (option.tag) {
+          const raw = '<options>' + option.text + '</options>'
+          const parsed = parseOptionCard(raw)
+          if (parsed.consumed) return { kind: 'options', items: parsed.items, offset: at }
+          return { kind: 'text', offset: at, html: renderMarkdown(escapeHtml(raw), purify, wrapQuotes) }
+        }
+        return { kind: 'text', offset: at, html: renderMarkdown(
+          preserveFoldedTagLiterals(option.text, ['options', 'option', ...(presetCovers(fold.text) ? [] : [...tags, ...Object.keys(BUILTIN_FOLDS)])]),
+          purify, wrapQuotes) }
+      })
+    })
   })
 }
 

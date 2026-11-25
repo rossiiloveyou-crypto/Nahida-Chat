@@ -5,6 +5,39 @@
 
 ## 需求 → 位置 → 代码
 
+### 密钥加密状态（桥接重构1 Q5，2026-11-26）
+
+- `settings-models` I9–O10连接区显示系统密钥库可用、明文降级或原密钥解密失败提示；无新增可交互标注，元素6仍为模型编辑面板。
+- `ModelSection.tsx`仅消费主进程keyStorage与档案apiKeyUnavailable状态，不接触Node或加密API；真实React DOM验证遮罩与警告，正常态定位图保留。
+- 左侧档案说明已移除“以明文保存”的过时表述。
+
+### 召回可观测（桥接重构1 Q4.5，2026-11-26）
+
+- `settings-story-recall` 元素17内显示最近注入轮数、预算淘汰数与最多三条向量/关键词分量；未新增定位标记，整图仍26个元素。
+- 空态截图保留真实“暂无记录”；有记录、零命中和三条分量由真实React DOM专项验证。仅重拍此图，保留另外42张。
+- `rag/index.ts` 注入处记录进程内报告；`recallStatus.ts` 继续只打开隔离快照。
+
+### 故事召回向量补齐（桥接重构1 Q4，2026-11-25）
+
+- `settings-story-recall` 元素16「补算故事向量」（G8附近）；状态区展示待补轮数/分片与进度。运行时显示「停止故事向量补算」，并禁用重复启动按钮。
+- `StoryRecallPanel.tsx` → preload → `story:backfill-embeddings`；事件只推送进度，开始/结束刷新快照统计。
+- `embedPendings.ts` 每批16条、写前版本/NULL校验、逐批事务；状态读取仍由 `recallStatus.ts` 复制DB/WAL后查询。
+- 只重拍故事召回这一视图；控件加入P4.9 required检查，JS DOM专项另验运行态进度/按钮。
+
+### 预设折叠热修（桥接重构1 Q3.6，2026-11-25）
+
+- 复用 `chat-options` / `chat-options-filled` 定位图；F9–N10 为两块折叠，按钮编号与Q3.5一致。
+- 仅成功产出完整可用details/summary的预设优先；宿主HTML降级进入用户标签/内置兜底。原生details标题保持不变。
+- 折叠正文纯文本换行显示，无删除线/强调/链接/代码块解析；无新增交互标记、无组件编号变化。
+
+### 选项填入与内置折叠（桥接重构1 Q3.5，2026-11-25）
+
+- `chat-options` / `chat-options-filled`：元素12/13/14（F6–N8）为三项原生按钮；元素21（G12–T12）为输入框。每项有独立定位标记，容器和两块折叠不加标记。
+- `optionCards.ts`只解析实测options/option；`MessageList.tsx` → `ChatPage.tsx` → `Composer.tsx`复用textarea ref，仅填入、聚焦、光标到末尾，不调用发送。手打草稿替换前确认。
+- `summary`、`comment`默认折叠为“剧情小总结”“小猫留言”；预设优先，用户标签其次，内置兜底最低。图中F9–N10可展开。
+- 定位图使用隔离userData、真实story.create IPC及v2实测选项片段。Chromium空格键激活第二项后，对比会话快照、焦点和selection；P4.9两图均通过。不读写用户真实会话。
+
+
 ### 酒馆显示脚本与兜底折叠（桥接重构1 Q3，2026-11-25）
 
 - `settings-bridge-lower` 图 G4–Q8「消息显示与折叠」：显示预设、脚本条数和读取错误；刷新按钮使已挂载气泡同步更新。

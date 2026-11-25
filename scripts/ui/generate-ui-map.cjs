@@ -162,6 +162,8 @@ function resolveMainEntry() {
 
 // Q3: optional isolated preset fixture, resolved through the real bridge config and regex IPC.
 const q3PresetFixture = process.argv.includes('--q3-preset-fixture')
+const q35OptionsFixture = process.argv.includes('--q35-options-fixture')
+const q35Opening = '雨点敲在钟楼的铜面上。\n<options>\n<option>😏 走到沙发旁坐下，端起水杯喝一口，顺便打量屋里的陈设</option>\n<option>🥺 站在茶几旁有点拘谨，轻声问她一个人住这么大的房子习不习惯</option>\n<option>😂 笑着指了指茶几上的打火机和指甲刀，调侃她平时还挺会享受生活</option>\n</options>\n<summary>雨夜的小镇里，钟楼停了。</summary>\n<comment>喵呼呼，一起去看看吧。</comment>'
 if (q3PresetFixture) {
   const stRoot = path.join(userData, 'fixture-st')
   const stDir = path.join(stRoot, 'data-nc', 'default-user')
@@ -218,6 +220,7 @@ const DEFAULT_VIEWS = [
   // 点「打开世界书编辑器」后弹层自己会拉 knownDirs 并落到默认角色的 worldbook 目录。
   { hash: '/settings/prompts', name: 'worldbook-editor', click: '[data-ui-target="世界书编辑器入口"]' },
   // P7：故事区三视图（主界面双分区 / 抽屉展开 / 设置·故事区）
+  ...(q35OptionsFixture ? ['chat-options', 'chat-options-filled'].map(name => ({ hash: '/chat', name, seedStory: true, click: ['[data-ui-target="新建对话"]', '[data-ui-target="故事"]', '[data-ui-target="故事卡片 时钟之谜"]'] })) : []),
   { hash: '/chat', name: 'chat-stories', seedStory: true, click: ['[data-ui-target="新建对话"]', '[data-ui-target="故事"]'] },
   ...(q3PresetFixture ? [{ hash: '/chat', name: 'chat-story-preset', seedStory: true, click: ['[data-ui-target="新建对话"]', '[data-ui-target="故事"]', '[data-ui-target="故事卡片 时钟之谜"]'], scrollSelector: '.message-list', scrollY: 0 }] : []),
   { hash: '/chat', name: 'chat-story-drawer', seedStory: true, click: ['[data-ui-target="新建对话"]', '[data-ui-target="故事"]', '[data-ui-target="故事卡片 时钟之谜"]', '[data-ui-target="打开分支抽屉"]'] },
@@ -478,7 +481,7 @@ app.whenReady().then(async () => {
               title: '时钟之谜',
               characterId: 'nahida',
               synopsis: '雨夜的小镇里，钟楼停了。她和我一起去找停摆的原因。',
-              openingText: ${JSON.stringify(q3PresetFixture ? '<think_nya>这是隔离预设的折叠内容。</think_nya>雨点敲在钟楼的铜面上。' : '雨点敲在钟楼的铜面上，像是有人在数数。')}
+              openingText: ${JSON.stringify(q35OptionsFixture ? q35Opening : q3PresetFixture ? '<think_nya>这是隔离预设的折叠内容。</think_nya>雨点敲在钟楼的铜面上。' : '雨点敲在钟楼的铜面上，像是有人在数数。')}
             })
             const storyId = created.meta.storyId
             const root = await window.nahida.story.session(storyId)
@@ -489,7 +492,7 @@ app.whenReady().then(async () => {
               '那我们去塔顶看看？',
               '等雨小一点，我先把斗篷系紧。'
             ]
-            for (const line of lines) {
+            for (const line of ${q35OptionsFixture ? "[]" : "lines"}) {
               await window.nahida.chat.send({ sessionId: root.id, content: line })
               const deadline = Date.now() + 15000
               for (;;) {
@@ -502,6 +505,7 @@ app.whenReady().then(async () => {
                 await new Promise((r) => setTimeout(r, 120))
               }
             }
+            if (${q35OptionsFixture}) return { ok: true, storyId, messages: root.messages.length }
             // 旁白视图：写一条真实 narration（不调模型），再从它派生，保证活跃分支里能看到居中旁白。
             await window.nahida.chat.narrate(root.id, '雨声忽然停了，钟楼里传来一声很轻的叹息。')
             const after = await window.nahida.story.session(storyId)
@@ -848,6 +852,39 @@ app.whenReady().then(async () => {
       )
       await new Promise((resolve) => setTimeout(resolve, 250))
     }
+    if (q35OptionsFixture && view.name.startsWith('chat-options')) {
+      const evidence = await win.webContents.executeJavaScript(`(async () => {
+        const cards = [...document.querySelectorAll('.option-card__item')]
+        if (cards.length !== 3 || cards.some(b => b.disabled)) throw Error('Missing enabled option buttons')
+        const initial = await window.nahida.story.list()
+        const before = await window.nahida.story.session(initial.find(s => s.title === '时钟之谜').storyId)
+        const originalSend = window.nahida.chat.send
+        window.__q35Sends = 0
+        window.nahida.chat.send = (...args) => { window.__q35Sends++; return originalSend(...args) }
+        const folded = [...document.querySelectorAll('details.bubble-card')].map(d => ({ title:d.querySelector('summary').textContent, open:d.open }))
+        if (folded.length !== 2 || folded.some(d => d.open)) throw Error('Builtin folding mismatch')
+        if (${JSON.stringify(view.name)} === 'chat-options-filled') {
+          // Native button keyboard activation; Chromium owns click dispatch.
+          cards[1].focus()
+        }
+        return { before, sends: window.__q35Sends, folded, labels: cards.map(b => b.dataset.uiTarget) }
+      })()`)
+      if (view.name === 'chat-options-filled') {
+        win.webContents.sendInputEvent({type:'keyDown',keyCode:'Space'})
+        win.webContents.sendInputEvent({type:'keyUp',keyCode:'Space'})
+        await new Promise(resolve => setTimeout(resolve, 200))
+        const after = await win.webContents.executeJavaScript(`(async () => {
+          const input=document.querySelector('.composer__input')
+          const list=await window.nahida.story.list()
+          return { sends:window.__q35Sends, value:input.value, focused:document.activeElement===input, start:input.selectionStart,end:input.selectionEnd,
+            session:await window.nahida.story.session(list.find(s=>s.title==='时钟之谜').storyId) }
+        })()`)
+        if (after.sends !== 0 || !after.focused || after.value !== '🥺 站在茶几旁有点拘谨，轻声问她一个人住这么大的房子习不习惯' || after.start !== after.value.length || after.end !== after.value.length || JSON.stringify(evidence.before)!==JSON.stringify(after.session)) throw Error('Native option activation failed: '+JSON.stringify(after))
+        evidence.after = after
+      }
+      fs.writeFileSync(path.join(outDir, view.name+'-evidence.json'), JSON.stringify(evidence, null, 2))
+      console.log('PASS Q35 Chromium ' + view.name)
+    }
     if (view.name === 'chat-story-preset') {
       await win.webContents.executeJavaScript("document.querySelector('details.bubble-card')?.scrollIntoView({block:'center'}); window.dispatchEvent(new Event('scroll'))")
       await new Promise(resolve => setTimeout(resolve, 500))
@@ -931,7 +968,7 @@ app.whenReady().then(async () => {
         'chat-story-drawer': ['跳到消息 10', '从此处分支出新剧情 10'],
         'new-story-dialog': ['故事画像输入'],
         'settings-memory': ['对话摘要参数'],
-        'settings-story-recall': ['故事召回开关', '故事召回轮数', '故事召回预算', '故事召回阈值', '故事关键词权重', '故事补查深度', '保存故事召回设置'],
+        'settings-story-recall': ['故事召回开关', '故事召回轮数', '故事召回预算', '故事召回阈值', '故事关键词权重', '故事补查深度', '保存故事召回设置', '补算故事向量'],
         'settings-memory-facts': ['检索参数', '试召回输入', '按人列表'],
         'settings-qq-threshold': ['门槛组']
       }[view.name] || []

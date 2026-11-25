@@ -450,6 +450,8 @@ export interface NahidaApi {
   story: {
     /** 只读统计所有故事归档；不初始化库、不加载或下载模型。 */
     recallStatus: () => Promise<StoryRecallStatus>
+    backfillEmbeddings: (cancel?: boolean) => Promise<{ started: boolean; reason?: string }>
+    onEmbeddingProgress: (handler: (state: Pick<StoryRecallStatus, 'backfilling' | 'pendingError'>) => void) => () => void
     list: () => Promise<StorySummary[]>
     create: (draft: StoryDraft) => Promise<{ meta: StoryMeta; sessionId: string }>
     get: (storyId: string) => Promise<StoryMeta | null>

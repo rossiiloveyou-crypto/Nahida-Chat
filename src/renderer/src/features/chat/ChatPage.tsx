@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { ComposerHandle } from './components/Composer'
 import { providerMeta } from '@shared/constants'
 import { bridgeEligible } from '@shared/bridge'
 import { isChannelSessionId } from '@shared/channels'
@@ -40,6 +41,7 @@ export function ChatPage() {
   const updateMessage = useChatStore((s) => s.updateMessage)
   const resendFrom = useChatStore((s) => s.resendFrom)
   const [editing, setEditing] = useState(false)
+  const composerRef = useRef<ComposerHandle>(null)
   const dismissError = useChatStore((s) => s.dismissError)
   const fail = useChatStore((s) => s.fail)
   const { settings, save: saveSettings } = useSettings()
@@ -280,6 +282,11 @@ export function ChatPage() {
     }
   }
 
+  const fillOption = useCallback((text: string) => {
+    if (!ready || streaming || editing || channelReadOnly) return
+    composerRef.current?.fillOption(text)
+  }, [ready, streaming, editing, channelReadOnly])
+
   return (
     <section className="chat-page">
       <header className="chat-header" data-ui-region="A 对话头部">
@@ -354,6 +361,7 @@ export function ChatPage() {
             onUpdate={updateMessage}
             onResend={resendFrom}
             onEditingChange={setEditing}
+            onSelectOption={fillOption}
             focusMessageId={focusMessageId}
             isStreaming={streaming}
             displayScripts={displayScripts}
@@ -378,6 +386,7 @@ export function ChatPage() {
       {exportOpen && <ExportDialog sessionId={activeId ?? undefined} onClose={() => setExportOpen(false)} />}
 
       {!storyLanding && <Composer
+        ref={composerRef}
         disabled={!ready || editing || channelReadOnly}
         streaming={streaming}
         onSend={(text) => void handleSend(text)}

@@ -1,0 +1,21 @@
+{
+  "source": "q36-real.sh paths, confirmed with readDisplayScriptsState({refresh:true}) via host-derived stDataDir",
+  "preset": "Meowssiah-2.1.7",
+  "scriptCount": 8,
+  "warning": null,
+  "productionScriptsEqualNormalizedPreset": true,
+  "sampleCount": 4,
+  "redactionPreservesTokenKinds": true,
+  "ABC": {
+    "A": "Stage 2 preserves outer tags; all four gain a card at stage 3.",
+    "B": "HOST_FALLBACK_DEBUG counts: stages 1-2 = 0, stages 3-6 = 1, stages 7-8 = 2 for each sample.",
+    "C": "Card text is exact original tag body, not rendered HTML."
+  },
+  "result": "Reported no-card/double-escape defect not reproduced with current production sources and selected preset. No speculative source edit.",
+  "tests": {
+    "standalone": "23/23 exit 0",
+    "externalTimeout": "timeout 30s exit 0 (not 124)",
+    "optionCards": "29/29 exit 0",
+    "displayPreset": "27/27 plus optionCards 29/29 exit 0"
+  }
+}

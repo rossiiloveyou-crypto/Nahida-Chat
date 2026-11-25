@@ -6,6 +6,13 @@ import { join } from 'node:path'
 import type { StoryRecallStatus } from '@shared/types'
 import { isStoryId, storiesRoot, storyDbPath } from './paths'
 import { embedder } from '../rag/embedder'
+import { embeddingProgress } from '../rag/embedPendings'
+
+// Process-local metadata only: no query, content, credentials or database writes.
+let lastRecall: StoryRecallStatus['lastRecall'] = null
+export function recordStoryRecall(report: NonNullable<StoryRecallStatus['lastRecall']>): void {
+  lastRecall = { ...report, top: report.top?.slice(0, 3).map(hit => ({ ...hit })) }
+}
 
 /** Never open the source DB: even readOnly can create WAL/SHM beside it (J-36). */
 function snapshotDatabase(file: string, directory: string): string {
@@ -28,9 +35,10 @@ function snapshotDatabase(file: string, directory: string): string {
 export function storyRecallStatus(): StoryRecallStatus {
   const model = embedder.status()
   const result: StoryRecallStatus = {
-    archivedRounds: 0, vectorRounds: 0, vectorReady: model.ready,
+    archivedRounds: 0, vectorRounds: 0, pendingRounds: 0, pendingChunks: 0,
+    ...embeddingProgress(), vectorReady: model.ready,
     modelInstalled: embedder.modelInstalled(), lastError: model.lastError,
-    databaseErrors: [], lastRecall: null
+    databaseErrors: [], lastRecall: lastRecall ? { ...lastRecall, top: lastRecall.top?.map(hit => ({ ...hit })) } : null
   }
   const root = storiesRoot()
   if (!existsSync(root)) return result
@@ -52,6 +60,9 @@ export function storyRecallStatus(): StoryRecallStatus {
       }
       if (names.has('story_chunks')) {
         vectors = Number((db.prepare('SELECT COUNT(DISTINCT round_id) AS n FROM story_chunks WHERE embedding IS NOT NULL').get() as { n: number }).n)
+        const pending = db.prepare('SELECT COUNT(*) AS chunks, COUNT(DISTINCT round_id) AS rounds FROM story_chunks WHERE embedding IS NULL').get() as { chunks: number; rounds: number }
+        result.pendingRounds += Number(pending.rounds)
+        result.pendingChunks += Number(pending.chunks)
       }
       result.archivedRounds += rounds
       result.vectorRounds += vectors

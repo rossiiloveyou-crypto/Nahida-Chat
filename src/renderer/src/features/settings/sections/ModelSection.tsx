@@ -8,7 +8,7 @@ import {
   providerMeta,
   vendorPreset
 } from '@shared/constants'
-import type { DiscoveredModel, ModelProfileDraft, ProviderId } from '@shared/types'
+import type { DiscoveredModel, ModelProfileDraft, ProviderId, Settings } from '@shared/types'
 import { draftFromProfile, useModelProfiles } from '../useModelProfiles'
 import {
   IconPencil,
@@ -69,6 +69,12 @@ interface ModelSectionProps {
 
 export function ModelSection({ onChanged }: ModelSectionProps) {
   const { catalog, loading, error, save, remove, setDefault, test } = useModelProfiles()
+  const [keyStorage, setKeyStorage] = useState<Settings['keyStorage']>()
+  useEffect(() => {
+    let active = true
+    void window.nahida.settings.get().then(settings => { if (active) setKeyStorage(settings.keyStorage) }).catch(() => {})
+    return () => { active = false }
+  }, [catalog])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [draft, setDraft] = useState<ModelProfileDraft>(() => emptyDraft())
   const [creating, setCreating] = useState(false)
@@ -383,7 +389,7 @@ export function ModelSection({ onChanged }: ModelSectionProps) {
               </span>
             </button>
           </div>
-          <p className="model-list__footnote">档案信息以明文保存在本机 userData 目录。</p>
+          <p className="model-list__footnote">档案保存在本机 userData 目录；密钥按系统密钥库状态保存。</p>
           {error && <p className="hint-text hint-text--error">{error}</p>}
         </aside>
 
@@ -469,6 +475,18 @@ export function ModelSection({ onChanged }: ModelSectionProps) {
 
           <section className="setting-group">
             <h3 className="setting-group__title">连接</h3>
+            {keyStorage?.available && !catalog.profiles.find(p => p.id === activeId)?.apiKeyUnavailable && (
+              <p className="hint-text" role="status">系统密钥库可用，密钥保存时加密。</p>
+            )}
+            {keyStorage?.available === false && (
+              <p className="hint-text" style={{ color: 'var(--nc-warning)' }} role="status">系统密钥库不可用，新密钥将以明文保存；已有密文保持不变。</p>
+            )}
+            {catalog.profiles.find(p => p.id === activeId)?.apiKeyUnavailable && (
+              <p className="hint-text" style={{ color: 'var(--nc-warning)' }} role="status">原密钥无法解密，请重新填写。保存其它设置时会保留原密文。</p>
+            )}
+            {keyStorage?.writeFailed && (
+              <p className="hint-text" style={{ color: 'var(--nc-warning)' }} role="status">密钥迁移保存失败，原配置已保留，请检查文件权限后重试。</p>
+            )}
             <p className="setting-group__desc">地址与凭据。测试连接会用默认模型发一次最小请求。</p>
             {draft.provider === 'mock' && (
               <p className="hint-text">

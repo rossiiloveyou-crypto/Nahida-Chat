@@ -23,7 +23,10 @@ const evidencePath = path.join(baselineDir, `${chatpageMode ? 'message-paginatio
 const summaryPath = path.join(baselineDir, `${chatpageMode ? 'message-pagination-chatpage' : 'message-pagination'}-${stamp}.md`)
 const hash = text => crypto.createHash('sha256').update(text).digest('hex')
 const sourceBefore = fs.readFileSync(beforePath, 'utf8')
-const sourceCurrent = fs.readFileSync(currentPath, 'utf8')
+const sourceCurrent = fs.readFileSync(currentPath, 'utf8').replace(
+ process.argv.includes('--q6-negative-control') ? '}, [messages.length, tailLength])' : '__NO_Q6_MUTATION__',
+ '}, [messages.length, tailLength, focusMessageId])'
+)
 const actionsStart = sourceCurrent.indexOf('const actionsFor')
 const actionsEnd = sourceCurrent.indexOf('const isUser', actionsStart)
 assert.ok(actionsStart >= 0 && actionsEnd > actionsStart, 'A06 actionsFor source section found')
@@ -109,10 +112,34 @@ async function browserSuite() {
   check('session key switch resets visible to 10', rows().length === 10, rows().length)
   h.patch({ focusMessageId: 'pagination-3' }); await rest()
   check('focus hidden old message expands window', Boolean(select('pagination-3')?.classList.contains('is-focus')) && rows().length === 120, { count: rows().length, focus: Boolean(select('pagination-3')) })
+  await new Promise(resolve => setTimeout(resolve, 1200)); await settle()
+  const focusedTop = list().scrollTop
+  const focusedMessages = h.props().messages
+  h.patch({ messages: [...focusedMessages, { ...focusedMessages.at(-1), id: 'focus-new', content: 'new focused message' }] }); await rest()
+  check('U03 new message while focused preserves jump', Math.abs(list().scrollTop - focusedTop) <= 2, { focusedTop, actual: list().scrollTop })
   h.patch({ focusMessageId: null }); await rest()
-  check('clearing focus retains expanded history', Boolean(select('pagination-3')) && rows().length === 120, rows().length)
+  const clearedTop = list().scrollTop
+  await new Promise(resolve => setTimeout(resolve, 3100)); await settle()
+  check('U01 clearing focus stays at jump after 3 seconds', Math.abs(clearedTop - focusedTop) <= 2 && Math.abs(list().scrollTop - focusedTop) <= 2, { focusedTop, clearedTop, delayedTop: list().scrollTop })
+  check('clearing focus retains expanded history', Boolean(select('pagination-3')) && rows().length === 121, rows().length)
+  h.patch({ messages: [...h.props().messages, { ...focusedMessages.at(-1), id: 'unfocused-new', content: 'new unfocused message' }] }); await rest()
+  check('U02 new message without focus scrolls to latest', Math.abs(list().scrollHeight - list().clientHeight - list().scrollTop) <= 2)
+  list().scrollTop = 0
+  h.patch({ messages: h.props().messages.map(m => m.id === 'unfocused-new' ? { ...m, content: m.content + ' streamed delta' } : m) }); await rest()
+  check('U02 streaming tail without focus scrolls to latest', Math.abs(list().scrollHeight - list().clientHeight - list().scrollTop) <= 2)
   await mount('after', {}, 'session-a')
   check('switching back resets visible to 10', rows().length === 10, rows().length)
+ })
+ await run('Q6 real preset browser rendering', async () => {
+  for (const sample of h.foldFixture.samples) {
+   const parts = h.displayPartsOf(sample.content, h.foldScripts, 0)
+   check('U04/U05 browser default purifier ' + sample.id, parts.filter(p => p.kind === 'card').length === 1 && parts.filter(p => p.kind === 'text').every(p => !p.html.includes('&amp;lt;')))
+   await mount('after', { messages: [{ id: sample.id, role: 'assistant', content: sample.content, status: 'done', createdAt: 1 }], displayScripts: h.foldScripts }, 'fold-' + sample.id)
+   const card = document.querySelector('.bubble-card')
+   check('U05 real bubble closed and expandable ' + sample.id, Boolean(card) && !card.open)
+   card?.querySelector('summary')?.click(); await settle()
+   check('U05 real bubble opens ' + sample.id, Boolean(card?.open))
+  }
  })
  await run('A07 actual MessageBubble render counts', async () => {
   const messages = h.fixture.map(m => m.id === 'pagination-122' ? { ...m, status: 'streaming', reasoning: '起始思考' } : m)
@@ -211,6 +238,9 @@ import {flushSync} from ${JSON.stringify(p('node_modules/react-dom/index.js'))};
 import {MessageList as Before} from 'pagination:before'; import {MessageList as After} from 'pagination:after';
 import {ChatPage} from ${JSON.stringify(p('src/renderer/src/features/chat/ChatPage.tsx'))};
 import {useChatStore} from ${JSON.stringify(p('src/renderer/src/features/chat/store.ts'))};
+import {displayPartsOf} from ${JSON.stringify(p('src/renderer/src/features/chat/markdown/display.ts'))};
+import foldFixture from ${JSON.stringify(p('scripts/fixtures/q6-branch3.json'))};
+import foldPreset from ${JSON.stringify(p('scripts/fixtures/q6-preset.json'))};
 const fixture=${JSON.stringify(fixture)};let root=null,props={},variant='after',key='a',revision=0,events=[],copied=null;
 const rootNode=document.getElementById('root');window.__paginationRenderCounts={};window.__paginationErrors=[];window.addEventListener('error',event=>{window.__paginationErrors.push(event.error?.stack||event.message);console.log('RENDER_ERROR '+event.message)});
 Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>{copied=text}},configurable:true});
@@ -226,7 +256,7 @@ const sessions=[{...baseSession,id:'empty',messages:[]},{...baseSession,id:'targ
 const settings={provider:'mock',model:'model',theme:'light',fontSize:15,bridge:{enabled:false},agent:{},memory:{enabled:false},toolSupply:{},permissionMode:'ask',permission:{mode:'approve'}};
 const off=()=>()=>{};
 window.nahida={initialTheme:'light',settings:{get:async()=>{ipcReads.settings++;return settings},save:async()=>settings},modelProfiles:{list:async()=>{ipcReads.profiles++;return{profiles:[{id:'profile',name:'Profile',provider:'mock',models:['model'],defaultModel:'model'}],defaultProfileId:'profile'}}},prompts:{library:async()=>{ipcReads.prompts++;return{characters:[]}}},workspaces:{list:async()=>{ipcReads.workspaces++;return{workspaces:[],activeWorkspaceId:null}}},regex:{listScripts:async()=>{ipcReads.regex++;return scripts}},chat:{listSessions:async()=>{ipcReads.sessions++;return sessions},onDelta:off,onReasoning:off,onTool:off,onApproval:off,onDone:off,onError:off}};
-window.paginationHarness={async setupChatPage(){if(root){flushSync(()=>root.unmount());root=null}await useChatStore.getState().init();rootNode.className='';root=createRoot(rootNode);window.__benchVariant='after';flushSync(()=>root.render(React.createElement(ChatPage)));},selectSession:id=>useChatStore.getState().select(id),activeId:()=>useChatStore.getState().activeId,ipcReads:()=>({...ipcReads}),fixture,mount(v,next,k){variant=v;props=next;key=k;revision++;render()},patch(next){props={...props,...next};revision++;render()},unmount(){if(root){flushSync(()=>root.unmount());root=null}},props:()=>({messages:fixture,...props}),revision:()=>revision,events:()=>events,copied:()=>copied,clearCounts(){window.__paginationRenderCounts={}},counts:()=>({...window.__paginationRenderCounts})};`
+window.paginationHarness={displayPartsOf,foldFixture,foldScripts:foldPreset.scripts,async setupChatPage(){if(root){flushSync(()=>root.unmount());root=null}await useChatStore.getState().init();rootNode.className='';root=createRoot(rootNode);window.__benchVariant='after';flushSync(()=>root.render(React.createElement(ChatPage)));},selectSession:id=>useChatStore.getState().select(id),activeId:()=>useChatStore.getState().activeId,ipcReads:()=>({...ipcReads}),fixture,mount(v,next,k){variant=v;props=next;key=k;revision++;render()},patch(next){props={...props,...next};revision++;render()},unmount(){if(root){flushSync(()=>root.unmount());root=null}},props:()=>({messages:fixture,...props}),revision:()=>revision,events:()=>events,copied:()=>copied,clearCounts(){window.__paginationRenderCounts={}},counts:()=>({...window.__paginationRenderCounts})};`
  await esbuild.build({ ...buildConfig, stdin: { contents: entry, resolveDir: projectRoot, sourcefile: 'message-pagination-entry.tsx', loader: 'tsx' }, outfile: path.join(work, 'browser.js'), alias: { '@shared': p('src/shared') }, plugins: [{ name: 'pagination-source-and-assets', setup(build) {
   build.onResolve({filter:/^\.\/components\/MessageList$/},args=>path.resolve(args.importer)===path.resolve(p('src/renderer/src/features/chat/ChatPage.tsx'))?{path:'pagination:wrapper',namespace:'pagination'}:undefined)
   build.onResolve({ filter: /^pagination:/ }, args => ({ path: args.path, namespace: 'pagination' }))

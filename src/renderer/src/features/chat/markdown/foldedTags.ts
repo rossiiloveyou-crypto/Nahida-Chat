@@ -40,6 +40,8 @@ function maskCode(source: string): string {
     if (/^(?: {4}|\t)/.test(line)) return line.replace(/[^\r\n]/g, ' ')
     return line
   }).join('').replace(/(`+)([\s\S]*?)\1(?!`)/g, m => ' '.repeat(m.length))
+    // Existing HTML folds own their summary and body; never split their title out.
+    .replace(/<details\b[^>]*>[\s\S]*?<\/details\s*>/gi, m => m.replace(/[^\r\n]/g, ' '))
 }
 
 export function preserveFoldedTagLiterals(source: string, tags: string[]): string {

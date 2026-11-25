@@ -120,6 +120,9 @@ export interface ModelProfile {
   provider: ProviderId
   baseUrl: string
   apiKey: string
+  /** 存储层解密失败；仅运行时状态。 */
+  apiKeyUnavailable?: boolean
+  apiKeyEnc?: string
   /** 档案内可选模型，至少一个 */
   models: string[]
   /** 默认模型，必须存在于 models 中 */
@@ -235,11 +238,22 @@ export interface AppearanceSettings {
 export interface StoryRecallStatus {
   archivedRounds: number
   vectorRounds: number
+  pendingRounds: number
+  pendingChunks: number
+  pendingError: string | null
+  backfilling: { done: number; total: number } | null
   vectorReady: boolean
   modelInstalled: boolean
   lastError: string | null
   databaseErrors: string[]
-  lastRecall: { hitRounds: number; budgetLimited: boolean } | null
+  lastRecall: {
+    hitRounds: number
+    budgetLimited: boolean
+    at?: number
+    dropped?: number
+    /** Zero-based archive index; scores belong to the winning chunk, not separate maxima. */
+    top?: { roundIndex: number; vectorScore?: number; keywordScore?: number }[]
+  } | null
 }
 
 export interface StoryRecallConfig {
@@ -260,6 +274,9 @@ export interface Settings {
   provider: ProviderId
   baseUrl: string
   apiKey: string
+  apiKeyEnc?: string
+  /** 仅运行时状态，不落盘；由主进程重新计算。 */
+  keyStorage?: { available: boolean; decryptFailed: boolean; writeFailed?: boolean }
   model: string
   temperature: number
   /** 模型档案列表；直接读写请走 modelProfile 相关 IPC，保证镜像字段同步 */

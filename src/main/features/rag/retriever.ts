@@ -170,6 +170,8 @@ export interface StoryRecallHit {
   round: StoryRoundRow
   content: string
   score: number
+  vectorScore?: number
+  keywordScore?: number
 }
 
 export interface StoryRecallOptions {
@@ -179,6 +181,8 @@ export interface StoryRecallOptions {
   recentMessageIds?: Set<string>
   /** await embedding 期间可能发生编辑；返回前再次校验，绝不扩大候选范围。 */
   isCurrent?: (round: StoryRoundRow) => boolean
+  /** Observation only: budget exclusions before formatting (not the N limit). */
+  onBudgetDropped?: (count: number) => void
 }
 
 export function normalizeStoryRecall(settings?: Partial<StoryRecallConfig>): StoryRecallConfig {
@@ -269,18 +273,25 @@ function storyOrder(a: StoryRecallHit, b: StoryRecallHit): number {
 }
 
 /** 整轮选择，不截断正文；标题、冲突规则、来源和分隔符均计入预算。 */
-function fitStoryRecall(hits: StoryRecallHit[], budgetTokens: number, n: number): StoryRecallHit[] {
+function fitStoryRecall(hits: StoryRecallHit[], budgetTokens: number, n: number, onDropped?: (hit: StoryRecallHit) => void): StoryRecallHit[] {
   const selected: StoryRecallHit[] = []
   for (const hit of hits) {
     if (selected.length >= n) break
     const ordered = [...selected, hit].sort(storyOrder)
     const formatted = [STORY_RECALL_HEADER, STORY_RECALL_RULE, ...ordered.map(storyRecallLine)].join('\n')
     if (estimateTokens(formatted) <= budgetTokens) selected.push(hit)
+    else onDropped?.(hit)
   }
   return selected.sort(storyOrder)
 }
 
 export function formatStoryRecall(hits: StoryRecallHit[], budgetTokens?: number): string {
+  return formatStoryRecallReport(hits, budgetTokens).text
+}
+
+export function formatStoryRecallReport(hits: StoryRecallHit[], budgetTokens?: number): {
+  text: string; selected: StoryRecallHit[]; dropped: number
+} {
   const budget = typeof budgetTokens === 'number' && Number.isFinite(budgetTokens)
     ? Math.max(0, budgetTokens) : DEFAULT_STORY_RECALL.budgetTokens
   // 若调用方缩小预算，先保留较新状态，再按剧情顺序展示。
@@ -298,8 +309,8 @@ export function formatStoryRecall(hits: StoryRecallHit[], budgetTokens?: number)
     else blocked.add(scope)
   }
   selected.sort(storyOrder)
-  return selected.length
-    ? [STORY_RECALL_HEADER, STORY_RECALL_RULE, ...selected.map(storyRecallLine)].join('\n') : ''
+  return { selected, dropped: unique.length - selected.length, text: selected.length
+    ? [STORY_RECALL_HEADER, STORY_RECALL_RULE, ...selected.map(storyRecallLine)].join('\n') : '' }
 }
 
 /** 故事原文与事实 recall 并列；不读事实库、不自行放宽上层可见性范围。 */
@@ -354,7 +365,13 @@ export async function recallStory(
       ? Math.max(0, Math.min(1, cosine(queryVector, vector))) : 0
     // 保留至少 10% 的绝对 query 覆盖量：长查询只巧合命中一个 bigram 时，不抬成满分。
     const k = (keywordScores.get(chunk) ?? 0) / Math.max(maxKeyword, 0.1)
-    candidate.score = Math.max(candidate.score, v + (1 - v) * k * config.keywordWeight)
+    const score = v + (1 - v) * k * config.keywordWeight
+    // Keep both components from the same winning chunk; preserve first tie and score formula.
+    if (candidate.vectorScore === undefined || score > candidate.score) {
+      candidate.vectorScore = v
+      candidate.keywordScore = k
+    }
+    candidate.score = Math.max(candidate.score, score)
   }
   const current = candidates.filter((candidate) => available(candidate.round))
   current.sort((a, b) => b.score - a.score || storyOrder(b, a))
@@ -367,7 +384,8 @@ export async function recallStory(
   const enqueue = (hit: StoryRecallHit): void => {
     if (!queued.has(hit.round.id)) {
       queued.add(hit.round.id)
-      priority.push({ round: hit.round, content: hit.content, score: hit.score })
+      priority.push({ round: hit.round, content: hit.content, score: hit.score,
+        vectorScore: hit.vectorScore, keywordScore: hit.keywordScore })
     }
   }
   for (const seed of seeds) {
@@ -387,8 +405,25 @@ export async function recallStory(
     }
   }
   for (const seed of seeds) enqueue(seed)
-  const selected = fitStoryRecall(priority.filter((hit) => available(hit.round)), config.budgetTokens, config.n)
+  const budgetDropped = new Set<string>()
+  const selected = fitStoryRecall(priority.filter((hit) => available(hit.round)), config.budgetTokens, config.n,
+    hit => { budgetDropped.add(hit.round.id) })
   const selectedIds = new Set(selected.map((hit) => hit.round.id))
   // 已知存在较新状态却装不下时，不把它对应的旧状态单独注入。
-  return selected.filter((hit) => !superseded.has(hit.round.id) || selectedIds.has(superseded.get(hit.round.id)!))
+  const result = selected.filter((hit) => !superseded.has(hit.round.id) || selectedIds.has(superseded.get(hit.round.id)!))
+  // A missing newer state can also be caused by N; only follow actual budget exclusions.
+  const lostToBudget = (id: string): boolean => {
+    const seen = new Set<string>()
+    while (!seen.has(id)) {
+      if (budgetDropped.has(id)) return true
+      seen.add(id)
+      const newer = superseded.get(id)
+      if (!newer) return false
+      id = newer
+    }
+    return false
+  }
+  const suppressedByBudget = selected.filter(hit => !result.includes(hit) && lostToBudget(hit.round.id)).length
+  options.onBudgetDropped?.(budgetDropped.size + suppressedByBudget)
+  return result
 }

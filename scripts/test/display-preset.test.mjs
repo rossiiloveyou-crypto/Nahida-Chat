@@ -96,14 +96,15 @@ await mounted.act(async()=>root.render(mounted.createElement(mounted.MemoryRoute
 await mounted.act(async()=>resolveMounted({...next,scripts:[],warning:'目录不存在，请检查 ST 数据目录'}))
 check('G-04 production settings exposes readable alert',()=>assert.match(document.querySelector('[role="alert"]').textContent,/目录不存在/))
 const input=[...document.querySelectorAll('textarea')].find(x=>x.placeholder.includes('think_nya'))
-await mounted.act(async()=>{Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype,'value').set.call(input,'<MEMO>, memo, note');input.dispatchEvent(new dom.window.Event('input',{bubbles:true}))})
+await mounted.act(async()=>{Object.getOwnPropertyDescriptor(dom.window.HTMLTextAreaElement.prototype,'value').set.call(input,'<MEMO>, memo, note, comment');input.dispatchEvent(new dom.window.Event('input',{bubbles:true}))})
 await mounted.act(async()=>[...document.querySelectorAll('button')].find(x=>x.textContent==='保存折叠标签').click())
-check('production settings saves normalized fallback tags',()=>assert.deepEqual(preferences.bridge.foldedTags,['memo','note']))
+check('production settings saves normalized fallback tags',()=>assert.deepEqual(preferences.bridge.foldedTags,['memo','note','comment']))
 await mounted.act(async()=>root.unmount())
 delete globalThis.window;delete globalThis.document
 dom.window.close()
 window.close()
 console.log('PASS display-preset '+count+'/'+count)
 fs.rmSync(tmp,{recursive:true,force:true})
+await import('./option-cards.test.mjs')
 // React scheduler MessagePorts can keep Node alive after all roots and windows close.
 process.exit(0)

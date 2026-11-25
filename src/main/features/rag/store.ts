@@ -248,6 +248,7 @@ export interface StoryRoundInput {
   roles: string[]
   startedAt: number
   chunks: Array<{ index: number; text: string; startOffset: number; endOffset: number }>
+  embeddings?: (Float32Array | null)[] | null
 }
 
 export interface StoryRoundRow {
@@ -989,6 +990,9 @@ export class MemoryStore {
         !Number.isSafeInteger(input.roundIndex) || input.roundIndex < 0 || !input.contentVersion) {
       throw new Error('故事归档标识缺失或非法')
     }
+    if (input.embeddings && input.embeddings.length !== input.chunks.length) {
+      throw new Error('故事分片与向量数量不匹配')
+    }
     const db = this.archiveDb()
     const id = input.storyId + ':' + input.branchId + ':' + input.roundIndex
     db.exec('BEGIN IMMEDIATE')
@@ -1025,11 +1029,11 @@ export class MemoryStore {
           input.firstMessageId, input.lastMessageId, input.contentVersion, JSON.stringify(input.roles), input.startedAt, now)
       const insert = db.prepare(`INSERT INTO story_chunks
         (id, round_id, chunk_index, text, start_offset, end_offset, embedding, content_version, indexed_at)
-        VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)`)
-      for (const chunk of input.chunks) {
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      for (const [i, chunk] of input.chunks.entries()) {
         insert.run(id + ':' + chunk.index, id, chunk.index, Buffer.from(chunk.text, 'utf8').toString('utf8') === chunk.text
           ? chunk.text : Buffer.from(chunk.text, 'utf16le'), chunk.startOffset,
-          chunk.endOffset, input.contentVersion, now)
+          chunk.endOffset, input.embeddings?.[i] ? toBlob(input.embeddings[i]!) : null, input.contentVersion, now)
       }
       db.exec('COMMIT')
       return true

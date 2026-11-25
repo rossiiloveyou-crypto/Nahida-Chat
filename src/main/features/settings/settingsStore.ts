@@ -1,4 +1,4 @@
-import { app } from 'electron'
+import { app, safeStorage } from 'electron'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -134,10 +134,55 @@ export function defaultSettings(): Settings {
 /**
  * 配置存储：userData/settings.json。
  * 写入走临时文件 + rename，避免半截 JSON 把配置写坏。
- * TODO(M2): apiKey 换成 Electron safeStorage 加密后再落盘。
+ * apiKey 仅在内存使用，持久化边界统一加解密。
  */
-class SettingsStore {
+export class SettingsStore {
   private cache: Settings | null = null
+  private protectedKeys = new Map<string, { enc: string; key: string; failed: boolean }>()
+  private warnedUnavailable = false
+  private keyDataBlocked = false
+
+  private encryptionAvailable(): boolean {
+    try {
+      return !!safeStorage?.isEncryptionAvailable() &&
+        !(process.platform === 'linux' && safeStorage.getSelectedStorageBackend?.() === 'basic_text')
+    } catch { return false }
+  }
+
+  private storageStatus(value: Settings): void {
+    const available = this.encryptionAvailable()
+    value.keyStorage = { available, decryptFailed: value.modelProfiles.some(p => !!p.apiKeyUnavailable), ...(value.keyStorage?.writeFailed ? { writeFailed: true } : {}) }
+    if (!available && !this.warnedUnavailable) {
+      console.warn('[settings] 系统密钥库不可用，未加密密钥将以明文保存；已有密文保持不变')
+      this.warnedUnavailable = true
+    }
+  }
+
+  private decodeKey(value: { apiKey?: string; apiKeyEnc?: string; apiKeyUnavailable?: boolean }, id: string): void {
+    if (value.apiKeyEnc === undefined) return
+    if (typeof value.apiKeyEnc !== 'string' || !value.apiKeyEnc) {
+      this.keyDataBlocked = true
+      value.apiKey = ''
+      value.apiKeyUnavailable = true
+      console.warn('[settings] 密钥存储格式异常，保留原文件并暂停保存')
+      return
+    }
+    const enc = value.apiKeyEnc
+    let key = ''
+    let failed = false
+    try {
+      if (!this.encryptionAvailable()) throw new Error()
+      if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(enc)) throw new Error()
+      key = safeStorage.decryptString(Buffer.from(enc, 'base64'))
+    } catch {
+      failed = true
+      console.warn('[settings] 原密钥解密失败，请重新填写；保留原密文')
+    }
+    value.apiKey = key
+    value.apiKeyUnavailable = failed
+    delete value.apiKeyEnc
+    this.protectedKeys.set(id, { enc, key, failed })
+  }
 
   private get file(): string {
     return join(app.getPath('userData'), 'settings.json')
@@ -145,6 +190,7 @@ class SettingsStore {
 
   get(): Settings {
     if (!this.cache) this.cache = this.load()
+    this.storageStatus(this.cache)
     return clone(this.cache)
   }
 
@@ -196,8 +242,8 @@ class SettingsStore {
     // 档案是唯一真源：任何整体保存都要重新归一化并把镜像字段对齐
     normalizeProfiles(next)
     next.defaultCharacterId = ensureCharacter(next.defaultCharacterId)
-    this.cache = next
     this.flush(next)
+    this.cache = next
     return clone(next)
   }
 
@@ -241,8 +287,8 @@ class SettingsStore {
     }
 
     normalizeProfiles(settings)
-    this.cache = settings
     this.flush(settings)
+    this.cache = settings
     return { profiles: clone(settings).modelProfiles, defaultProfileId: settings.defaultProfileId }
   }
 
@@ -262,13 +308,13 @@ class SettingsStore {
       settings.temperature = 0.7
       settings.defaultProfileId = null
       settings.modelProfiles = []
-      this.cache = settings
       this.flush(settings)
+      this.cache = settings
       return { profiles: [], defaultProfileId: null }
     }
     normalizeProfiles(settings)
-    this.cache = settings
     this.flush(settings)
+    this.cache = settings
     return { profiles: clone(settings).modelProfiles, defaultProfileId: settings.defaultProfileId }
   }
 
@@ -279,8 +325,8 @@ class SettingsStore {
     }
     settings.defaultProfileId = id
     normalizeProfiles(settings)
-    this.cache = settings
     this.flush(settings)
+    this.cache = settings
     return { profiles: clone(settings).modelProfiles, defaultProfileId: settings.defaultProfileId }
   }
 
@@ -323,8 +369,8 @@ class SettingsStore {
     }
 
     normalizeWorkspaces(settings)
-    this.cache = settings
     this.flush(settings)
+    this.cache = settings
     return { workspaces: clone(settings).workspaces, activeWorkspaceId: settings.activeWorkspaceId }
   }
 
@@ -351,8 +397,8 @@ class SettingsStore {
     settings.workspaceOptOut = settings.workspaces.length === 0
     if (settings.activeWorkspaceId === id) settings.activeWorkspaceId = null
     normalizeWorkspaces(settings)
-    this.cache = settings
     this.flush(settings)
+    this.cache = settings
     return { workspaces: clone(settings).workspaces, activeWorkspaceId: settings.activeWorkspaceId }
   }
 
@@ -362,16 +408,31 @@ class SettingsStore {
       throw new Error('工作区不存在: ' + id)
     }
     settings.activeWorkspaceId = id
-    this.cache = settings
     this.flush(settings)
+    this.cache = settings
     return { workspaces: clone(settings).workspaces, activeWorkspaceId: settings.activeWorkspaceId }
   }
 
   private load(): Settings {
     const base = defaultSettings()
     try {
-      if (!existsSync(this.file)) return base
+      if (!existsSync(this.file)) { this.storageStatus(base); return base }
       const parsed = JSON.parse(readFileSync(this.file, 'utf8')) as Partial<Settings>
+      const original = structuredClone(parsed)
+      this.protectedKeys.clear()
+      const oldPlaintext = [parsed, ...(Array.isArray(parsed.modelProfiles) ? parsed.modelProfiles : [])]
+        .some(p => typeof p?.apiKey === 'string' && !!p.apiKey && !p.apiKeyEnc)
+      const ids = new Set<string>()
+      if (Array.isArray(parsed.modelProfiles)) for (const p of parsed.modelProfiles) {
+        if (!p || typeof p !== 'object') continue
+        if (typeof p.id !== 'string' || !p.id.trim() || ids.has(p.id) || p.id === '@top') p.id = randomUUID()
+        ids.add(p.id)
+      }
+      this.decodeKey(parsed, '@top')
+      parsed.keyStorage = { available: this.encryptionAvailable(), decryptFailed: this.protectedKeys.get('@top')?.failed ?? false }
+      if (Array.isArray(parsed.modelProfiles)) for (const p of parsed.modelProfiles) {
+        if (p && typeof p === 'object') this.decodeKey(p, p.id)
+      }
       // 老配置（有 toolPolicy / workspaceRoots）会被 normalizePermission 迁移成新形态
       const merged: Settings = {
         ...base,
@@ -402,23 +463,89 @@ class SettingsStore {
       merged.modelProfiles = Array.isArray(parsed.modelProfiles) ? parsed.modelProfiles : []
       merged.defaultProfileId = typeof parsed.defaultProfileId === 'string' ? parsed.defaultProfileId : null
       normalizeProfiles(merged)
+      if (!Array.isArray(parsed.modelProfiles) || !parsed.modelProfiles.some(p => p && typeof p === 'object' &&
+        ((Array.isArray(p.models) && p.models.some(m => String(m).trim())) || (typeof p.defaultModel === 'string' && p.defaultModel.trim()) || p.apiKey || p.apiKeyUnavailable))) {
+        const legacyKey = this.protectedKeys.get('@top')
+        if (legacyKey) this.protectedKeys.set(merged.defaultProfileId!, legacyKey)
+      }
       merged.defaultCharacterId = ensureCharacter(
         typeof parsed.defaultCharacterId === 'string' ? parsed.defaultCharacterId : base.defaultCharacterId
       )
+      this.storageStatus(merged)
+      if (this.keyDataBlocked) merged.keyStorage!.writeFailed = true
+      if (oldPlaintext && this.encryptionAvailable()) {
+        try { this.flush(merged, original) } catch { merged.keyStorage!.writeFailed = true }
+      }
       return merged
     } catch {
       return base
     }
   }
 
-  private flush(value: Settings): void {
+  private flush(value: Settings, migration?: Partial<Settings>): void {
+    if (this.keyDataBlocked) throw new Error('密钥存储格式异常，原文件已保留，请修复后重试')
+    const disk = clone(value) as Omit<Settings, 'apiKey'> & { apiKey?: string }
+    this.storageStatus(value)
+    delete disk.keyStorage
+    delete disk.apiKeyEnc
+    const records = new Map<string, { enc: string; key: string; failed: boolean }>()
+    const encode = (item: { apiKey?: string; apiKeyEnc?: string; apiKeyUnavailable?: boolean }, id: string): void => {
+      const key = item.apiKey ?? ''
+      const prior = this.protectedKeys.get(id)
+      delete item.apiKeyUnavailable
+      delete item.apiKeyEnc
+      if (prior && ((prior.failed && !key) || key === prior.key)) {
+        item.apiKeyEnc = prior.enc
+        delete item.apiKey
+        records.set(id, prior)
+        return
+      }
+      if (prior && !this.encryptionAvailable()) throw new Error('系统密钥库不可用，已有密文保持不变；请恢复密钥库后修改密钥')
+      if (!key) { delete item.apiKey; return }
+      if (!this.encryptionAvailable()) {
+        return
+      }
+      item.apiKeyEnc = safeStorage.encryptString(key).toString('base64')
+      delete item.apiKey
+      records.set(id, { enc: item.apiKeyEnc, key, failed: false })
+    }
     try {
+      for (const p of disk.modelProfiles) encode(p, p.id)
+      const active = disk.modelProfiles.find(p => p.id === disk.defaultProfileId)
+      if (active) {
+        delete disk.apiKey
+        if (active.apiKeyEnc) disk.apiKeyEnc = active.apiKeyEnc
+        else if (active.apiKey) disk.apiKey = active.apiKey
+        const record = records.get(active.id)
+        if (record) records.set('@top', record)
+      } else {
+        // An explicitly emptied catalogue must never resurrect the retired mirror.
+        delete disk.apiKey
+        delete disk.apiKeyEnc
+      }
       mkdirSync(dirname(this.file), { recursive: true })
+      const serialized = JSON.stringify(disk, null, 2)
+      // 回退副本同样只含密文；旧版使用专用回退脚本解密，不制造新的明文副本。
+      if (migration && !existsSync(this.file + '.pre-key-migration.enc.bak')) {
+        // Snapshot the original structure before normalization, but encrypt every plaintext key.
+        const backup = structuredClone(migration) as Partial<Settings>
+        for (const holder of [backup, ...(Array.isArray(backup.modelProfiles) ? backup.modelProfiles : [])]) {
+          if (!holder || typeof holder !== 'object') continue
+          if (!holder.apiKeyEnc && holder.apiKey) holder.apiKeyEnc = safeStorage.encryptString(holder.apiKey).toString('base64')
+          delete (holder as { apiKey?: string }).apiKey
+        }
+        writeFileSync(this.file + '.pre-key-migration.enc.bak', JSON.stringify(backup, null, 2), { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+      }
       const tmp = this.file + '.tmp'
-      writeFileSync(tmp, JSON.stringify(value, null, 2), 'utf8')
+      writeFileSync(tmp, serialized, { encoding: 'utf8', mode: 0o600 })
       renameSync(tmp, this.file)
-    } catch (error) {
-      console.error('[settings] 写入失败', error)
+      this.protectedKeys = records
+      if (value.keyStorage) delete value.keyStorage.writeFailed
+      for (const p of value.modelProfiles) p.apiKeyUnavailable = records.get(p.id)?.failed || false
+      this.storageStatus(value)
+    } catch {
+      console.error('[settings] 密钥加密或配置写入失败，原文件保持不变')
+      throw new Error('密钥加密或配置保存失败，请检查系统密钥库及文件权限')
     }
   }
 }
@@ -537,6 +664,7 @@ function normalizeProfiles(settings: Settings): ModelProfile[] {
     const models = [...new Set((Array.isArray(raw.models) ? raw.models : []).map((item) => String(item).trim()).filter(Boolean))]
     const fallbackModel = typeof raw.defaultModel === 'string' ? raw.defaultModel.trim() : ''
     if (models.length === 0 && fallbackModel) models.push(fallbackModel)
+    if (models.length === 0 && (raw.apiKey || raw.apiKeyUnavailable)) models.push('demo')
     if (models.length === 0) continue
     const defaultModel = models.includes(fallbackModel) ? fallbackModel : models[0]
     const id = typeof raw.id === 'string' && raw.id.trim() ? raw.id : randomUUID()
@@ -555,7 +683,9 @@ function normalizeProfiles(settings: Settings): ModelProfile[] {
       }
     }
 
-    const identity = provider + '|' + String(raw.baseUrl ?? '').trim() + '|' + defaultModel
+    // Distinct secrets must never be discarded by connection-identity deduplication.
+    const identity = JSON.stringify([provider, String(raw.baseUrl ?? '').trim(), defaultModel,
+      raw.apiKeyUnavailable ? ['opaque', id] : ['plain', String(raw.apiKey ?? '')]])
     if (seen.has(identity)) continue
     seen.add(identity)
 
@@ -565,6 +695,7 @@ function normalizeProfiles(settings: Settings): ModelProfile[] {
       provider,
       baseUrl: typeof raw.baseUrl === 'string' ? raw.baseUrl.trim() : '',
       apiKey: typeof raw.apiKey === 'string' ? raw.apiKey : '',
+      apiKeyUnavailable: raw.apiKeyUnavailable,
       models,
       defaultModel,
       temperature: clamp(
@@ -589,6 +720,7 @@ function normalizeProfiles(settings: Settings): ModelProfile[] {
       provider,
       baseUrl: (settings.baseUrl || meta.defaultBaseUrl).trim(),
       apiKey: settings.apiKey ?? '',
+      apiKeyUnavailable: settings.keyStorage?.decryptFailed,
       models: [model],
       defaultModel: model,
       temperature: clamp(settings.temperature, TEMPERATURE_RANGE.min, TEMPERATURE_RANGE.max),

@@ -1,4 +1,5 @@
-import { dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { autoEmbeddingBackfill, cancelEmbeddingBackfill, onEmbeddingProgress, startEmbeddingBackfill } from '../features/rag/embedPendings'
 import { IPC } from '@shared/ipc'
 import { storyRecallStatus } from '../features/story/recallStatus'
 import type { MemoryEntry, Session } from '@shared/types'
@@ -43,6 +44,17 @@ import {
  */
 export function registerStoryIpcHandlers(): void {
   ipcMain.handle(IPC.storyRecallStatus, () => storyRecallStatus())
+  ipcMain.handle(IPC.storyBackfillEmbeddings, (_event, cancel?: boolean) => {
+    if (cancel === true) { cancelEmbeddingBackfill(); return { started: false, reason: '正在停止补算' } }
+    return startEmbeddingBackfill()
+  })
+  onEmbeddingProgress(state => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(IPC.storyEmbeddingProgress, state)
+    }
+  })
+  app.on('before-quit', cancelEmbeddingBackfill)
+  void autoEmbeddingBackfill()
   ipcMain.handle(IPC.storyList, (): StorySummary[] => listStories())
   ipcMain.handle(IPC.storyCreate, (_event, draft: StoryDraft) => createStory(draft))
   ipcMain.handle(IPC.storyGet, (_event, storyId: string): StoryMeta | null => getStory(storyId))

@@ -46,6 +46,7 @@ interface MessageListProps {
    * 缺省 `[]` = 只做 markdown（P1 行为），接口保持向后兼容。
    */
   displayScripts?: StRegexScript[]
+  onSelectOption?: (text: string) => void
 }
 
 /**
@@ -64,19 +65,32 @@ interface MessageListProps {
 function BubbleMarkdown({
   source,
   scripts,
-  depth
+  depth,
+  interactive = true,
+  onSelectOption,
+  optionDisabledReason
 }: {
   source: string
   scripts: StRegexScript[]
   depth?: number
+  interactive?: boolean
+  onSelectOption?: (text: string) => void
+  optionDisabledReason?: string
 }) {
   // P7: structured cards only when bridge scripts are supplied; ordinary chat keeps P3 rendering.
-  const parts = useMemo(() => scripts.length ? displayPartsOf(source, scripts, depth)
-    : [{ kind: 'text' as const, offset: 0, html: displayOf(source, scripts, depth, undefined, true) }], [source, scripts, depth])
+  const parts = useMemo(() => interactive ? displayPartsOf(source, scripts, depth)
+    : [{ kind: 'text' as const, offset: 0, html: displayOf(source, scripts, depth, undefined, true) }], [source, scripts, depth, interactive])
   if (!parts.length) return null
   return <div className="bubble__md">{parts.map(part => part.kind === 'card'
     ? <BubbleCard key={part.offset} card={part} />
-    : <div key={part.offset} dangerouslySetInnerHTML={{ __html: part.html }} />)}</div>
+    : part.kind === 'options' ? <div key={part.offset} className="option-card" role="group" aria-label="行动选项">
+      {part.items.map((item, i) => <button key={i} type="button" className="option-card__item"
+        data-ui-target={'选项 ' + (i + 1)} disabled={Boolean(optionDisabledReason) || !onSelectOption}
+        title={optionDisabledReason || (!onSelectOption ? '此视图仅展示选项' : '填入输入框，不发送')}
+        onClick={() => { if (!optionDisabledReason) onSelectOption?.(item) }}>
+        <span className="option-card__number" aria-hidden="true">{String(i + 1).padStart(2, '0')}</span><span>{item}</span>
+      </button>)}
+    </div> : <div key={part.offset} dangerouslySetInnerHTML={{ __html: part.html }} />)}</div>
 }
 
 /**
@@ -97,7 +111,8 @@ export function MessageList({
   onUpdate,
   onResend,
   onEditingChange,
-  displayScripts = EMPTY_SCRIPTS
+  displayScripts = EMPTY_SCRIPTS,
+  onSelectOption
 }: MessageListProps) {
   /**
    * depth 与 ST **同口径**：非 system 消息总数 − 该条在其中的下标 − 1（最后一条 = 0）。
@@ -197,7 +212,7 @@ export function MessageList({
     const node = listRef.current
     // The zero-height end marker excludes bottom padding; use the scroll container's full range.
     if (node) node.scrollTop = node.scrollHeight
-  }, [messages.length, tailLength, focusMessageId])
+  }, [messages.length, tailLength])
 
   const saveEdit = useCallback(async (resend: boolean): Promise<boolean> => {
     if (!editor || saving || isStreaming || readOnly || !editor.draft.trim()) return false
@@ -225,7 +240,7 @@ export function MessageList({
           return <MessageBubble key={message.id} message={message} absoluteIndex={absoluteIndex}
             isTail={absoluteIndex === messages.length - 1} isStreaming={isStreaming}
             focused={focusMessageId === message.id} depth={depths.get(message.id)} avatar={brand.avatar}
-            displayScripts={displayScripts} readOnly={readOnly}
+            displayScripts={displayScripts} readOnly={readOnly} onSelectOption={onSelectOption}
             tailReply={message.role === 'assistant' && absoluteIndex === messages.length - 1 && replyInputs[absoluteIndex]}
             editor={editor?.id === message.id ? editor : null} editorOpen={editor !== null}
             confirming={confirming?.id === message.id ? confirming : null} saving={saving}
@@ -249,6 +264,7 @@ interface MessageBubbleProps {
   depth?: number
   avatar: string
   displayScripts: StRegexScript[]
+  onSelectOption?: (text: string) => void
   readOnly: boolean
   tailReply: boolean
   editor: { id: string; draft: string } | null
@@ -271,7 +287,7 @@ interface MessageBubbleProps {
 const MessageBubble = memo(function MessageBubble({
   message, absoluteIndex, isTail, isStreaming, focused, depth, avatar, displayScripts,
   readOnly, tailReply, editor, editorOpen, confirming, saving, copied, editError, canUpdate,
-  onRetry, onRemove, setEditor, setConfirming, setCopiedId, setEditError, saveEdit
+  onRetry, onRemove, onSelectOption, setEditor, setConfirming, setCopiedId, setEditError, saveEdit
 }: MessageBubbleProps) {
   const actionsFor = () => {
     if (readOnly) return null
@@ -396,6 +412,9 @@ const MessageBubble = memo(function MessageBubble({
               source={message.content}
               scripts={isUser ? EMPTY_SCRIPTS : displayScripts}
               depth={depth}
+              interactive={!isUser}
+              onSelectOption={onSelectOption}
+              optionDisabledReason={isStreaming ? '当前会话正在生成' : readOnly ? '渠道会话只读' : editorOpen ? '正在编辑消息' : undefined}
             />
           )}
           {view.phase === 'failed' && (
@@ -407,6 +426,9 @@ const MessageBubble = memo(function MessageBubble({
                     source={message.content}
                     scripts={isUser ? EMPTY_SCRIPTS : displayScripts}
                     depth={depth}
+              interactive={!isUser}
+              onSelectOption={onSelectOption}
+              optionDisabledReason={isStreaming ? '当前会话正在生成' : readOnly ? '渠道会话只读' : editorOpen ? '正在编辑消息' : undefined}
                   />
                 </div>
               )}
