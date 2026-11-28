@@ -5,7 +5,7 @@ import { storyArchiveStore } from '../story/memory'
 import { branchVisibility } from '../story/visibility'
 import type { Message } from '@shared/types'
 import { STORY_CHUNK_CHARS, STORY_CHUNK_OVERLAP } from '@shared/constants'
-import { embedStoryChunks } from './embedPendings'
+import { requestEmbeddingBackfill } from './embedPendings'
 
 export interface Round {
   index: number
@@ -382,10 +382,9 @@ export class StoryArchiveService {
             if (!this.isCurrent(snapshot)) break
             const previous = store.getStoryRound?.(storyId, snapshot.branchId, round.index)
             if (previous?.content_version === input.contentVersion && previous.valid === 1) continue
-            const embeddings = await embedStoryChunks(storyId, input.chunks.map(chunk => chunk.text))
-            // The model call yields: edits and deletions must invalidate the original snapshot.
-            if (!this.isCurrent(snapshot)) break
-            store.upsertStoryRound({ ...input, embeddings })
+            // Q7: persist NULL vectors first; inference belongs to the deferred worker.
+            store.upsertStoryRound(input)
+            requestEmbeddingBackfill({ storyId, branchId: snapshot.branchId })
             await new Promise<void>((resolve) => setImmediate(resolve))
           }
           if (!this.isCurrent(snapshot)) this.retainReceipts(snapshot)

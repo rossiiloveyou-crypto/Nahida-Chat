@@ -6,13 +6,43 @@ import { embedder } from './embedder'
 import { toBlob } from './vector'
 
 type Progress = Pick<StoryRecallStatus, 'backfilling' | 'pendingError'>
-type Row = { id: string; text: string | Uint8Array; content_version: string }
+type Row = { id: string; text: string | Uint8Array; content_version: string; branch_id: string; started_at: number }
+type Priority = { storyId: string; branchId: string }
 const yieldLoop = (): Promise<void> => new Promise(resolve => setImmediate(resolve))
 const errors = new Map<string, string>()
 const listeners = new Set<(state: Progress) => void>()
 let progress: Progress['backfilling'] = null
 let active: Promise<void> | null = null
 let cancelled = false
+let priority: Priority | undefined
+let dirty = false
+let timer: ReturnType<typeof setTimeout> | null = null
+let queued: Promise<void> | null = null
+let resolveQueued: (() => void) | null = null
+
+function clearQueue(): void {
+  if (timer) clearTimeout(timer)
+  timer = null
+  resolveQueued?.()
+  resolveQueued = null
+  queued = null
+}
+
+/** Merge archive bursts without putting inference on the archive/IPC path. */
+export function requestEmbeddingBackfill(target?: Priority): void {
+  if (target) priority = target
+  const state = embedder.status()
+  if (!state.ready && state.lastError) failure(target?.storyId ?? 'model', state.lastError)
+  if (active) { dirty = true; return }
+  if (timer) clearTimeout(timer)
+  if (!queued) queued = new Promise(resolve => { resolveQueued = resolve })
+  // Replies just finished and the UI is refreshing: leave IPC/rendering 1000 ms
+  // before the ~370 ms inference work starts. This is debounce, not polling.
+  timer = setTimeout(() => {
+    timer = null
+    startEmbeddingBackfill()
+  }, 1000)
+}
 
 export function embeddingProgress(): Progress {
   return { backfilling: progress ? { ...progress } : null,
@@ -85,14 +115,20 @@ async function run(): Promise<void> {
       return
     }
     errors.delete('model')
+    const preferred = priority
     const pending: Array<{ storyId: string; file: string; rows: Row[] }> = []
-    for (const { storyId, file } of storyFiles()) {
+    for (const { storyId, file } of storyFiles().sort((a, b) => Number(b.storyId === preferred?.storyId) - Number(a.storyId === preferred?.storyId))) {
       if (cancelled) return
       let rows: Row[]
       try { rows = withDatabase(file, db => {
         if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='story_chunks'").get()) return []
         assertDimensions(db)
-        return db.prepare('SELECT id, text, content_version FROM story_chunks WHERE embedding IS NULL ORDER BY id').all() as Row[]
+        return (db.prepare(`SELECT c.id, c.text, c.content_version, r.branch_id, r.started_at
+          FROM story_chunks c JOIN story_rounds r ON r.id = c.round_id
+          WHERE c.embedding IS NULL`).all() as Row[]).sort((a, b) =>
+          Number(storyId === preferred?.storyId && b.branch_id === preferred.branchId) -
+          Number(storyId === preferred?.storyId && a.branch_id === preferred.branchId) ||
+          b.started_at - a.started_at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
       }) } catch (error) {
         const reason = error instanceof Error ? error.message : '读取失败'
         if (reason.includes('维度')) throw error
@@ -105,6 +141,7 @@ async function run(): Promise<void> {
     progress = { done: 0, total: pending.reduce((sum, item) => sum + item.rows.length, 0) }
     publish()
     for (const { storyId, file, rows } of pending) {
+      try {
       for (let offset = 0; offset < rows.length; offset += 16) {
         if (cancelled) return
         const batch = rows.slice(offset, offset + 16)
@@ -137,6 +174,15 @@ async function run(): Promise<void> {
         publish()
         await yieldLoop()
       }
+      } finally {
+        // No connection survives an await. Reopen only an existing story file.
+        if (existsSync(file)) {
+          try { withDatabase(file, db => {
+            const result = db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get() as { busy: number }
+            if (result.busy) console.info('[story-embedding-checkpoint]', storyId, 'busy')
+          }) } catch { console.info('[story-embedding-checkpoint]', storyId, 'skipped') }
+        }
+      }
     }
   } catch (error) {
     failure('backfill', error instanceof Error ? error.message : '补算失败')
@@ -144,10 +190,16 @@ async function run(): Promise<void> {
     progress = null
     active = null
     publish()
+    if (dirty && !cancelled) {
+      dirty = false
+      requestEmbeddingBackfill()
+    }
   }
 }
 export function startEmbeddingBackfill(): { started: boolean; reason?: string } {
   if (active) return { started: false, reason: '正在补算' }
+  clearQueue()
+  dirty = false
   cancelled = false
   errors.clear()
   progress = { done: 0, total: 0 }
@@ -155,9 +207,19 @@ export function startEmbeddingBackfill(): { started: boolean; reason?: string } 
   publish()
   return { started: true }
 }
-export function cancelEmbeddingBackfill(): void { cancelled = true }
+export function cancelEmbeddingBackfill(): void {
+  cancelled = true
+  dirty = false
+  priority = undefined
+  clearQueue()
+}
 /** Test/lifecycle drain; cancellation preserves every committed batch. */
-export async function waitForEmbeddingBackfill(): Promise<void> { await active }
+export async function waitForEmbeddingBackfill(): Promise<void> {
+  const draining = queued
+  if (draining) await draining
+  const running = active
+  if (running) await running
+}
 /** One startup pass only; status reads never load a model or schedule writes. */
 export async function autoEmbeddingBackfill(): Promise<void> {
   if (!embedder.modelInstalled()) return

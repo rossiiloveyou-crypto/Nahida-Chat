@@ -39,12 +39,15 @@ const rounds=f=>sql(f,db=>db.prepare('SELECT * FROM story_rounds ORDER BY id').a
 async function fill(){api.startEmbeddingBackfill();await api.waitForEmbeddingBackfill()}
 const settle=async()=>{for(let i=0;i<100;i++)await new Promise(resolve=>setImmediate(resolve))}
 let archiveFixture
-await test('D-01 archive embeds every chunk and increments snapshot vector rounds',async()=>{
+await test('D-01 archive defers embeddings then backfill increments vector rounds',async()=>{
+ const initialCalls=calls
  archiveFixture=fixture(0);const store=new api.MemoryStore(archiveFixture.file)
  const service=new api.StoryArchiveService(()=>store)
  const messages=[{id:'u',role:'user',content:'ocean',createdAt:1,status:'done'},{id:'a',role:'assistant',content:'waves',createdAt:2,status:'done'}]
  service.schedule({id:'branch',storyId:archiveFixture.id,messages},{storyId:archiveFixture.id},{userId:'root',personaId:'default'})
- await settle();store.close();assert.equal(nulls(archiveFixture),0);assert.equal(rounds(archiveFixture).length,1)
+ await settle();store.close();assert.equal(nulls(archiveFixture),1);assert.equal(calls,initialCalls)
+ assert.equal(api.storyRecallStatus().pendingChunks,1)
+ await api.waitForEmbeddingBackfill();assert.equal(nulls(archiveFixture),0);assert.equal(rounds(archiveFixture).length,1)
  assert.equal(api.storyRecallStatus().vectorRounds,1)
 })
 let offline
@@ -102,12 +105,16 @@ await test('S3 different existing dimensions stop before any pending writes',asy
 await test('startup pass automatically fills existing pending rows',async()=>{
  const f=fixture();await api.autoEmbeddingBackfill();assert.equal(nulls(f),0)
 })
-await test('late archive model result cannot resurrect an invalidated snapshot',async()=>{
+await test('archive persists before inference; forget never rolls back written rounds',async()=>{
  const f=fixture(0),store=new api.MemoryStore(f.file),service=new api.StoryArchiveService(()=>store)
  let release;hook=()=>new Promise(resolve=>{release=resolve})
  const session={id:'b',storyId:f.id,messages:[{id:'a',role:'assistant',content:'old',createdAt:1,status:'done'}]}
  service.schedule(session,{storyId:f.id},{userId:'root',personaId:'default'})
- while(!release)await new Promise(resolve=>setImmediate(resolve));service.forget(f.id);hook=null;release();await settle();store.close();assert.equal(rounds(f).length,0)
+ // Q7 persists before inference; forget prevents future archive writes, not committed history.
+ await settle();assert.equal(rounds(f).length,1)
+ while(!release)await new Promise(resolve=>setImmediate(resolve))
+ service.forget(f.id);hook=null;release();await api.waitForEmbeddingBackfill();store.close()
+ assert.equal(rounds(f).length,1);assert.equal(fs.existsSync(f.directory),true)
 })
 await test('successful archive retry publishes cleared model error',async()=>{
  const events=[],off=api.onEmbeddingProgress(e=>events.push(e));mode='offline'
