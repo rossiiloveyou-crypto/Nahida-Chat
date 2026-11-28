@@ -9,6 +9,10 @@ import { registerBuiltinTools } from './features/tools/builtin'
 import { ensureWorkspace } from './features/workspace'
 import { createMainWindow } from './window'
 import { startReleaseSmoke } from './releaseSmoke'
+import { embedClient } from './features/rag/embedClient'
+
+// quit is irreversible; before-quit/will-quit may be cancelled by other owners.
+app.on('quit', () => { embedClient.dispose() })
 
 if (process.env['NAHIDA_RELEASE_SMOKE'] === '1') {
   startReleaseSmoke()

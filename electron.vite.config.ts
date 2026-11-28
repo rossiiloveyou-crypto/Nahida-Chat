@@ -13,6 +13,14 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()],
     resolve: {
       alias: { '@shared': sharedDir }
+    },
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve(__dirname, 'src/main/index.ts'),
+          'embed-worker': resolve(__dirname, 'src/main/features/rag/embedWorker.ts')
+        }
+      }
     }
   },
   preload: {
