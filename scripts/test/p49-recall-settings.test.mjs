@@ -26,7 +26,7 @@ const api = await bundleModule('p49-recall-settings-main', [
   ['memoryService', 'rag/index.ts'],
   ['MemoryStore', 'rag/store.ts'],
   ['splitRounds, sliceRound, contentVersion', 'rag/storyArchive.ts'],
-  ['storyArchiveStore, closeAllStoryMemory', 'story/memory.ts'],
+  ['storyMemory, storyArchiveStore, closeAllStoryMemory', 'story/memory.ts'],
   ['branchStore', 'story/branches.ts'],
   ['chatService', 'chat/chatService.ts']
 ].map(([names, file]) => 'export { ' + names + ' } from ' + JSON.stringify(p('src/main/features/' + file))).join('\n'))
@@ -156,6 +156,7 @@ try {
     assert.deepEqual([s.archivedRounds, s.vectorRounds, s.vectorReady], [0, 0, false])
     assert.deepEqual(s.databaseErrors, [])
     assert.equal(s.lastRecall, null)
+    assert.deepEqual(s.stories, [])
     assert.deepEqual(fs.readdirSync(dir).sort(), before)
     assert.equal(ensures, 0)
   })
@@ -167,6 +168,7 @@ try {
   await test('A-01/A-10 real panel exposes six editable controls and read-only status, no hidden candidate/extraction controls', () => {
     const panel = target('故事区RAG召回')
     assert.ok(panel)
+    assert.match(panel.querySelector('.story-recall-stories').textContent, /还没有故事区/)
     assert.equal(panel.querySelectorAll('input').length, 6)
     const expected = [['故事召回轮数', '4', '1', '20'], ['故事召回预算', '8000', '1000', '32000'],
       ['故事召回阈值', '0.4', '0', '1'], ['故事关键词权重', '0.5', '0', '1'], ['故事补查深度', '32', '0', '64']]
@@ -437,6 +439,96 @@ try {
       assert.ok(!off.some(m => m.content.includes('【故事回顾') || m.content.includes('P49_ARCHIVED')), 'disabled story removes actual payload block with memory=' + memoryEnabled)
       assert.equal(fresh().memory.enabled, memoryEnabled)
     }
+  })
+  await test('W-04/W-05/W-06 per-story counts include empty stories, metadata and missing branches', async () => {
+    const id = 'story_stats1_abcdef', folder = path.join(rootDir, id)
+    fs.writeFileSync(path.join(folder, 'story.json'), JSON.stringify({ version: 1, meta: {
+      storyId: id, title: 'Alpha story', characterId: 'default', createdAt: 1, updatedAt: 1 } }))
+    api.branchStore.write(id, { version: 2, activeBranchId: 'branch-b', branches: ['branch-a', 'branch-b'].map(branchId => ({
+      branchId, title: branchId === 'branch-b' ? 'Active branch' : 'Other branch', createdAt: 1,
+      forkedFrom: null, memoryBounds: [{ branchId, maxMessageIndex: null }] })) })
+    const before = diskSnapshot(), s = api.storyRecallStatus()
+    const valid = fs.readdirSync(rootDir).filter(name => /^story_/.test(name))
+    assert.equal(s.stories.length, valid.length)
+    assert.deepEqual(s.stories.map(s => s.title), s.stories.map(s => s.title).sort((a, b) => a.localeCompare(b)))
+    assert.ok(s.stories.every(s => s.title && s.archivedRounds >= 0))
+    assert.deepEqual(s.stories.find(s => s.storyId === id), { storyId: id, title: 'Alpha story', branchLabel: 'Active branch',
+      archivedRounds: 3, vectorRounds: 2, pendingRounds: 2, pendingChunks: 2 })
+    const empty = s.stories.find(s => s.storyId === 'story_nodb_aabbcc')
+    assert.deepEqual(empty, { storyId: 'story_nodb_aabbcc', title: 'story_nodb_aabbcc', branchLabel: '',
+      archivedRounds: 0, vectorRounds: 0, pendingRounds: 0, pendingChunks: 0 })
+    for (const key of ['archivedRounds', 'vectorRounds', 'pendingRounds', 'pendingChunks'])
+      assert.equal(s[key], s.stories.reduce((sum, story) => sum + story[key], 0))
+    assert.deepEqual(diskSnapshot(), before)
+    await click(target('刷新故事召回状态'))
+    const rows = [...document.querySelectorAll('.story-recall-stories li')]
+    assert.equal(rows.length, valid.length)
+    assert.match(rows.find(row => row.textContent.includes('Alpha story')).textContent, /Alpha story（Active branch）.*归档 3.*向量 2.*待补 2/)
+    assert.ok(rows.some(row => row.textContent.includes('story_nodb_aabbcc')))
+  })
+  await test('W-05 malformed metadata degrades locally without touching source files', () => {
+    const id = 'story_nodb_aabbcc', folder = path.join(rootDir, id)
+    for (const name of ['story.json', 'branches.json']) fs.writeFileSync(path.join(folder, name), '{broken')
+    const s = api.storyRecallStatus().stories.find(s => s.storyId === id)
+    assert.equal(s.title, id); assert.equal(s.branchLabel, '')
+    assert.equal(s.archivedRounds, 0)
+    for (const name of ['story.json', 'branches.json']) {
+      assert.equal(fs.readFileSync(path.join(folder, name), 'utf8'), '{broken')
+      fs.rmSync(path.join(folder, name))
+    }
+  })
+  await test('W-01/W-02 real buildPayload -> buildStoryContextBlock restores recall for 60 uncompressed rounds', async () => {
+    const storyId = 'story_q10_abcdef'
+    const created = api.chatService.createSession({ storyId, mode: 'story' })
+    const messages = Array.from({ length: 60 }, (_, i) => [
+      { id: 'q10-u' + i, role: 'user', content: '寻找蓝色柜子的钥匙 Q10_ARCHIVED_' + i, createdAt: 1700000000000 + i * 2, status: 'done' },
+      { id: 'q10-a' + i, role: 'assistant', content: '蓝色柜子的钥匙保存完好 Q10_REPLY_' + i, createdAt: 1700000000001 + i * 2, status: 'done' }
+    ]).flat()
+    api.chatService.appendMessages(created.id, messages)
+    const live = api.chatService.sessions.find(s => s.id === created.id), archive = api.storyArchiveStore(storyId)
+    for (const round of api.splitRounds(live.messages).rounds) archive.upsertStoryRound({
+      storyId, branchId: live.id, roundIndex: round.index, tenantUser: 'root', tenantPersona: 'default',
+      firstMessageId: round.messages[0].id, lastMessageId: round.messages.at(-1).id,
+      contentVersion: api.contentVersion(round.messages), roles: round.messages.map(m => m.role),
+      startedAt: round.messages[0].createdAt, chunks: api.sliceRound(round)
+    })
+    api.branchStore.write(storyId, { version: 2, activeBranchId: live.id, branches: [{ branchId: live.id,
+      title: 'Q10 branch', createdAt: 1, forkedFrom: null, memoryBounds: [{ branchId: live.id, maxMessageIndex: null }] }] })
+    store.save({ summary: { ...store.get().summary, enabled: true, windowCount: 8 },
+      storyRecall: { enabled: true, n: 4, budgetTokens: 8000, minScore: .4, keywordWeight: .5, recheckDepth: 0 } })
+    const memory = api.storyMemory(storyId), original = memory.buildStoryContextBlock
+    const captured = []
+    let fullHistoryControl = true
+    memory.buildStoryContextBlock = async function(session, config, options) {
+      captured.push(new Set(options.recentMessageIds))
+      return original.call(this, session, config, fullHistoryControl ? { ...options, recentMessageIds: new Set(session.messages.map(m => m.id)) } : options)
+    }
+    try {
+      const payload = () => api.chatService.buildPayload(live, '', '', false, null, 'default')
+      const before = await payload()
+      assert.equal(api.storyRecallStatus().lastRecall.hitRounds, 0, 'negative control: full history empties candidates')
+      assert.ok(!before.some(m => m.content.startsWith('【故事回顾')))
+      fullHistoryControl = false
+      const after = await payload(), report = api.storyRecallStatus().lastRecall
+      assert.ok(report.hitRounds > 0 && report.hitRounds <= 4)
+      assert.ok(report.top.length > 0 && report.top.every(hit => hit.roundIndex < 56))
+      const block = after.find(m => m.content.startsWith('【故事回顾'))?.content
+      assert.ok(block?.includes('Q10_ARCHIVED_'))
+      const recalled = [...block.matchAll(/Q10_(?:ARCHIVED|REPLY)_(\d+)/g)].map(match => Number(match[1]))
+      assert.ok(recalled.length && recalled.every(index => index < 56), 'all recalled content excludes the final four rounds')
+      assert.equal(captured.at(-1).size, 8)
+      assert.equal(after.filter(m => m.role !== 'system').length, 120, 'no-summary history stays intact')
+      console.log('Q10 entry evidence: ' + JSON.stringify({ rounds: 60, history: 120, guard: 8, before: 0, after: report.hitRounds, top: report.top }))
+      for (const windowCount of [80, 40, 8, 0, 200]) {
+        store.save({ summary: { ...store.get().summary, windowCount } })
+        await payload()
+        assert.deepEqual([...captured.at(-1)], (windowCount > 0 ? live.messages.slice(-windowCount) : []).map(m => m.id))
+      }
+      const get = store.get
+      store.get = function() { return { ...get.call(this), summary: undefined } }
+      try { await payload(); assert.equal(captured.at(-1).size, 80) }
+      finally { store.get = get }
+    } finally { memory.buildStoryContextBlock = original }
   })
 } finally {
   api.embedder.ensure = originalEnsure

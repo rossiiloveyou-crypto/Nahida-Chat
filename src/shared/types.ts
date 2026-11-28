@@ -235,7 +235,21 @@ export interface AppearanceSettings {
 
 /** 故事原文召回独立参数；N 按轮计数，不复用事实记忆开关。 */
 /** 只读归档统计；最近召回尚未采集时保持 null，不伪造观测。 */
+export interface StoryRecallEntry {
+  storyId: string
+  /** 故事区标题；元信息缺失时使用 storyId。 */
+  title: string
+  /** 活跃分支标题；无分支信息时为空串。 */
+  branchLabel: string
+  archivedRounds: number
+  vectorRounds: number
+  pendingRounds: number
+  pendingChunks: number
+}
+
 export interface StoryRecallStatus {
+  /** 按标题排序，包含尚无归档的故事区。 */
+  stories: StoryRecallEntry[]
   archivedRounds: number
   vectorRounds: number
   pendingRounds: number

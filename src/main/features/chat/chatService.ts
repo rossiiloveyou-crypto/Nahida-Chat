@@ -1288,12 +1288,13 @@ class ChatService {
     // P4.8：唯一新增注入，事实 → 故事原文 → 摘要 → 原历史；普通会话不触库。
     if (session.mode === 'story' && session.storyId) try {
       const visibility = branchVisibility(session.storyId, session.id)
+      const guard = settingsStore.get().summary?.windowCount ?? 80
       const storyBlock = budgetParts?.retainedStoryBlock ?? await storyMemory(session.storyId).buildStoryContextBlock(
         session, budgetParts?.storyBudgetTokens === undefined ? settingsStore.get().storyRecall
           : { ...settingsStore.get().storyRecall, budgetTokens: budgetParts.storyBudgetTokens }, {
           storyId: session.storyId, branchId: session.id,
           tenants: [{ userId: ROOT_USER_ID, personaId }], bounds: visibility.bounds,
-          recentMessageIds: new Set(history.map((message) => message.id))
+          recentMessageIds: new Set((guard > 0 ? history.slice(-guard) : []).map((message) => message.id))
         })
       if (budgetParts) budgetParts.storyBlock = storyBlock
       if (storyBlock) payload.push({ role: 'system', content: storyBlock })

@@ -130,6 +130,16 @@ export function StoryRecallPanel({ settings, saving, save }: Props) {
           <dt>待补向量轮数</dt><dd>{status?.pendingRounds ?? '—'}（{status?.pendingChunks ?? '—'} 个分片）</dd>
           <dt>补算进度</dt><dd>{status?.backfilling ? `${status.backfilling.done} / ${status.backfilling.total}` : '未在补算'}</dd>
         </dl>
+        {status && <div className="story-recall-stories">
+          <h4>按故事区</h4>
+          {status.stories?.length ? <ul>
+            {status.stories.map(story => <li key={story.storyId}>
+              <span>{story.title}{story.branchLabel ? '（' + story.branchLabel + '）' : ''}</span>
+              {' · '}归档 {story.archivedRounds} · 向量 {story.vectorRounds} · 待补 {story.pendingRounds}
+              {'（'}{story.pendingChunks} 个分片）
+            </li>)}
+          </ul> : <p className="hint-text">还没有故事区</p>}
+        </div>}
         {!status?.vectorReady && <p className="hint-text hint-text--error" role="status" data-ui-target="故事向量降级提示"><strong>不可用（仅关键词召回，可能漏细节）</strong>{status?.lastError ? '：' + status.lastError : status?.modelInstalled ? ' · 模型已安装，等待下次检索加载' : ' · 模型未安装或尚未就绪'}</p>}
         {status?.pendingError && <p className="hint-text hint-text--error" role="alert">向量待补原因：{status.pendingError}</p>}
         {statusError && <p className="hint-text hint-text--error" role="alert">状态读取失败：{statusError}</p>}
