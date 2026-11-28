@@ -14,6 +14,8 @@ import path from 'node:path'
 import { bundleModule, createChecker, installElectronStub, p } from './qq-test-util.mjs'
 
 const { check, done } = createChecker()
+const deadline = setTimeout(() => { console.error('channel suite deadline exceeded'); process.exit(1) }, 30000)
+deadline.unref()
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-channels-session-'))
 installElectronStub(userData)
 
@@ -22,7 +24,8 @@ const source = [
   `export { createQqBridge } from '${p('src/main/features/qq/bridge.ts')}'`,
   `export { sessionPolicy } from '${p('src/main/features/chat/sessionPolicy.ts')}'`,
   `export { isChannelSessionId } from '${p('src/shared/channels.ts')}'`,
-  `export { DEFAULT_QQ_SETTINGS } from '${p('src/shared/qq.ts')}'`
+  `export { DEFAULT_QQ_SETTINGS } from '${p('src/shared/qq.ts')}'`,
+  `export { settingsStore } from '${p('src/main/features/settings/settingsStore.ts')}'`
 ].join('\n')
 const mod = await bundleModule('channels-session', source)
 const { chatService, createQqBridge, sessionPolicy, isChannelSessionId, DEFAULT_QQ_SETTINGS } = mod
@@ -112,4 +115,58 @@ check('删除后列表里没有了', !chatService.listSessions().some((item) => 
 const rebuilt = chatService.ensureChannelSession('qq:4:group:500', { title: '重建' })
 check('再次 ensure 会重建（新 createdAt）', rebuilt.id === doomed.id && rebuilt.createdAt > doomed.createdAt, rebuilt.createdAt + ' vs ' + doomed.createdAt)
 
+console.log('Q11 · 渠道模型创建、切换、复位与写盘幂等')
+check('V08 未配置渠道模型保持双 null', first.modelProfileId === null && first.modelId === null)
+let persistCalls = 0
+const originalPersist = chatService.persist
+chatService.persist = function (...args) { persistCalls++; return originalPersist.apply(this, args) }
+try {
+  const modelKey = 'qq:11:private:22'
+  const chosen = { title: 'Q11', modelProfileId: 'profile-a', modelId: 'model-a' }
+  const configured = chatService.ensureChannelSession(modelKey, chosen)
+  check('V08 新渠道一次带入档案和模型', configured.modelProfileId === 'profile-a' && configured.modelId === 'model-a')
+  check('V08 创建模型选择真实落盘', readSessions().some(item => item.id === modelKey && item.modelProfileId === 'profile-a' && item.modelId === 'model-a'))
+  const writesAfterCreate = persistCalls
+  for (let i = 0; i < 3; i++) chatService.ensureChannelSession(modelKey, chosen)
+  check('V10 三次同配置不增加 persist 次数', persistCalls === writesAfterCreate)
+  const switched = chatService.ensureChannelSession(modelKey, { title: 'Q11 changed', modelProfileId: 'profile-b', modelId: 'model-b' })
+  check('V09 一次调用同步档案模型且保留会话身份', switched.modelProfileId === 'profile-b' && switched.modelId === 'model-b' && switched.createdAt === configured.createdAt)
+  check('V09 标题与两个模型字段同时变化仅 persist 一次', persistCalls === writesAfterCreate + 1)
+  const omitted = chatService.ensureChannelSession(modelKey)
+  check('V09 省略字段保留现值且不写盘', omitted.modelProfileId === 'profile-b' && omitted.modelId === 'model-b' && persistCalls === writesAfterCreate + 1)
+  const reset = chatService.ensureChannelSession(modelKey, { modelProfileId: null, modelId: null })
+  check('V09 显式 null 复位到默认并写盘一次', reset.modelProfileId === null && reset.modelId === null && persistCalls === writesAfterCreate + 2)
+  for (let i = 0; i < 3; i++) chatService.ensureChannelSession(modelKey, { modelProfileId: null, modelId: null })
+  check('V10 复位后三次同配置仍不写盘', persistCalls === writesAfterCreate + 2)
+  const restart = await bundleModule('channels-model-restart', source)
+  const resetReloaded = restart.chatService.listSessions().find(item => item.id === modelKey)
+  check('V09 显式复位重启仍为双 null', resetReloaded.modelProfileId === null && resetReloaded.modelId === null)
+} finally { chatService.persist = originalPersist }
+// Exercise the default bridge closure (do not inject ensureSession).
+const bridgeCalls = []
+const savedEnsure = chatService.ensureChannelSession
+chatService.ensureChannelSession = function (id, options) {
+  bridgeCalls.push({ id, options })
+  return savedEnsure.call(this, id, options)
+}
+const bridge = createQqBridge({
+  host: { on: () => () => {}, invokeAction: async () => ({ ok: true }) },
+  chat: { sendAwait: async input => ({ status: 'done', sessionId: input.sessionId, messageId: 'fixture', content: '', toolCalls: [], durationMs: 0 }) },
+  store: {
+    settings: () => ({ ...DEFAULT_QQ_SETTINGS, segmentDelayMs: 0 }),
+    access: () => ({ version: 2, groupMemberGate: false, toolGate: true, accounts: [{ channel: 'qq', userId: '20002', label: 'fixture', addedAt: 1, lastAt: 0, permissions: { private: true, group: true, tool: false } }], groups: [], uins: ['10001'] }),
+    touchAccess: () => {}, rememberUin: () => {}
+  },
+  broadcast: () => {}, sleep: async () => {}
+})
+const event = id => ({ post_type: 'message', message_type: 'private', message_id: id, user_id: 20002, self_id: '10001', message: [{ type: 'text', data: { text: 'Q11 fixture' } }], sender: { user_id: 20002, nickname: 'fixture' } })
+try {
+  mod.settingsStore.save({ channelModelProfileId: 'bridge-profile', channelModelId: 'bridge-model' })
+  await bridge.handleEvent('10001', event(1101))
+  check('V08 QQ 默认闭包从 settings 传入渠道双字段', bridgeCalls.length === 1 && bridgeCalls[0].options.modelProfileId === 'bridge-profile' && bridgeCalls[0].options.modelId === 'bridge-model')
+  mod.settingsStore.save({ channelModelProfileId: null, channelModelId: null })
+  await bridge.handleEvent('10001', event(1102))
+  check('V09 QQ 下一条消息传显式 null 并复位既有会话', bridgeCalls.length === 2 && bridgeCalls[1].options.modelProfileId === null && bridgeCalls[1].options.modelId === null && chatService.listSessions().find(item => item.id === KEY).modelProfileId === null)
+} finally { chatService.ensureChannelSession = savedEnsure }
+clearTimeout(deadline)
 done()

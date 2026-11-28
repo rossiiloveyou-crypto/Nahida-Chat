@@ -333,15 +333,31 @@ class ChatService {
    * ⚠️ 渠道会话不绑工作区（K1 实测：resolveWorkspace('') 会回落到**活动**工作区，
    *    所以不能靠传空串，必须建完立刻把 workspaceId 清成 null 再落盘）。
    */
-  ensureChannelSession(sessionId: string, opts?: { title?: string; mode?: ConversationMode }): Session {
+  ensureChannelSession(sessionId: string, opts?: {
+    title?: string; mode?: ConversationMode
+    modelProfileId?: string | null; modelId?: string | null
+  }): Session {
     this.ensureLoaded()
     const id = sessionId.trim()
     if (!id) throw new Error('渠道会话 id 不能为空')
     const wanted = opts?.title?.trim()
     const existing = this.sessions.find((item) => item.id === id)
     if (existing) {
+      let changed = false
       if (wanted && existing.title !== wanted) {
         existing.title = wanted
+        changed = true
+      }
+      // 省略字段保持原值；显式 null 用于切回默认。
+      for (const key of ['modelProfileId', 'modelId'] as const) {
+        if (opts?.[key] === undefined) continue
+        const value = opts[key]?.trim() || null
+        if (existing[key] !== value) {
+          existing[key] = value
+          changed = true
+        }
+      }
+      if (changed) {
         existing.updatedAt = Date.now()
         this.persist()
       }
@@ -350,6 +366,8 @@ class ChatService {
     const created = this.createSession({
       id,
       title: wanted || id,
+      modelProfileId: opts?.modelProfileId,
+      modelId: opts?.modelId,
       ...(opts?.mode ? { mode: opts.mode } : {})
     })
     const stored = this.sessions.find((item) => item.id === created.id)
@@ -993,7 +1011,7 @@ class ChatService {
       // 对话层记忆：够阈值就在后台压一次，**不 await**。
       // 放在 finally 里而不是 try 末尾：出错的那一轮也该把已发生的对话记进摘要，
       // 否则一次网络失败会让这段对话永远进不了窗口外的记忆。
-      summaryService.schedule(session, memoryTenant.personaId, provider, settings)
+      summaryService.schedule(session, memoryTenant.personaId, this.summaryProvider(settings, provider), settings)
       storyArchiveService.schedule(session, memoryRoute, memoryTenant, { messageId: message.id, interrupted: controller.signal.aborted })
     }
 
@@ -1343,10 +1361,38 @@ class ChatService {
     return { mode: settings.permission.mode, root: workspace.dir }
   }
 
-  /**
-   * 会话实际生效的模型配置：会话指定了档案/模型就用它的，否则回落到默认档案。
-   * 镜像字段与档案不同步时以档案为准，所以这里始终重算而不是直接读 settings。
-   */
+  /** 摘要独立档案只作用于摘要；留空或已删除时复用本轮 provider。 */
+  private summaryProvider(settings: Settings, fallback: ReturnType<typeof createProvider>): ReturnType<typeof createProvider> {
+    const profileId = settings.summary?.profileId
+    if (!profileId) return fallback
+    // resolveProfile 自带默认回退；先检查指定 id，避免套用失效档案的模型。
+    if (!settings.modelProfiles.some(item => item.id === profileId)) {
+      console.warn('[summary] 指定的模型档案已失效，沿用当前会话模型')
+      return fallback
+    }
+    const { profile, model } = resolveProfile(settings, profileId, settings.summary?.model)
+    if (!profile) {
+      console.warn('[summary] 模型档案不可用，沿用当前会话模型')
+      return fallback
+    }
+    const summarySettings: Settings = {
+      ...settings,
+      provider: profile.provider,
+      baseUrl: profile.baseUrl,
+      apiKey: profile.apiKey ?? '',
+      model,
+      temperature: profile.temperature
+    }
+    const provider = createProvider(summarySettings)
+    // 工厂返回无状态适配器，实际凭据读取自每次 request.settings。
+    // 只为摘要绑定请求配置；保留消息、取消信号与工具参数，绝不改主会话 settings。
+    return {
+      ...provider,
+      stream: (request) => provider.stream({ ...request, settings: summarySettings })
+    }
+  }
+
+  /** 会话模型以档案为真源，未指定时回落到默认档案。 */
   private effectiveSettings(session: Session, stored: Settings): Settings {
     const { profile, model } = resolveProfile(stored, session.modelProfileId, session.modelId)
     if (!profile) return stored

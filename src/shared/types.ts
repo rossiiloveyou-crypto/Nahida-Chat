@@ -348,6 +348,10 @@ export interface Settings {
    * 三端共用类型只做加法：老配置没有该字段时按缺省值处理（A43）。
    */
   channelWorkspaceDir?: string
+  /** 渠道专用档案；空值跟随默认档案。 */
+  channelModelProfileId?: string | null
+  /** 渠道专用模型；空值使用档案默认模型。 */
+  channelModelId?: string | null
 }
 
 /**
@@ -429,6 +433,10 @@ export interface MemorySettings {
  * 摘要在 userData/summaries.json（按 sessionId 一份）。
  */
 export interface SummarySettings {
+  /** 摘要专用档案；空值沿用会话 provider。 */
+  profileId?: string | null
+  /** 摘要专用模型；空值使用档案默认模型。 */
+  model?: string | null
   /** 总开关。关掉 = 不压缩、不注入、历史全量下发（与加这个功能之前逐字一致） */
   enabled: boolean
   /** 未覆盖区间内「可读消息」达到多少条触发一次压缩 */

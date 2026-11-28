@@ -6,6 +6,7 @@ import { branchVisibility } from '../story/visibility'
 import type { Message } from '@shared/types'
 import { STORY_CHUNK_CHARS, STORY_CHUNK_OVERLAP } from '@shared/constants'
 import { requestEmbeddingBackfill } from './embedPendings'
+import { sanitizeChunkText } from './sanitize'
 
 export interface Round {
   index: number
@@ -49,8 +50,13 @@ function safeBoundary(text: string, offset: number): number {
 }
 
 /** Offsets address the exact role-labelled messages joined by a single newline (end exclusive). */
-export function sliceRound(round: Round): StoryChunk[] {
-  const parts = round.messages.map((message) => ROLE_LABELS[message.role] + message.content)
+export function sliceRound(round: Round, options?: { sanitize?: boolean }): StoryChunk[] {
+  const parts = options?.sanitize
+    ? round.messages.flatMap(message => {
+      const body = sanitizeChunkText(message.content)
+      return body ? [ROLE_LABELS[message.role] + body] : []
+    })
+    : round.messages.map(message => ROLE_LABELS[message.role] + message.content)
   const text = parts.join('\n')
   const chunks: StoryChunk[] = []
   let pendingStart = 0
@@ -148,6 +154,11 @@ export class StoryArchiveService {
   private readonly generations = new Map<string, { generation: number; live: ArchiveSession }>()
   private readonly latest = new Map<string, ArchiveSnapshot>()
   private readonly deletedStories = new Set<string>()
+  private readonly drains = new Map<string, Promise<void>>()
+
+  async flush(storyId: string): Promise<void> {
+    await this.drains.get(storyId)
+  }
 
   isForgotten(storyId: string): boolean {
     return this.deletedStories.has(storyId)
@@ -164,6 +175,17 @@ export class StoryArchiveService {
     for (const map of [this.generations, this.retryReceipts]) {
       for (const key of map.keys()) {
         if (JSON.parse(key)[0] === storyId) map.delete(key)
+      }
+    }
+  }
+
+  /** Cancel snapshots without permanently retiring the story; future schedules remain valid. */
+  cancel(storyId: string): void {
+    this.jobs.get(storyId)?.clear()
+    for (const [key, snapshot] of this.latest) {
+      if (snapshot.storyId === storyId) {
+        this.retainReceipts(snapshot)
+        this.latest.delete(key)
       }
     }
   }
@@ -280,7 +302,11 @@ export class StoryArchiveService {
       }
       const queue = new Map([[key, snapshot]])
       this.jobs.set(snapshot.storyId, queue)
-      void this.drain(snapshot.storyId, queue)
+      const drain = this.drain(snapshot.storyId, queue)
+      this.drains.set(snapshot.storyId, drain)
+      void drain.finally(() => {
+        if (this.drains.get(snapshot.storyId) === drain) this.drains.delete(snapshot.storyId)
+      })
     } catch (error) {
       this.report(error)
     }
@@ -377,7 +403,7 @@ export class StoryArchiveService {
               firstMessageId: first.id, lastMessageId: last.id, messageIds,
               contentVersion: contentVersion(round.messages),
               roles: round.messages.map((message) => message.role),
-              startedAt: first.createdAt, chunks: sliceRound(round)
+              startedAt: first.createdAt, chunks: sliceRound(round, { sanitize: true })
             }
             if (!this.isCurrent(snapshot)) break
             const previous = store.getStoryRound?.(storyId, snapshot.branchId, round.index)

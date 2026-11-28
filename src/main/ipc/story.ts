@@ -26,6 +26,7 @@ import {
   getStory,
   getStorySession,
   listStories,
+  rebuildStoryArchive,
   listStoryMemories,
   readStoryProfile,
   saveStoryProfile,
@@ -43,6 +44,7 @@ import {
  * 现在不写它，等于留下一条「一次 IPC 调用删掉全部剧情」的通道（C10）。
  */
 export function registerStoryIpcHandlers(): void {
+  ipcMain.handle(IPC.storyRebuildArchive, (_event, storyId: string) => rebuildStoryArchive(storyId))
   ipcMain.handle(IPC.storyRecallStatus, () => storyRecallStatus())
   ipcMain.handle(IPC.storyBackfillEmbeddings, (_event, cancel?: boolean) => {
     if (cancel === true) { cancelEmbeddingBackfill(); return { started: false, reason: '正在停止补算' } }

@@ -34,6 +34,10 @@ const newStore = () => new api.settingsStore.constructor()
 const fresh = () => newStore().get()
 const store = api.settingsStore
 const initialMemory = JSON.stringify(store.get().memory)
+const q11Profiles = ['a', 'b'].map(id => ({ ...store.get().modelProfiles[0], id: 'q11-' + id,
+  name: 'Q11 ' + id, baseUrl: 'https://q11-' + id + '.invalid/v1', apiKey: '',
+  models: [id + '-default', id + '-extra'], defaultModel: id + '-default' }))
+store.save({ modelProfiles: q11Profiles, defaultProfileId: 'q11-a' })
 const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://127.0.0.1' })
 globalThis.window = dom.window
 globalThis.document = dom.window.document
@@ -60,6 +64,13 @@ window.nahida = {
     if (failSave) throw Error('fixture disk failure')
     return store.save(patch)
   } },
+  modelProfiles: { list: async () => ({ profiles: fresh().modelProfiles, defaultProfileId: fresh().defaultProfileId }) },
+  channels: {
+    config: async () => ({ version: 2, accounts: [], groups: [], uins: [], groupMemberGate: false, toolGate: true }),
+    status: async () => ({ dataDir: 'fixture/channels', file: 'fixture/access.json' })
+  },
+  qq: { processes: async () => [] },
+  observe: { status: async () => null, conversations: async () => [] },
   story: { recallStatus: async () => { statusCalls++; return api.storyRecallStatus() } },
   summary: {
     status: async () => { summaryCalls.status++; return { ...summaryStatus } },
@@ -99,6 +110,8 @@ const ui = await bundleModule('p49-recall-settings-dom', [
   'export { createElement, act } from ' + JSON.stringify(p('node_modules/react/index.js')),
   'export { createRoot } from ' + JSON.stringify(p('node_modules/react-dom/client.js')),
   'export { MemorySection } from ' + JSON.stringify(p(componentPath)),
+  'export { ChannelsSection } from ' + JSON.stringify(p('src/renderer/src/features/settings/sections/ChannelsSection.tsx')),
+  'export { useSettings } from ' + JSON.stringify(p('src/renderer/src/features/settings/useSettings.ts')),
   'export { MemorySection as BeforeMemorySection } from "p49-frozen-memory"',
   'export { useChatStore } from ' + JSON.stringify(p('src/renderer/src/features/chat/store.ts'))
 ].join('\n'), [{ name: 'frozen-memory', setup(build) {
@@ -122,6 +135,27 @@ const edit = async (node, value) => {
     node.dispatchEvent(new window.Event('input', { bubbles: true }))
   })
   await act(async () => { node.blur() })
+}
+const select = async (name, value) => {
+  const node = target(name)
+  assert.equal(node?.tagName, 'SELECT')
+  assert.equal(node.disabled, false, name + ' is enabled')
+  await act(async () => {
+    node.value = value
+    node.dispatchEvent(new window.Event('change', { bubbles: true }))
+  })
+}
+const legacySummaryDOM = node => {
+  const clone = node.cloneNode(true)
+  for (const name of ['总结模型档案', '总结模型']) clone.querySelector('[data-ui-target="' + name + '"]')?.closest('label').remove()
+  const stripWhitespace = parent => {
+    for (const child of [...parent.childNodes]) {
+      if (child.nodeType === 3 && !child.textContent.trim()) child.remove()
+      else stripWhitespace(child)
+    }
+  }
+  stripWhitespace(clone)
+  return clone.outerHTML
 }
 const storySave = () => click(target('保存故事召回设置'))
 const summarySection = () => target('对话摘要参数').closest('section')
@@ -161,7 +195,7 @@ try {
     assert.equal(ensures, 0)
   })
   await mount(ui.BeforeMemorySection)
-  const oldSummaryDOM = summarySection().outerHTML
+  const oldSummaryDOM = legacySummaryDOM(summarySection())
   const originalFactDOM = ['运行状态', '检索参数', '检索调试', '按人查看与清理'].map(title => section(document, title).outerHTML)
   await leave()
   await mount(ui.MemorySection)
@@ -180,8 +214,8 @@ try {
     assert.doesNotMatch(panel.textContent, /抽取|提炼|candidateMultiplier|候选乘数/)
     assert.match(panel.textContent, /0 关闭补查/)
   })
-  await test('A-06 rendered summary DOM exactly matches frozen pre-phase source', () => {
-    assert.equal(summarySection().outerHTML, oldSummaryDOM)
+  await test('A-06 legacy summary DOM matches frozen source excluding only Q11 selectors and formatting whitespace', () => {
+    assert.equal(legacySummaryDOM(summarySection()), oldSummaryDOM)
     assert.equal(summarySection().closest('details'), null)
   })
   await test('A-05 all original fact sections remain verbatim inside a default-closed native details', async () => {
@@ -529,6 +563,102 @@ try {
       try { await payload(); assert.equal(captured.at(-1).size, 80) }
       finally { store.get = get }
     } finally { memory.buildStoryContextBlock = original }
+  })
+  await test('Q11 summary selects persist via real onChange, reset models and preserve channel settings', async () => {
+    // Earlier main-only tests write the store directly; publish that fixture through the real hook first.
+    let save
+    function SettingsDriver() { save = ui.useSettings().save; return null }
+    await leave(); await mount(SettingsDriver)
+    await act(async () => { await save({ summary: fresh().summary }) })
+    await leave(); await mount(ui.MemorySection)
+    assert.equal(target('总结模型档案').value, '')
+    assert.equal(target('总结模型').disabled, true)
+    const channelBefore = [fresh().channelModelProfileId, fresh().channelModelId]
+    const summaryBefore = fresh().summary
+    const oldParameters = ({ profileId, model, ...rest }) => rest
+    const count = requests.length
+    await select('总结模型档案', 'q11-a')
+    assert.equal(requests.length, count + 1)
+    assert.deepEqual(Object.keys(requests.at(-1)), ['summary'])
+    assert.deepEqual([fresh().summary.profileId, fresh().summary.model], ['q11-a', null])
+    assert.equal(target('总结模型').disabled, false)
+    await select('总结模型', 'a-extra')
+    assert.equal(fresh().summary.model, 'a-extra')
+    await select('总结模型档案', 'q11-b')
+    assert.deepEqual([fresh().summary.profileId, fresh().summary.model], ['q11-b', null])
+    assert.equal(target('总结模型').value, '')
+    assert.deepEqual([...target('总结模型').options].map(o => o.value), ['', 'b-default', 'b-extra'])
+    await select('总结模型档案', '')
+    assert.equal(target('总结模型').disabled, true)
+    assert.deepEqual([fresh().summary.profileId, fresh().summary.model], [null, null])
+    assert.deepEqual(oldParameters(fresh().summary), oldParameters(summaryBefore))
+    assert.deepEqual([fresh().channelModelProfileId, fresh().channelModelId], channelBefore)
+  })
+  await test('Q11 channel selects persist independently through real ChannelsSection and existing settings save', async () => {
+    await leave(); await mount(ui.ChannelsSection)
+    assert.equal(target('渠道模型档案').value, '')
+    assert.equal(target('渠道模型').disabled, true)
+    const summaryBefore = structuredClone(fresh().summary)
+    const count = requests.length
+    await select('渠道模型档案', 'q11-a')
+    assert.equal(requests.length, count + 1)
+    assert.deepEqual(requests.at(-1), { channelModelProfileId: 'q11-a', channelModelId: null })
+    assert.equal(target('渠道模型').disabled, false)
+    await select('渠道模型', 'a-extra')
+    assert.deepEqual(requests.at(-1), { channelModelId: 'a-extra' })
+    assert.equal(fresh().channelModelId, 'a-extra')
+    await select('渠道模型档案', 'q11-b')
+    assert.deepEqual([fresh().channelModelProfileId, fresh().channelModelId], ['q11-b', null])
+    assert.equal(target('渠道模型').value, '')
+    assert.deepEqual([...target('渠道模型').options].map(o => o.value), ['', 'b-default', 'b-extra'])
+    await select('渠道模型档案', '')
+    assert.equal(target('渠道模型').disabled, true)
+    assert.deepEqual([fresh().channelModelProfileId, fresh().channelModelId], [null, null])
+    assert.deepEqual(fresh().summary, summaryBefore)
+  })
+  await test('Q11 remount refreshes added and deleted profiles without a settings cache broadcast', async () => {
+    await leave(); await mount(ui.MemorySection)
+    await select('总结模型档案', 'q11-a')
+    await leave()
+    const originalProfiles = structuredClone(fresh().modelProfiles)
+    const added = { ...originalProfiles[1], id: 'q11-added', name: 'Q11 added',
+      baseUrl: 'https://q11-added.invalid/v1', models: ['added-default'], defaultModel: 'added-default' }
+    // Model-page changes update the backend catalog, not useSettings' cached mirror.
+    store.save({ modelProfiles: [originalProfiles[1], added], defaultProfileId: 'q11-b' })
+    const count = requests.length
+    await mount(ui.MemorySection)
+    const options = [...target('总结模型档案').options]
+    assert.ok(options.some(o => o.value === 'q11-added' && o.textContent === 'Q11 added'))
+    assert.equal(target('总结模型档案').value, 'q11-a')
+    assert.match(target('总结模型档案').selectedOptions[0].textContent, /已不存在/)
+    assert.equal(target('总结模型').disabled, true)
+    assert.match(summarySection().textContent, /回退/)
+    assert.equal(requests.length, count, 'catalog refresh does not rewrite selected settings')
+    await select('总结模型档案', 'q11-added')
+    assert.deepEqual([fresh().summary.profileId, fresh().summary.model], ['q11-added', null])
+    assert.deepEqual([...target('总结模型').options].map(o => o.value), ['', 'added-default'])
+    await select('总结模型档案', '')
+    await leave()
+    store.save({ modelProfiles: originalProfiles, defaultProfileId: 'q11-a' })
+  })
+  await test('Q11 missing profiles remain explicit and disable both model selectors without auto-saving', async () => {
+    let save
+    function SettingsDriver() { save = ui.useSettings().save; return null }
+    await leave(); await mount(SettingsDriver)
+    await act(async () => { await save({ summary: { ...fresh().summary, profileId: 'q11-deleted-summary', model: 'old' },
+      channelModelProfileId: 'q11-deleted-channel', channelModelId: 'old' }) })
+    const count = requests.length
+    await leave(); await mount(ui.MemorySection)
+    assert.equal(target('总结模型档案').value, 'q11-deleted-summary')
+    assert.match(target('总结模型档案').selectedOptions[0].textContent, /已不存在/)
+    assert.equal(target('总结模型').disabled, true)
+    assert.match(summarySection().textContent, /回退/)
+    await leave(); await mount(ui.ChannelsSection)
+    assert.equal(target('渠道模型档案').value, 'q11-deleted-channel')
+    assert.match(target('渠道模型档案').selectedOptions[0].textContent, /已不存在/)
+    assert.equal(target('渠道模型').disabled, true)
+    assert.match(target('渠道模型档案').closest('section').textContent, /回退/)
+    assert.equal(requests.length, count, 'mounting missing profiles never silently rewrites settings')
   })
 } finally {
   api.embedder.ensure = originalEnsure

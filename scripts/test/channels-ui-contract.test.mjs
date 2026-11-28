@@ -81,40 +81,14 @@ check(
   /data-ui-target="渠道工作区路径"/.test(section)
 )
 
-// 5d · P3 复核补正：F 渠道模型区**只读展示**，且真的接上了档案回落
-//
-// 为什么要有这一条：F 区是「新增提示，不改变行为」。但「不改变行为」这句话本身也要能变红 ——
-// 一旦有人顺手给它加一个写入路径（选择器 / settings.save / 会话 update），
-// 它就变成了功能变更，而 P3 的结论是那件事归 BL-12。
-// 同时守住另一头：不许把主进程的 resolveProfile 抄一份判定逻辑进来（J-34）。
-check(
-  '5d · 面板含「渠道模型」区域（P3 复核补正的只读提示）',
-  regions.some((item) => item.includes('渠道模型')),
-  regions.join(' | ')
-)
-check(
-  '5e · 渠道模型值有 data-ui-target 标注（出图后能被指认）',
-  /data-ui-target="渠道当前模型"/.test(section)
-)
-{
-  // 只读的三条硬边界，全部用「出现即红」的写法：
-  //   ① 不许出现任何 settings.save({ channelModel… }) 之类的新设置项
-  //   ② 不许对会话调用 updateSession / modelProfileId 写入
-  //   ③ 不许把 resolveProfile 的判定抄进渲染层（只允许同形的 find ?? [0]，见 ChatPage:69）
-  const writesModel = /channelModelProfileId|channelModelId/.test(section)
-  const updatesSession = /updateSession\s*\(/.test(section)
-  const ownsResolve = /function\s+resolveProfile|const\s+resolveProfile/.test(section)
-  // 回落形状：必须按 defaultProfileId 找、找不到取 [0]、再从档案的 defaultModel 取模型名
-  const picksProfile =
-    /catalog\.profiles\.find\(\(item\) => item\.id === [\w.]*catalog\.defaultProfileId\)/.test(section) &&
-    /\.profiles\[0\]/.test(section) &&
-    /\.defaultModel/.test(section)
-  check(
-    '5f · 渠道模型区不含任何写入路径（无新设置项 / 无 updateSession / 无自建 resolveProfile）',
-    !writesModel && !updatesSession && !ownsResolve && picksProfile,
-    '设置项=' + writesModel + ' updateSession=' + updatesSession + ' 自建判定=' + ownsResolve + ' 回落形状=' + picksProfile
-  )
-}
+// Q11 replaces the former read-only label with two independent selectors.
+check('5d · 面板含渠道模型区域', regions.some(item => item.includes('渠道模型')))
+const modelRegion = section.slice(section.indexOf('data-ui-region="F 渠道模型"'), section.indexOf('data-ui-region="D', section.indexOf('data-ui-region="F 渠道模型"')))
+check('5e · 两个模型选择器带可定位标注', /<select[\s\S]*?data-ui-target="渠道模型档案"/.test(modelRegion) && /<select[\s\S]*?data-ui-target="渠道模型"/.test(modelRegion))
+check('5f · 档案切换保存双字段并清空模型', /settings\.save\(\{ channelModelProfileId: event\.target\.value \|\| null, channelModelId: null \}\)/.test(modelRegion))
+check('5g · 模型选择走原 settings 保存通道', /settings\.save\(\{ channelModelId: event\.target\.value \|\| null \}\)/.test(modelRegion))
+check('5h · 跟随默认时模型选择器禁用', /data-ui-target="渠道模型"[\s\S]*?disabled=\{[^}]*!channelProfile\}/.test(modelRegion) && modelRegion.includes('跟随默认档案'))
+check('5i · 渠道选择不读写摘要也不直改会话', !/summary\s*[.:]|updateSession\s*\(|function\s+resolveProfile|const\s+resolveProfile/.test(modelRegion))
 
 // 6 · 「按人」与「按群」是两张表，各自有独立列宽类（J-62）
 check(

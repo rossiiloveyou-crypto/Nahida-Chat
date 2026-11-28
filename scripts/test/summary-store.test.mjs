@@ -21,6 +21,8 @@ import path from 'node:path'
 import { bundleModule, createChecker, installElectronStub, p } from './qq-test-util.mjs'
 
 const { check, done } = createChecker()
+const deadline = setTimeout(() => { console.error('summary suite deadline exceeded'); process.exit(1) }, 30000)
+deadline.unref()
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-summary-'))
 installElectronStub(userData)
 
@@ -331,4 +333,99 @@ const zero = anchorFixture('zero')
 zero.session.messages.splice(23, 1)
 check('零窗口 lost 重挂到末尾且可返回空历史', zero.service.historyOf(zero.session).length === 0 && zero.service.stateOf('zero').coveredCount === 35)
 
+// ── Q11：真实配置归一化 / 重启 / provider 隔离 ────────────────────────────
+check('V01 旧配置摘要选择归一化为 null', defaults.profileId === null && defaults.model === null)
+check('V08 旧配置渠道选择归一化为 null', modA.settingsStore.get().channelModelProfileId === null && modA.settingsStore.get().channelModelId === null)
+modB.settingsStore.save({ summary: { ...repaired, profileId: ' summary-profile ', model: ' summary-model ' }, channelModelProfileId: ' channel-profile ', channelModelId: ' channel-model ' })
+const savedQ11 = (await bundleModule('summary-q11-restart', EXPORTS)).settingsStore
+check('V02 摘要选择保存重启并去空白', savedQ11.get().summary.profileId === 'summary-profile' && savedQ11.get().summary.model === 'summary-model')
+check('V08 渠道选择保存重启并去空白', savedQ11.get().channelModelProfileId === 'channel-profile' && savedQ11.get().channelModelId === 'channel-model')
+savedQ11.save({ channelModelProfileId: 'channel-next', channelModelId: null })
+check('V11 改渠道不改变摘要', savedQ11.get().summary.profileId === 'summary-profile' && savedQ11.get().summary.model === 'summary-model')
+savedQ11.save({ summary: { ...savedQ11.get().summary, profileId: null, model: null } })
+check('V11 改摘要不改变渠道', savedQ11.get().channelModelProfileId === 'channel-next' && savedQ11.get().channelModelId === null)
+for (const invalid of ['', '   ', 42, false, {}, []]) {
+  savedQ11.save({ summary: { ...savedQ11.get().summary, profileId: invalid, model: invalid }, channelModelProfileId: invalid, channelModelId: invalid })
+  const value = savedQ11.get()
+  check('Q11 非法选择归一化为 null：' + JSON.stringify(invalid), value.summary.profileId === null && value.summary.model === null && value.channelModelProfileId === null && value.channelModelId === null)
+}
+// Keep createProvider and its singleton registry real. Only replace each singleton's
+// transport-facing stream; assertions inspect request.settings, never factory inputs.
+const probe = { streams: [] }
+const stubs = {
+  '../rag': 'export const memoryService = { activePersona() { return "default" }, upsertPersona() {}, appendHistory() {}, async buildContextBlock() { return "" }, async extractInBackground() {} }'
+}
+const plugin = { name: 'q11-memory-boundary', setup(build) {
+  build.onResolve({ filter: /.*/ }, args => Object.hasOwn(stubs, args.path) && args.importer.replaceAll('\\', '/').endsWith('/chat/chatService.ts') ? { path: args.path, namespace: 'q11-fixture' } : null)
+  build.onLoad({ filter: /.*/, namespace: 'q11-fixture' }, args => ({ contents: stubs[args.path], loader: 'ts' }))
+} }
+const q11 = await bundleModule('summary-q11-provider', EXPORTS + '\n' + [
+  'export { chatService } from ' + JSON.stringify(p('src/main/features/chat/chatService.ts')),
+  'export { createProvider } from ' + JSON.stringify(p('src/main/features/llm/index.ts')),
+  'export { HeadlessSink } from ' + JSON.stringify(p('src/main/features/chat/sink.ts'))
+].join('\n'), [plugin])
+const catalog = q11.settingsStore.saveProfile({ name: 'Q11 main', provider: 'openai-compatible', baseUrl: 'https://main.invalid/v1', apiKey: 'synthetic-main-key', models: ['main-model'], defaultModel: 'main-model', temperature: 0.4, modelOptions: {} })
+const mainId = catalog.profiles.find(item => item.name === 'Q11 main').id
+q11.settingsStore.setDefaultProfile(mainId)
+const catalog2 = q11.settingsStore.saveProfile({ name: 'Q11 summary', provider: 'openai-compatible', baseUrl: 'https://summary.invalid/v1', apiKey: 'synthetic-summary-key', models: ['summary-default', 'summary-explicit'], defaultModel: 'summary-default', temperature: 0.2, modelOptions: {} })
+const summaryId = catalog2.profiles.find(item => item.name === 'Q11 summary').id
+q11.settingsStore.save({ summary: { ...q11.settingsStore.get().summary, enabled: false, profileId: summaryId, model: 'summary-explicit' }, memory: { ...q11.settingsStore.get().memory, enabled: false, autoExtract: false } })
+const fallback = q11.createProvider(q11.settingsStore.get())
+const originalStream = fallback.stream
+fallback.stream = async function* (request) {
+  probe.streams.push({ provider: this, request: structuredClone({ settings: request.settings, messages: request.messages }) })
+  yield { type: 'text', text: 'Q11 reply' }
+  yield { type: 'finish', reason: 'stop' }
+}
+const consume = async provider => {
+  const before = probe.streams.length
+  for await (const _event of provider.stream({ settings: q11.settingsStore.get(), messages: [{ role: 'user', content: 'Q11 direct summary' }], tools: [], signal: new AbortController().signal })) { /* drain */ }
+  return probe.streams[before].request.settings
+}
+const fallbackWarnings = [], warnBefore = console.warn
+const scheduleReal = q11.summaryService.schedule.bind(q11.summaryService)
+const scheduledProviders = []
+q11.summaryService.schedule = (...args) => { scheduledProviders.push(args[2]); return scheduleReal(...args) }
+let actualSession
+try {
+  const selected = q11.chatService.summaryProvider(q11.settingsStore.get(), fallback)
+  const selectedRequest = await consume(selected)
+  check('V02 真实 singleton 的 stream 收到摘要独立地址与解密密钥', selectedRequest.baseUrl === 'https://summary.invalid/v1' && selectedRequest.apiKey === 'synthetic-summary-key' && selectedRequest.provider === 'openai-compatible')
+  check('V03 stream 使用摘要显式模型', selectedRequest.model === 'summary-explicit')
+  q11.settingsStore.save({ summary: { ...q11.settingsStore.get().summary, model: null } })
+  const defaultRequest = await consume(q11.chatService.summaryProvider(q11.settingsStore.get(), fallback))
+  check('V03 stream 未指定模型时使用档案默认', defaultRequest.model === 'summary-default')
+  q11.settingsStore.save({ summary: { ...q11.settingsStore.get().summary, profileId: null } })
+  check('V01 未选档案返回原 singleton 同一实例', q11.chatService.summaryProvider(q11.settingsStore.get(), fallback) === fallback)
+  q11.settingsStore.save({ summary: { ...q11.settingsStore.get().summary, profileId: 'deleted-profile' } })
+  console.warn = (...args) => fallbackWarnings.push(args.join(' '))
+  let missing
+  try { missing = q11.chatService.summaryProvider(q11.settingsStore.get(), fallback) } finally { console.warn = warnBefore }
+  check('V04 失效档案返回同一 fallback singleton', missing === fallback)
+  check('V04 失效档案有可读原因且日志无密钥', fallbackWarnings.some(line => /summary/.test(line) && /失效|不可用/.test(line)) && fallbackWarnings.every(line => !line.includes('synthetic-')))
+  q11.settingsStore.save({ summary: { ...q11.settingsStore.get().summary, profileId: summaryId, model: 'summary-explicit' } })
+  probe.streams.length = 0
+  actualSession = q11.chatService.createSession({ modelProfileId: mainId, modelId: 'main-model' })
+  const outcome = await q11.chatService.sendAwait({ sessionId: actualSession.id, content: 'Q11 main request' }, new q11.HeadlessSink())
+  check('V05 真实发送与 buildPayload 的 stream 仍使用主配置', outcome.status === 'done' && probe.streams.length === 1 && probe.streams[0].request.settings.baseUrl === 'https://main.invalid/v1' && probe.streams[0].request.settings.apiKey === 'synthetic-main-key' && probe.streams[0].request.settings.model === 'main-model' && probe.streams[0].request.messages.some(item => item.content === 'Q11 main request'))
+  const scheduledRequest = await consume(scheduledProviders[0])
+  check('V05 真实 schedule provider 的 stream 覆盖为摘要配置', scheduledProviders.length === 1 && scheduledRequest.baseUrl === 'https://summary.invalid/v1' && scheduledRequest.model === 'summary-explicit')
+  probe.streams.length = 0
+  q11.settingsStore.save({ summary: { ...q11.settingsStore.get().summary, enabled: true, triggerCount: 2 } })
+  const compressed = q11.chatService.createSession({ modelProfileId: mainId, modelId: 'main-model' })
+  const next = await q11.chatService.sendAwait({ sessionId: compressed.id, content: 'Q11 compression request' }, new q11.HeadlessSink())
+  for (let i = 0; i < 100 && q11.summaryService.stateOf(compressed.id, 'default')?.coveredCount !== 2; i++) await sleep(10)
+  check('V05 同厂商 singleton 五个实际 stream 请求严格分流', next.status === 'done' && probe.streams.length === 5 && probe.streams[0].request.settings.model === 'main-model' && probe.streams.slice(1).every(item => item.request.settings.model === 'summary-explicit' && item.request.settings.baseUrl === 'https://summary.invalid/v1' && item.request.settings.apiKey === 'synthetic-summary-key') && q11.summaryService.stateOf(compressed.id, 'default')?.coveredCount === 2)
+  q11.settingsStore.save({ summary: { ...q11.settingsStore.get().summary, enabled: false, profileId: 'deleted-profile' } })
+  console.warn = (...args) => fallbackWarnings.push(args.join(' '))
+  let fallbackTurn
+  try { fallbackTurn = await q11.chatService.sendAwait({ sessionId: actualSession.id, content: 'Q11 fallback request' }, new q11.HeadlessSink()) } finally { console.warn = warnBefore }
+  check('V04 失效档案主对话完成且 schedule 沿用同一 singleton', fallbackTurn.status === 'done' && scheduledProviders.at(-1) === fallback && probe.streams.at(-1).request.settings.model === 'main-model')
+} finally {
+  console.warn = warnBefore
+  q11.summaryService.schedule = scheduleReal
+  fallback.stream = originalStream
+  if (actualSession) q11.chatService.stop(actualSession.id)
+}
+clearTimeout(deadline)
 done()

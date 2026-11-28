@@ -237,8 +237,7 @@ export function ChannelsSection() {
   //    settings.json → 供给（这一轮「给不给」工具），走 useSettings
   //    群聊工具增强开关属于后者，所以必须额外接 useSettings，与 useChannels 并存。
   const settings = useSettings()
-  // F 渠道模型（P3 复核补正）：只读展示渠道当前落在哪个档案/模型上。
-  // 🔴 这里**没有任何写入路径** —— 渠道面板不提供模型选择器，行为与改动前逐字节一致。
+  // 渠道模型独立于摘要模型；档案列表只用于选择，保存沿用 settings 通道。
   const models = useModelProfiles()
   const bot = useBotUin()
 
@@ -250,17 +249,10 @@ export function ChannelsSection() {
   // 渠道工作区根（P3 / M21）：undefined = 走主进程缺省值 userData/workspace。
   // 🔴 渲染层拿不到 app.getPath('userData')，所以这里只显示「默认」字样 + 可选项，
   //    真值由主进程 defaultChannelWorkspaceDir() 现算，不在两端各算一份。
-  // 渠道会话的 modelProfileId / modelId 恒为 null（ensureChannelSession 建会话时不传），
-  // 所以每轮都由主进程 resolveProfile(stored, null, null) → activeProfile(settings) 现取。
-  // 这里照抄那份回落形状**只为显示它落在哪**：真源仍在主进程，渲染层不做任何判定（J-34）。
-  // 同形先例：ChatPage.tsx:69 / ComposerBar.tsx:94 / ModelSection.tsx:89。
-  const activeProfile =
-    models.catalog.profiles.find((item) => item.id === models.catalog.defaultProfileId) ??
-    models.catalog.profiles[0] ??
-    null
-  const channelModelLabel = activeProfile
-    ? (activeProfile.name || activeProfile.provider) + ' · ' + activeProfile.defaultModel
-    : '（没有可用的模型档案 —— 渠道发不出消息）'
+  const channelProfileId = settings.settings?.channelModelProfileId ?? ''
+  const channelProfile = models.catalog.profiles.find((profile) => profile.id === channelProfileId)
+  const channelModelId = settings.settings?.channelModelId ?? ''
+  const channelProfileMissing = !models.loading && !models.error && Boolean(channelProfileId && !channelProfile)
 
   const configuredChannelDir = settings.settings?.channelWorkspaceDir?.trim() ?? ''
   const channelWorkspaceDirLabel = configuredChannelDir || '（默认）应用数据目录/workspace'
@@ -664,21 +656,48 @@ export function ChannelsSection() {
       <section className="setting-group" data-ui-region="F 渠道模型">
         <h3 className="setting-group__title">渠道模型</h3>
         <p className="setting-group__desc">
-          QQ 私聊与群聊里她用的是哪个模型。
-          <strong>渠道会话不单独记模型</strong>：每一条消息都用<strong>默认档案的默认模型</strong>，
-          所以下面这个值会跟着「设置 → 模型配置」里的默认档案一起变。
+          为 QQ 私聊与群聊统一选择档案和模型，下一条消息生效；不影响桌面对话或摘要模型。
+          选择「跟随默认档案」时使用默认档案的默认模型。
         </p>
-        <p className="hint-text" data-ui-target="渠道当前模型">
-          <code>{channelModelLabel}</code>
-        </p>
-        <p className="setting-group__desc">
-          想换渠道用的模型：去「模型配置」把那个档案设为<strong>默认</strong>，或者改它的默认模型。
-          <br />
-          注意这条会<strong>一起影响</strong>桌面上没手动切过模型的对话 —— 它们同样跟随默认档案。
-          想只让某一条桌面对话换模型，用输入框旁边那个模型选择器。
-          <br />
-          渠道<strong>没有</strong>自己的模型选择器；给某个群单独指定模型的能力在长期待办里（BL-11）。
-        </p>
+        <label className="field">
+          <span className="field__label">渠道模型档案</span>
+          <select
+            className="field__control"
+            data-ui-target="渠道模型档案"
+            value={channelProfileId}
+            disabled={settings.loading || settings.saving || models.loading || Boolean(models.error)}
+            onChange={(event) => void settings.save({ channelModelProfileId: event.target.value || null, channelModelId: null })}
+          >
+            <option value="">跟随默认档案</option>
+            {channelProfileId && !channelProfile && (
+              <option value={channelProfileId}>{channelProfileMissing ? '已不存在的档案' : '正在读取档案'}（{channelProfileId}）</option>
+            )}
+            {models.catalog.profiles.map((profile) => (
+              <option key={profile.id} value={profile.id}>{profile.name || profile.provider}</option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span className="field__label">渠道模型</span>
+          <select
+            className="field__control"
+            data-ui-target="渠道模型"
+            value={channelProfile ? channelModelId : ''}
+            disabled={settings.loading || settings.saving || models.loading || Boolean(models.error) || !channelProfile}
+            onChange={(event) => void settings.save({ channelModelId: event.target.value || null })}
+          >
+            <option value="">档案默认模型{channelProfile ? '（' + channelProfile.defaultModel + '）' : ''}</option>
+            {channelProfile && channelModelId && !channelProfile.models.includes(channelModelId) && (
+              <option value={channelModelId}>已不在档案中的模型（{channelModelId}）</option>
+            )}
+            {channelProfile?.models.map((model) => <option key={model} value={model}>{model}</option>)}
+          </select>
+        </label>
+        {channelProfileMissing && (
+          <p className="hint-text hint-text--error">所选档案已不存在，渠道将回退到默认档案。请选择其他档案或跟随默认档案。</p>
+        )}
+        {models.error && <p className="hint-text hint-text--error">档案列表读取失败：{models.error}</p>}
+        {settings.error && <p className="hint-text hint-text--error">{settings.error}</p>}
       </section>
 
       <section className="setting-group" data-ui-region="D 数据位置">

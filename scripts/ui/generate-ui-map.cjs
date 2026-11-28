@@ -231,8 +231,9 @@ const DEFAULT_VIEWS = [
   // P8：新建故事区表单（含「背景与剧本设定」与「开场消息」两栏）
   { hash: '/chat', name: 'new-story-dialog', click: ['[data-ui-target="新建对话"]', '[data-ui-target="故事"]', '[data-ui-target="新建故事"]'] },
   { hash: '/settings/memory', name: 'settings-memory' },
-  { hash: '/settings/memory', name: 'settings-story-recall', scrollY: 740 },
-  { hash: '/settings/memory', name: 'settings-memory-facts', scrollY: 1580, click: '[data-ui-target="普通聊天事实记忆"] summary' },
+  { hash: '/settings/memory', name: 'settings-story-recall', scrollY: 740, seedStory: true },
+  { hash: '/settings/memory', name: 'settings-story-rebuild', scrollY: 1100, seedStory: true },
+  { hash: '/settings/memory', name: 'settings-memory-facts', scrollY: 2060, click: '[data-ui-target="普通聊天事实记忆"] summary' },
   // P5：按人聚合面板在页面下半部分（对话摘要之后），补一张下滚视图让新表格可定位
   { hash: '/settings/memory', name: 'settings-memory-lower', scrollY: 1080 },
   // P7（H-25）：危险区在页面最末（top ≈ 2000+），上面两张都够不到。
@@ -248,6 +249,8 @@ const DEFAULT_VIEWS = [
   // P7：渠道控制台（私聊 / 群聊两块 + 数据位置）。面板高约两屏，故补一张下滚视图。
   { hash: '/settings/channels', name: 'settings-channels' },
   { hash: '/settings/channels', name: 'settings-channels-lower', scrollY: 760 },
+  // Q11：保留原权限视口，单独覆盖独立模型选择器。
+  { hash: '/settings/channels', name: 'settings-channels-model', scrollY: 1640 },
   // P8：D 区「旁听库」在 C 区之后（面板最下方），单独一张把它变成可定位的
   // 群号收进弹层之后，面板下半部分（概要 + 入口）才是要看的东西 → 滚到底（超出会自然夹到最大）
   { hash: '/settings/channels', name: 'settings-channels-observe', scrollY: 3200 },
@@ -967,8 +970,10 @@ app.whenReady().then(async () => {
         'chat-stories': ['故事', '新建故事'],
         'chat-story-drawer': ['跳到消息 10', '从此处分支出新剧情 10'],
         'new-story-dialog': ['故事画像输入'],
-        'settings-memory': ['对话摘要参数'],
+        'settings-memory': ['对话摘要参数', '总结模型档案', '总结模型'],
+        'settings-channels-model': ['渠道模型档案', '渠道模型'],
         'settings-story-recall': ['故事召回开关', '故事召回轮数', '故事召回预算', '故事召回阈值', '故事关键词权重', '故事补查深度', '保存故事召回设置', '补算故事向量'],
+        'settings-story-rebuild': ['重建故事归档'],
         'settings-memory-facts': ['检索参数', '试召回输入', '按人列表'],
         'settings-qq-threshold': ['门槛组']
       }[view.name] || []

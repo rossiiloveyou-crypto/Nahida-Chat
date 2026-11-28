@@ -125,7 +125,9 @@ export function defaultSettings(): Settings {
     activeWorkspaceId: workspace.id,
     permission: { mode: 'approve' },
     memory: { ...DEFAULT_MEMORY_SETTINGS },
-    summary: { ...DEFAULT_SUMMARY_SETTINGS },
+    summary: normalizeSummary(undefined),
+    channelModelProfileId: null,
+    channelModelId: null,
     appearance: { ...DEFAULT_APPEARANCE },
     bridge: { ...DEFAULT_BRIDGE_SETTINGS }
   }
@@ -237,6 +239,8 @@ export class SettingsStore {
     normalizeWorkspaces(next)
     next.memory = normalizeMemory(next.memory)
     next.summary = normalizeSummary(next.summary)
+    next.channelModelProfileId = optionalModelSelection(next.channelModelProfileId)
+    next.channelModelId = optionalModelSelection(next.channelModelId)
     next.appearance = normalizeAppearance(next.appearance)
     next.bridge = normalizeBridge(next.bridge)
     // 档案是唯一真源：任何整体保存都要重新归一化并把镜像字段对齐
@@ -444,6 +448,8 @@ export class SettingsStore {
         memory: normalizeMemory(parsed.memory ?? base.memory),
         // 老配置没有这一段 → 补默认值。这是「升级即生效」的唯一入口。
         summary: normalizeSummary(parsed.summary ?? base.summary),
+        channelModelProfileId: optionalModelSelection(parsed.channelModelProfileId),
+        channelModelId: optionalModelSelection(parsed.channelModelId),
         appearance: normalizeAppearance(parsed.appearance ?? base.appearance),
         bridge: normalizeBridge(parsed.bridge ?? base.bridge)
       }
@@ -939,11 +945,17 @@ function normalizeBridge(input: BridgeSettings | undefined): BridgeSettings {
  *    load() 的合并路径（老配置 undefined）与 save() 的归一化（用户写了非法值）。
  *    只做一处，前者会让老用户升级后读到 undefined 而崩，后者会让手改的字符串永久写坏。
  */
+function optionalModelSelection(value: unknown): string | null {
+  return typeof value === 'string' ? value.trim() || null : null
+}
+
 function normalizeSummary(input: SummarySettings | undefined): SummarySettings {
   const base = DEFAULT_SUMMARY_SETTINGS
   const int = (value: unknown, min: number, max: number, fallback: number): number =>
     clampSummaryInt(value, min, max, fallback)
   return {
+    profileId: optionalModelSelection(input?.profileId),
+    model: optionalModelSelection(input?.model),
     enabled: typeof input?.enabled === 'boolean' ? input.enabled : base.enabled,
     triggerCount: int(
       input?.triggerCount,

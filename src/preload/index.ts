@@ -160,6 +160,7 @@ const api: NahidaApi = {
   // P4：故事区。四个入口都是 invoke；删除的确认参数由调用方显式给。
   story: {
     recallStatus: () => ipcRenderer.invoke(IPC.storyRecallStatus),
+    rebuildArchive: (storyId) => ipcRenderer.invoke(IPC.storyRebuildArchive, storyId),
     backfillEmbeddings: (cancel) => ipcRenderer.invoke(IPC.storyBackfillEmbeddings, cancel),
     onEmbeddingProgress: (handler) => subscribe(IPC.storyEmbeddingProgress, handler),
     list: () => ipcRenderer.invoke(IPC.storyList),

@@ -1,5 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
+import { cancelEmbeddingBackfill, waitForEmbeddingBackfill } from '../rag/embedPendings'
 import type { MemoryEntry, Session } from '@shared/types'
 import type {
   StoryBranchItem,
@@ -16,7 +18,7 @@ import { MemoryStore } from '../rag/store'
 import { storyArchiveService } from '../rag/storyArchive'
 import { branchStore, toBranchSessionInfo } from './branches'
 import { closeStoryMemory, storyMemory } from './memory'
-import { isStoryId, storyProfilePath, trashRoot } from './paths'
+import { isStoryId, storyDbPath, storyProfilePath, trashRoot } from './paths'
 import { storyStore, StoryStore } from './store'
 
 /** 分支相关对外入口（P6 / T8）。deriveBranch / deleteBranch 的真身在 derive.ts。 */
@@ -36,6 +38,42 @@ export { deriveBranch, deleteBranch } from './derive'
 /** 主进程单例（供 IPC 薄转发用；测试直接调下面的函数） */
 export function storyStoreOf(): StoryStore {
   return storyStore
+}
+
+const archiveRebuilds = new Set<string>()
+
+/** Explicit destructive archive reset. Chat, facts, metadata and completion receipts survive. */
+export async function rebuildStoryArchive(storyId: string): Promise<{ removed: number }> {
+  if (!isStoryId(storyId) || !storyStore.get(storyId)) throw new Error('故事不存在')
+  if (archiveRebuilds.has(storyId)) throw new Error('该故事正在重建归档')
+  archiveRebuilds.add(storyId)
+  try {
+    storyArchiveService.cancel(storyId)
+    cancelEmbeddingBackfill()
+    await Promise.all([storyArchiveService.flush(storyId), waitForEmbeddingBackfill()])
+    // No awaited operation follows this barrier before the transaction: newly queued
+    // snapshots are invalidated too, while every pre-barrier writer has drained.
+    storyArchiveService.cancel(storyId)
+    if (!storyStore.get(storyId)) throw new Error('故事已删除')
+    closeStoryMemory(storyId)
+    const file = storyDbPath(storyId)
+    if (!existsSync(file)) return { removed: 0 }
+    const db = new DatabaseSync(file)
+    let removed = 0
+    try {
+      db.exec('BEGIN IMMEDIATE')
+      const exists = (name: string): boolean => !!db.prepare(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?"
+      ).get(name)
+      if (exists('story_chunks')) db.prepare('DELETE FROM story_chunks WHERE round_id IN (SELECT id FROM story_rounds WHERE story_id = ?)').run(storyId)
+      if (exists('story_rounds')) removed = Number(db.prepare('DELETE FROM story_rounds WHERE story_id = ?').run(storyId).changes)
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
+    } finally { db.close() }
+    return { removed }
+  } finally { archiveRebuilds.delete(storyId) }
 }
 
 export function listStories(): StorySummary[] {

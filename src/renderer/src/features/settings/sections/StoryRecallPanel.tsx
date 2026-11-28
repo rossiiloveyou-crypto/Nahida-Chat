@@ -18,6 +18,23 @@ export function StoryRecallPanel({ settings, saving, save }: Props) {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const [pending, setPending] = useState(false)
+  const [storyId, setStoryId] = useState('')
+  const [rebuilding, setRebuilding] = useState(false)
+  const [confirmRebuild, setConfirmRebuild] = useState(false)
+  const [rebuildMessage, setRebuildMessage] = useState('')
+
+  async function rebuild(): Promise<void> {
+    if (!storyId || rebuilding) return
+    setRebuilding(true)
+    setRebuildMessage('')
+    try {
+      const result = await window.nahida.story.rebuildArchive(storyId)
+      setRebuildMessage(`已清空 ${result.removed} 轮归档；下一次在该区发言时会自动重新归档并补算向量`)
+      setConfirmRebuild(false)
+      await refresh()
+    } catch (error) { setRebuildMessage(error instanceof Error ? error.message : String(error)) }
+    finally { setRebuilding(false) }
+  }
 
   useEffect(() => {
     if (!dirty) setDraft({ ...DEFAULT_STORY_RECALL, ...settings.storyRecall })
@@ -130,6 +147,13 @@ export function StoryRecallPanel({ settings, saving, save }: Props) {
           <dt>待补向量轮数</dt><dd>{status?.pendingRounds ?? '—'}（{status?.pendingChunks ?? '—'} 个分片）</dd>
           <dt>补算进度</dt><dd>{status?.backfilling ? `${status.backfilling.done} / ${status.backfilling.total}` : '未在补算'}</dd>
         </dl>
+        {confirmRebuild && <div role="alertdialog" aria-label="确认重建归档">
+          <p>将清空「{status?.stories?.find(story => story.storyId === storyId)?.title}」的全部归档，保留聊天、事实记忆和剧情。下次发言会重新归档。确认继续？</p>
+          <button type="button" className="btn btn-secondary" disabled={rebuilding} onClick={() => setConfirmRebuild(false)}>取消</button>
+          <button type="button" className="btn btn-secondary" data-ui-target="确认重建故事归档" disabled={rebuilding}
+            onClick={() => void rebuild()}>{rebuilding ? '重建中…' : '确认清空归档'}</button>
+        </div>}
+        {rebuildMessage && <p role="status" className="hint-text">{rebuildMessage}</p>}
         {status && <div className="story-recall-stories">
           <h4>按故事区</h4>
           {status.stories?.length ? <ul>
@@ -137,6 +161,8 @@ export function StoryRecallPanel({ settings, saving, save }: Props) {
               <span>{story.title}{story.branchLabel ? '（' + story.branchLabel + '）' : ''}</span>
               {' · '}归档 {story.archivedRounds} · 向量 {story.vectorRounds} · 待补 {story.pendingRounds}
               {'（'}{story.pendingChunks} 个分片）
+              <button type="button" className="btn btn-secondary" data-ui-target="重建故事归档" disabled={rebuilding}
+                onClick={() => { setStoryId(story.storyId); setConfirmRebuild(true); setRebuildMessage('') }}>重建归档</button>
             </li>)}
           </ul> : <p className="hint-text">还没有故事区</p>}
         </div>}

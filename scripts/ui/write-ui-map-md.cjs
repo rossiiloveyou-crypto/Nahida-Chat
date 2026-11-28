@@ -54,6 +54,7 @@ const KNOWN_TITLES = {
   // P9-R3：渠道控制台从「按会话」重做成「按人」，三张图覆盖 A/B/C/D 四个区。
   'settings-channels': '设置 · 渠道控制台（QQ 号白名单 / 群白名单）',
   'settings-channels-lower': '设置 · 渠道控制台（下半屏 / 鉴权开关）',
+  'settings-channels-model': '设置 · 渠道控制台（独立模型）',
   'settings-channels-observe-groups': '渠道控制台 · 旁听群号一览（弹层，可搜索）',
   'settings-channels-observe': '设置 · 渠道控制台（旁听库）',
   'settings-qq': '设置 · QQ 接入',

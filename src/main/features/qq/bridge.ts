@@ -18,6 +18,7 @@ import { observeStore } from '../observe/store'
 import type { QqActionResult, QqHostEventMessage } from '@shared/qqHost'
 import type { ChatSink, ChatTurnOutcome } from '../chat/sink'
 import { chatService } from '../chat/chatService'
+import { settingsStore } from '../settings/settingsStore'
 import { scopeOf, setSessionPolicy } from '../chat/sessionPolicy'
 import { channelStore } from '../channels/store'
 import { qqHost } from './host'
@@ -293,7 +294,14 @@ export function createQqBridge(deps: QqBridgeDeps): QqBridge {
   // 真正的行级隔离是租户 (user_id, persona_id)。
   const ensureSession =
     deps.ensureSession ??
-    ((sessionId: string, title: string) => chatService.ensureChannelSession(sessionId, { title }))
+    ((sessionId: string, title: string) => {
+      const settings = settingsStore.get()
+      return chatService.ensureChannelSession(sessionId, {
+        title,
+        modelProfileId: settings.channelModelProfileId ?? null,
+        modelId: settings.channelModelId ?? null
+      })
+    })
   // 注册表只剩两个成员（P6 删掉 isMemoryIsolated / injectOwnerProfile：前者 chatService 从不调用，
   // 后者从来没有消费者）。两个实现都转调同一个 `scopeOf` —— 域判定仍然只有一处。
   setSessionPolicy({

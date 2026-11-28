@@ -18,6 +18,7 @@ import type {
 import type { MemoryDeleteReport, MemoryPersonaRow, MemoryUserDetail, MemoryUserRow } from '@shared/api'
 import { useChatStore } from '../../chat/store'
 import { useSettings } from '../useSettings'
+import { useModelProfiles } from '../useModelProfiles'
 import { NumberField } from '../../../components/NumberField'
 import { WipeDialog } from './WipeDialog'
 import { StoryRecallPanel } from './StoryRecallPanel'
@@ -36,6 +37,7 @@ import { StoryRecallPanel } from './StoryRecallPanel'
  */
 export function MemorySection() {
   const { settings, loading, saving, error, save } = useSettings()
+  const models = useModelProfiles()
 
   /**
    * 一键安装模型。
@@ -98,6 +100,10 @@ export function MemorySection() {
 
   const memory = settings?.memory
   const summaryCfg = settings?.summary
+  const summaryProfileId = summaryCfg?.profileId ?? ''
+  const summaryProfile = models.catalog.profiles.find((profile) => profile.id === summaryProfileId)
+  const summaryModel = summaryCfg?.model ?? ''
+  const summaryProfileMissing = !models.loading && !models.error && Boolean(summaryProfileId && !summaryProfile)
 
   const patch = async (value: Partial<NonNullable<typeof memory>>): Promise<void> => {
     if (!memory) return
@@ -391,6 +397,45 @@ export function MemorySection() {
             />
             <span className="memory-num__unit">条最近原文保留（0 = 只靠摘要接话）</span>
           </div>
+
+          <label className="field">
+            <span className="field__label">总结模型档案</span>
+            <select
+              className="field__control"
+              data-ui-target="总结模型档案"
+              value={summaryProfileId}
+              disabled={loading || saving || models.loading || Boolean(models.error) || !summaryCfg}
+              onChange={(event) => void patchSummary({ profileId: event.target.value || null, model: null })}
+            >
+              <option value="">跟随默认档案</option>
+              {summaryProfileId && !summaryProfile && (
+                <option value={summaryProfileId}>{summaryProfileMissing ? '已不存在的档案' : '正在读取档案'}（{summaryProfileId}）</option>
+              )}
+              {models.catalog.profiles.map((profile) => (
+                <option key={profile.id} value={profile.id}>{profile.name || profile.provider}</option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span className="field__label">总结模型</span>
+            <select
+              className="field__control"
+              data-ui-target="总结模型"
+              value={summaryProfile ? summaryModel : ''}
+              disabled={loading || saving || models.loading || Boolean(models.error) || !summaryProfile}
+              onChange={(event) => void patchSummary({ model: event.target.value || null })}
+            >
+              <option value="">档案默认模型{summaryProfile ? '（' + summaryProfile.defaultModel + '）' : ''}</option>
+              {summaryProfile && summaryModel && !summaryProfile.models.includes(summaryModel) && (
+                <option value={summaryModel}>已不在档案中的模型（{summaryModel}）</option>
+              )}
+              {summaryProfile?.models.map((model) => <option key={model} value={model}>{model}</option>)}
+            </select>
+          </label>
+          {summaryProfileMissing && (
+            <p className="hint-text hint-text--error">所选档案已不存在，摘要将回退到当前会话使用的档案。请选择其他档案或跟随默认档案。</p>
+          )}
+          {models.error && <p className="hint-text hint-text--error">档案列表读取失败：{models.error}</p>}
 
           <div className="memory-num">
             <span className="memory-num__label">近期话题上限</span>
