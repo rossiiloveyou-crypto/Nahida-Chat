@@ -9,6 +9,13 @@ type Progress = Pick<StoryRecallStatus, 'backfilling' | 'pendingError'>
 type Row = { id: string; text: string | Uint8Array; content_version: string; branch_id: string; started_at: number }
 type Priority = { storyId: string; branchId: string }
 const yieldLoop = (): Promise<void> => new Promise(resolve => setImmediate(resolve))
+/** Backfill cadence: smaller batches shorten bursts; gaps give the UI breathing room. */
+const throttle = { batch: 4, gapMs: 150 }
+export function configureEmbeddingThrottle(next: Partial<{ batch: number; gapMs: number }>): void {
+  if (Number.isSafeInteger(next.batch) && next.batch! > 0) throttle.batch = next.batch!
+  if (Number.isSafeInteger(next.gapMs) && next.gapMs! >= 0) throttle.gapMs = next.gapMs!
+}
+const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
 const errors = new Map<string, string>()
 const listeners = new Set<(state: Progress) => void>()
 let progress: Progress['backfilling'] = null
@@ -142,9 +149,9 @@ async function run(): Promise<void> {
     publish()
     for (const { storyId, file, rows } of pending) {
       try {
-      for (let offset = 0; offset < rows.length; offset += 16) {
+      for (let offset = 0; offset < rows.length; offset += throttle.batch) {
         if (cancelled) return
-        const batch = rows.slice(offset, offset + 16)
+        const batch = rows.slice(offset, offset + throttle.batch)
         const vectors = await embedStoryChunks(storyId, batch.map(row => typeof row.text === 'string'
           ? row.text : Buffer.from(row.text).toString('utf16le')))
         if (cancelled) return
@@ -170,9 +177,10 @@ async function run(): Promise<void> {
           break
         }
         progress.done += batch.length
-        console.info('[story-embedding-batch]', { storyId, size: batch.length, success, skipped: batch.length - success, failed: 0 })
+        const shouldLog = success !== 0 && (progress.done % 16 < throttle.batch)
+        if (shouldLog) console.info('[story-embedding-batch]', { storyId, size: batch.length, success, skipped: batch.length - success, failed: 0 })
         publish()
-        await yieldLoop()
+        await (throttle.gapMs > 0 ? sleep(throttle.gapMs) : yieldLoop())
       }
       } finally {
         // No connection survives an await. Reopen only an existing story file.

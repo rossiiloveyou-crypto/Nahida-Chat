@@ -12,10 +12,11 @@ const api = await bundleModule('q4-embeddings', [
  ['MemoryStore','src/main/features/rag/store.ts'],
  ['StoryArchiveService','src/main/features/rag/storyArchive.ts'],
  ['embedder','src/main/features/rag/embedder.ts'],
- ['startEmbeddingBackfill, cancelEmbeddingBackfill, waitForEmbeddingBackfill, embeddingProgress, onEmbeddingProgress, autoEmbeddingBackfill, embedStoryChunks','src/main/features/rag/embedPendings.ts'],
+ ['configureEmbeddingThrottle, startEmbeddingBackfill, cancelEmbeddingBackfill, waitForEmbeddingBackfill, embeddingProgress, onEmbeddingProgress, autoEmbeddingBackfill, embedStoryChunks','src/main/features/rag/embedPendings.ts'],
  ['storyRecallStatus','src/main/features/story/recallStatus.ts'],
  ['recallStory','src/main/features/rag/retriever.ts']
 ].map(([names,file])=>'export { '+names+' } from '+JSON.stringify(p(file))).join(String.fromCharCode(10)))
+api.configureEmbeddingThrottle({ batch: 16, gapMs: 0 })
 const { check, done } = createChecker()
 async function test(name, fn) { try { await fn(); check(name,true) } catch (e) { check(name,false,e.stack) } }
 const dims=1024, vec=()=>Float32Array.from({length:dims},(_,i)=>i===0?1:0)

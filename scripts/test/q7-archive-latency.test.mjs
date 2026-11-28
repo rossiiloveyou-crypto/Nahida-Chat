@@ -11,7 +11,7 @@ const root=fs.mkdtempSync(path.join(os.tmpdir(),'nc-q7-'))
 installElectronStub(root)
 const api=await bundleModule('q7-archive', [
  ['MemoryStore','rag/store'],['StoryArchiveService','rag/storyArchive'],['embedder','rag/embedder'],
- ['requestEmbeddingBackfill,startEmbeddingBackfill,cancelEmbeddingBackfill,waitForEmbeddingBackfill,embeddingProgress,onEmbeddingProgress','rag/embedPendings'],
+ ['configureEmbeddingThrottle,requestEmbeddingBackfill,startEmbeddingBackfill,cancelEmbeddingBackfill,waitForEmbeddingBackfill,embeddingProgress,onEmbeddingProgress','rag/embedPendings'],
  ['storyRecallStatus','story/recallStatus'],['recallStory','rag/retriever'],
  ['transferService','transfer/service'],['chatService','chat/chatService'],
  ['storyMemory,closeAllStoryMemory','story/memory']
@@ -33,6 +33,56 @@ function input(id,i,branch='b',time=i){return {storyId:id,branchId:branch,roundI
 function fixture(count=0){const id='story_q7'+(++seq)+'_abcdef',directory=path.join(root,'stories',id);fs.mkdirSync(directory,{recursive:true});const file=path.join(directory,'memory.db'),store=new api.MemoryStore(file);for(let i=0;i<count;i++)store.upsertStoryRound(input(id,i));store.close();return {id,file,directory}}
 async function test(name,fn){try{await fn();check(name,true)}catch(e){check(name,false,e.stack)}finally{hook=null;api.cancelEmbeddingBackfill();await api.waitForEmbeddingBackfill()}}
 try {
+ // Exercise untouched production defaults before opting legacy cases into 16/0.
+ await test('Y-01/Y-02/Y-06 default batches and breathing gaps preserve progress',async()=>{
+  const f=fixture(10),events=[],sizes=[],times=[],before=calls
+  hook=()=>{sizes.push(order.length-(sizes.reduce((a,b)=>a+b,0)));times.push(performance.now())}
+  order=[]
+  const off=api.onEmbeddingProgress(e=>events.push({time:performance.now(),state:e}))
+  try {
+   api.startEmbeddingBackfill();await api.waitForEmbeddingBackfill()
+   assert.deepEqual(sizes,[4,4,2]);assert.equal(calls-before,3)
+   const completed=events.filter(e=>e.state.backfilling?.done>0)
+   assert.deepEqual(completed.map(e=>e.state.backfilling.done),[4,8,10])
+   const gaps=completed.slice(1).map((e,i)=>e.time-completed[i].time)
+   assert.ok(gaps.every(gap=>gap>=120),JSON.stringify(gaps))
+   assert.equal(events.at(-1).state.backfilling,null);assert.equal(nulls(f),0)
+   assert.equal(api.storyRecallStatus().pendingChunks,0)
+   console.log('Q75_DEFAULT',JSON.stringify({sizes,gaps}))
+  } finally {off()}
+ })
+ await test('Y-05 cancel during breathing gap preserves first committed batch',async()=>{
+  const f=fixture(10),before=calls;let cancellation
+  const off=api.onEmbeddingProgress(e=>{
+   if(e.backfilling?.done===4&&!cancellation)cancellation=setImmediate(()=>api.cancelEmbeddingBackfill())
+  })
+  try {
+   api.startEmbeddingBackfill();await api.waitForEmbeddingBackfill()
+   assert.equal(calls-before,1);assert.equal(nulls(f),6)
+   assert.equal(api.embeddingProgress().backfilling,null)
+  } finally {off();if(cancellation)clearImmediate(cancellation)}
+  hook=null;api.startEmbeddingBackfill();await api.waitForEmbeddingBackfill();assert.equal(nulls(f),0)
+ })
+ await test('Y-03 configured 16/0 uses one batch and setImmediate rather than sleep',async()=>{
+  api.configureEmbeddingThrottle({batch:16,gapMs:0})
+  const f=fixture(10),before=calls,original=globalThis.setTimeout;let timers=0
+  globalThis.setTimeout=(...args)=>{timers++;return original(...args)}
+  try {api.startEmbeddingBackfill();await api.waitForEmbeddingBackfill()}finally{globalThis.setTimeout=original}
+  assert.equal(calls-before,1);assert.equal(timers,0);assert.equal(nulls(f),0)
+ })
+ await test('Y-04 invalid throttle values leave current batch and gap unchanged',async()=>{
+  for(const invalid of [{batch:0},{batch:-1},{batch:2.5},{gapMs:-1},{batch:NaN},{batch:Infinity},{gapMs:2.5}]){
+   api.configureEmbeddingThrottle({batch:4,gapMs:150});api.configureEmbeddingThrottle(invalid)
+   const f=fixture(10),before=calls,times=[];hook=()=>{times.push(performance.now())}
+   api.startEmbeddingBackfill();await api.waitForEmbeddingBackfill()
+   assert.equal(calls-before,3,JSON.stringify(invalid));assert.equal(nulls(f),0)
+   assert.ok(times.slice(1).every((t,i)=>t-times[i]>=120),JSON.stringify(invalid))
+  }
+  api.configureEmbeddingThrottle({batch:16,gapMs:0})
+ })
+ api.configureEmbeddingThrottle({batch:16,gapMs:0})
+ // Legacy checks assert global counters, so remove only the new cadence fixtures.
+ fs.rmSync(path.join(root,'stories'),{recursive:true,force:true})
  await test('X-01/X-02 archive writes NULL without embed calls',async()=>{
   const f=fixture(),store=new api.MemoryStore(f.file),service=new api.StoryArchiveService(()=>store),before=calls
   service.schedule({id:'b',storyId:f.id,messages:[{id:'u',role:'user',content:'ocean',createdAt:1,status:'done'},{id:'a',role:'assistant',content:'waves',createdAt:2,status:'done'}]},{storyId:f.id},{userId:'root',personaId:'default'})
